@@ -9,6 +9,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+slate-platform = { path = "../slate-platform" }
 wgpu.workspace = true
 raw-window-handle.workspace = true
 glam.workspace = true
