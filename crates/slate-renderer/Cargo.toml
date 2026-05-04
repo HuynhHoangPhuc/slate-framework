@@ -1,0 +1,18 @@
+[package]
+name = "slate-renderer"
+description = "wgpu-based GPU renderer for the slate-framework UI framework"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+wgpu.workspace = true
+raw-window-handle.workspace = true
+glam.workspace = true
+bytemuck.workspace = true
+log.workspace = true
+thiserror.workspace = true
+pollster.workspace = true

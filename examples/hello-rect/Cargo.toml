@@ -1,0 +1,15 @@
+[package]
+name = "hello-rect"
+description = "Anchor demo: opens a window and renders a single rounded rectangle"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+slate-framework = { path = "../../crates/slate-framework", version = "0.0.1" }
+log.workspace = true
+env_logger.workspace = true

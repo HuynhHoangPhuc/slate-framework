@@ -1,0 +1,22 @@
+[package]
+name = "slate-platform"
+description = "Native window and event-loop abstraction for the slate-framework UI framework"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+raw-window-handle.workspace = true
+log.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2.workspace = true
+objc2-foundation.workspace = true
+objc2-app-kit.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows.workspace = true
