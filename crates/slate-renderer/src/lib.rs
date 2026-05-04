@@ -21,6 +21,9 @@
 //! });
 //! ```
 
+pub mod rect_pipeline;
+pub use rect_pipeline::{RectPipeline, RectUniform};
+
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
