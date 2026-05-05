@@ -100,7 +100,7 @@ pub struct ShadowInstance {
     pub corner_radius: f32,
     /// Gaussian σ (blur radius) in logical pixels.
     pub blur_radius: f32,
-    /// Padding to 64-byte / 16-byte aligned layout.
+    /// Padding to 48-byte stride.
     pub _pad: [f32; 2],
 }
 const _: () = assert!(core::mem::size_of::<ShadowInstance>() == 48);

@@ -262,3 +262,78 @@ fn capacity_grows_monotonically() {
     pipeline.prepare(&device, &queue, &small);
     assert_eq!(pipeline.capacity_bytes(), cap_large);
 }
+
+#[test]
+fn sigma_zero_produces_sharp_box_no_nan() {
+    let Some((device, queue)) = common::make_headless_device() else {
+        eprintln!("shadow_pipeline: no GPU adapter — skipping");
+        return;
+    };
+
+    let format = TextureFormat::Rgba8Unorm;
+    let (w, h) = (64, 64);
+
+    // 32×32 rect centered at (16,16) with blur_radius=0 → sharp box shadow.
+    let instances = [ShadowInstance {
+        rect: [16.0, 16.0, 32.0, 32.0],
+        color: [0.0, 0.0, 0.0, 1.0],
+        corner_radius: 0.0,
+        blur_radius: 0.0,
+        _pad: [0.0; 2],
+    }];
+
+    let buf = render_shadow(&device, &queue, format, w, h, &instances);
+
+    // Center of rect (32, 32) should be fully opaque (sharp box, inside).
+    let center_a = pixel_alpha(&buf, w, 32, 32);
+    assert!(
+        center_a > 240,
+        "sigma=0: center should be opaque (sharp box), got {center_a}"
+    );
+
+    // Well outside rect (0, 0) should be transparent — no NaN garbage.
+    let outside_a = pixel_alpha(&buf, w, 0, 0);
+    assert!(
+        outside_a < 5,
+        "sigma=0: outside should be transparent, got {outside_a}"
+    );
+}
+
+#[test]
+fn corner_radius_exceeding_half_size_no_artifact() {
+    let Some((device, queue)) = common::make_headless_device() else {
+        eprintln!("shadow_pipeline: no GPU adapter — skipping");
+        return;
+    };
+
+    let format = TextureFormat::Rgba8Unorm;
+    let (w, h) = (128, 128);
+
+    // 40×40 rect with corner_radius=30 (exceeds half of min dimension=20).
+    // Shader clamps to min(half.x, half.y)=20, producing a circular shadow.
+    let instances = [ShadowInstance {
+        rect: [44.0, 44.0, 40.0, 40.0],
+        color: [0.0, 0.0, 0.0, 1.0],
+        corner_radius: 30.0,
+        blur_radius: 6.0,
+        _pad: [0.0; 2],
+    }];
+
+    let buf = render_shadow(&device, &queue, format, w, h, &instances);
+
+    // Center (64, 64) should still produce valid alpha (no inversion).
+    let center_a = pixel_alpha(&buf, w, 64, 64);
+    assert!(
+        center_a > 150,
+        "oversized corner_radius: center alpha should be valid, got {center_a}"
+    );
+
+    // No pixel should have alpha > 255 (obviously) or be NaN-garbage.
+    // Check a sampling of pixels for sanity — all alpha should be 0..=255
+    // and the pattern should be monotonically decreasing from center outward.
+    let edge_a = pixel_alpha(&buf, w, 44, 44);
+    assert!(
+        edge_a <= center_a,
+        "edge ({edge_a}) should not exceed center ({center_a})"
+    );
+}

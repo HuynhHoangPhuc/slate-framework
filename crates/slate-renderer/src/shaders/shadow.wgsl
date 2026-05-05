@@ -94,7 +94,13 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let half_size = in.rect_size * 0.5;
     let point = in.local_pos;
     let sigma = in.blur_radius;
-    let corner = in.corner_radius;
+    let corner = min(in.corner_radius, min(half_size.x, half_size.y));
+
+    // Guard: sigma=0 produces NaN in gaussian/erf division. Emit sharp box.
+    if sigma <= 0.0 {
+        let inside = step(abs(point.x), half_size.x) * step(abs(point.y), half_size.y);
+        return vec4(in.color.rgb * inside, in.color.a * inside);
+    }
 
     // Sample range clamped to rect's Y extent (Zed pattern shaders.wgsl:1003-1006).
     let low = point.y - half_size.y;
