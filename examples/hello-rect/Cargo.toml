@@ -10,8 +10,8 @@ authors.workspace = true
 publish = false
 
 [dependencies]
-slate-platform = { path = "../../crates/slate-platform" }
-slate-renderer = { path = "../../crates/slate-renderer" }
+slate-platform = { path = "../../crates/slate-platform", version = "0.0.1" }
+slate-renderer = { path = "../../crates/slate-renderer", version = "0.0.1" }
 log.workspace = true
 env_logger.workspace = true
 pollster.workspace = true
