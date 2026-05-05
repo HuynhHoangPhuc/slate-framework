@@ -9,7 +9,7 @@ use std::cell::RefCell;
 use std::sync::Arc;
 
 use slate_platform::{DefaultPlatform, Event, Platform, Window, WindowOptions};
-use slate_renderer::{RectPipeline, RectUniform, Renderer, srgb_u8_to_linear};
+use slate_renderer::{RectPipeline, RectUniform, Renderer, srgb_u8_to_linear_premul};
 
 fn main() {
     env_logger::init();
@@ -83,10 +83,11 @@ fn main() {
                             half_size: [200.0 * scale, 100.0 * scale],
                             // Logical 24 pt corner radius → physical pixels.
                             corner_radius: 24.0 * scale,
-                            // #66ccff (sRGB) → linear; the surface re-encodes
-                            // to sRGB on write so what hits the screen is
-                            // exactly #66ccff.
-                            color: srgb_u8_to_linear([0x66, 0xcc, 0xff, 0xff]),
+                            // #66ccff (sRGB) → linear, premultiplied; the
+                            // pipeline blend assumes premultiplied source
+                            // (Phase 1 contract). Alpha = 0xff so premul ≡
+                            // straight linear; visual output unchanged.
+                            color: srgb_u8_to_linear_premul([0x66, 0xcc, 0xff, 0xff]),
                             _pad: 0.0,
                         },
                     );

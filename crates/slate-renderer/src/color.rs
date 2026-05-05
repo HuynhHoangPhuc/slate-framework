@@ -46,6 +46,46 @@ pub fn srgb_u8_to_linear(rgba: [u8; 4]) -> [f32; 4] {
     ])
 }
 
+/// Inverse of [`srgb_channel_to_linear`]: linear → sRGB-encoded float.
+///
+/// Mostly useful in tests that compute an expected pixel value in linear space
+/// and need to compare against a readback from an sRGB surface (the GPU
+/// performs this same encoding on store).
+pub fn linear_to_srgb_channel(c: f32) -> f32 {
+    if c <= 0.003_130_8 {
+        c * 12.92
+    } else {
+        1.055 * c.powf(1.0 / 2.4) - 0.055
+    }
+}
+
+/// Encode a linear `[f32; 4]` as 8-bit sRGB bytes (alpha passes through linear,
+/// matching `Bgra8UnormSrgb` storage semantics — see `tests/common/mod.rs`).
+pub fn linear_to_srgb_u8(rgba: [f32; 4]) -> [u8; 4] {
+    let to_byte = |c: f32| (c.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+    [
+        to_byte(linear_to_srgb_channel(rgba[0])),
+        to_byte(linear_to_srgb_channel(rgba[1])),
+        to_byte(linear_to_srgb_channel(rgba[2])),
+        to_byte(rgba[3]),
+    ]
+}
+
+/// Convert an 8-bit sRGB color to **linear, premultiplied** RGBA.
+///
+/// This is the canonical input form for every Phase 1+ instance struct
+/// (`RectInstance.color`, `ShadowInstance.color`, `ImageInstance.tint`,
+/// `GlyphInstance.color`). The renderer's blend state is configured for
+/// premultiplied source (`One/OneMinusSrcAlpha` on both color and alpha),
+/// so feeding straight-alpha colors will produce visibly wrong compositing.
+pub fn srgb_u8_to_linear_premul(rgba: [u8; 4]) -> [f32; 4] {
+    let a = rgba[3] as f32 / 255.0;
+    let r = srgb_channel_to_linear(rgba[0] as f32 / 255.0) * a;
+    let g = srgb_channel_to_linear(rgba[1] as f32 / 255.0) * a;
+    let b = srgb_channel_to_linear(rgba[2] as f32 / 255.0) * a;
+    [r, g, b, a]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -75,5 +115,32 @@ mod tests {
     fn alpha_passes_through_unchanged() {
         let lin = srgb_to_linear([1.0, 1.0, 1.0, 0.5]);
         assert!(approx(lin[3], 0.5));
+    }
+
+    #[test]
+    fn premul_red_half_alpha_matches_expected() {
+        // sRGB (255,0,0,128): linear R = 1.0; premul R = 1.0 * (128/255) ≈ 0.502.
+        let p = srgb_u8_to_linear_premul([255, 0, 0, 128]);
+        assert!(approx(p[0], 0.501_961));
+        assert!(approx(p[1], 0.0));
+        assert!(approx(p[2], 0.0));
+        assert!(approx(p[3], 0.501_961));
+    }
+
+    #[test]
+    fn premul_opaque_matches_straight() {
+        // Alpha = 255 → premul ≡ straight linear.
+        let straight = srgb_u8_to_linear([0x66, 0xcc, 0xff, 0xff]);
+        let premul = srgb_u8_to_linear_premul([0x66, 0xcc, 0xff, 0xff]);
+        for i in 0..4 {
+            assert!(approx(premul[i], straight[i]));
+        }
+    }
+
+    #[test]
+    fn premul_zero_alpha_zeros_color() {
+        let p = srgb_u8_to_linear_premul([255, 255, 255, 0]);
+        assert!(approx(p[0], 0.0));
+        assert!(approx(p[3], 0.0));
     }
 }

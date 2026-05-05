@@ -23,8 +23,13 @@
 
 pub mod color;
 pub mod rect_pipeline;
-pub use color::{srgb_channel_to_linear, srgb_to_linear, srgb_u8_to_linear};
+pub mod scene;
+pub use color::{
+    linear_to_srgb_channel, linear_to_srgb_u8, srgb_channel_to_linear, srgb_to_linear,
+    srgb_u8_to_linear, srgb_u8_to_linear_premul,
+};
 pub use rect_pipeline::{RectPipeline, RectUniform};
+pub use scene::{GlyphInstance, ImageInstance, Layer, RectInstance, Scene, ShadowInstance};
 
 use std::num::NonZeroU32;
 use std::sync::Arc;

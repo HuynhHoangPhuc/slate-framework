@@ -8,7 +8,7 @@
 // Uniform layout (std140 / 16-byte aligned, 48 bytes total):
 //   offset  0: center        vec2<f32>   — pixel-space rect center
 //   offset  8: half_size     vec2<f32>   — half-width / half-height in pixels
-//   offset 16: color         vec4<f32>   — RGBA, sRGB-linear
+//   offset 16: color         vec4<f32>   — RGBA, linear & premultiplied
 //   offset 32: viewport_size vec2<f32>   — physical-pixel viewport dimensions
 //   offset 40: corner_radius f32         — corner radius in pixels
 //   offset 44: _pad          f32         — explicit padding; struct size = 48
@@ -18,7 +18,7 @@ struct RectUniform {
     center: vec2<f32>,
     /// Half width / half height in pixels — offset 8
     half_size: vec2<f32>,
-    /// RGBA color, sRGB premultiplied if needed — offset 16 (16-byte aligned)
+    /// RGBA color, linear & premultiplied (rgb already × a) — offset 16 (16-byte aligned)
     color: vec4<f32>,
     /// Viewport size in physical pixels — offset 32
     viewport_size: vec2<f32>,
@@ -72,10 +72,12 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // Translate to rect-local coordinates (center at origin).
     let local = in.pixel_position - rect.center;
     let d = sdf_rounded_rect(local, rect.half_size, rect.corner_radius);
-    // 1-pixel AA band: alpha = 1 deep inside, 0 outside, smooth crossing at edge.
-    let alpha = clamp(0.5 - d, 0.0, 1.0);
-    if alpha <= 0.0 {
+    // 1-pixel AA band: coverage = 1 deep inside, 0 outside, smooth crossing at edge.
+    let coverage = clamp(0.5 - d, 0.0, 1.0);
+    if coverage <= 0.0 {
         discard;
     }
-    return vec4(rect.color.rgb, rect.color.a * alpha);
+    // Input color is premultiplied; scale all four channels by AA coverage so the
+    // premul invariant (rgb ≤ a) is preserved. Blend state assumes premultiplied src.
+    return rect.color * coverage;
 }

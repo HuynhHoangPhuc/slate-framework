@@ -54,11 +54,13 @@ pub struct RectUniform {
     pub center: [f32; 2],
     /// Half-width and half-height in pixels.
     pub half_size: [f32; 2],
-    /// RGBA color in **linear** space; alpha is straight, not premultiplied.
+    /// RGBA color in **linear, premultiplied** space (rgb already × a).
     ///
     /// The surface uses an sRGB texture format, so the GPU encodes linear →
-    /// sRGB on write. Pass `srgb_to_linear` / `srgb_u8_to_linear` (re-exported
-    /// from the crate root) to convert sRGB-encoded inputs.
+    /// sRGB on write. Use `srgb_u8_to_linear_premul` (re-exported from the
+    /// crate root) to convert sRGB-encoded inputs into the expected form.
+    /// Phase 1 standardises premultiplied output across all primitive
+    /// pipelines; the blend state below assumes premultiplied source.
     pub color: [f32; 4],
     /// Physical-pixel viewport dimensions used by the vertex shader for NDC → pixel conversion.
     pub viewport_size: [f32; 2],
@@ -142,15 +144,17 @@ impl RectPipeline {
                 entry_point: Some("fs_main"),
                 targets: &[Some(ColorTargetState {
                     format,
+                    // Premultiplied-alpha blend (Phase 1 contract): both color
+                    // and alpha use `One/OneMinusSrcAlpha`. Source colors must
+                    // arrive with rgb already × a (see `srgb_u8_to_linear_premul`
+                    // and `shaders/rect.wgsl::fs_main`). Matches Zed's Metal/DX
+                    // pipelines.
                     blend: Some(BlendState {
                         color: BlendComponent {
-                            src_factor: BlendFactor::SrcAlpha,
+                            src_factor: BlendFactor::One,
                             dst_factor: BlendFactor::OneMinusSrcAlpha,
                             operation: BlendOperation::Add,
                         },
-                        // Alpha uses `One` (not `SrcAlpha`) so the destination
-                        // alpha accumulates correctly under transparent /
-                        // layered composition. Matches Zed's Metal & DX paths.
                         alpha: BlendComponent {
                             src_factor: BlendFactor::One,
                             dst_factor: BlendFactor::OneMinusSrcAlpha,

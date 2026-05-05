@@ -18,7 +18,10 @@ authors = ["Phuc Huynh <huynhhoangphuc@proton.me>"]
 [workspace.dependencies]
 # All deps pinned to latest stable as of 2026-05-04.
 # Bump deliberately; record reason in commit message.
-wgpu = "29"
+# wgpu pinned to exact patch (Phase 1 prereq, red-team P0-5): wgpu pre-1.0
+# ships breaking shader/blend changes between patch releases. Bump only
+# after re-running smoke_premul + hello-rect on macOS + Windows.
+wgpu = "=29.0.3"
 raw-window-handle = "0.6"
 glam = "0.32"
 bytemuck = { version = "1.25", features = ["derive"] }
