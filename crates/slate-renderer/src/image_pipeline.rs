@@ -40,8 +40,8 @@ use wgpu::{
     BufferAddress, BufferDescriptor, BufferUsages, ColorTargetState, ColorWrites, Device,
     FragmentState, MultisampleState, PipelineLayoutDescriptor, PrimitiveState, PrimitiveTopology,
     Queue, RenderPass, RenderPipeline, RenderPipelineDescriptor, Sampler, ShaderModuleDescriptor,
-    ShaderSource, TextureFormat, VertexAttribute, VertexBufferLayout, VertexFormat,
-    VertexState, VertexStepMode,
+    ShaderSource, TextureFormat, VertexAttribute, VertexBufferLayout, VertexFormat, VertexState,
+    VertexStepMode,
 };
 
 use crate::atlas::{Atlas, Format};
@@ -288,8 +288,7 @@ impl ImagePipeline {
             return;
         }
         let stride = mem::size_of::<ImageInstance>() as BufferAddress;
-        let byte_range =
-            (range.start as BufferAddress * stride)..(end as BufferAddress * stride);
+        let byte_range = (range.start as BufferAddress * stride)..(end as BufferAddress * stride);
 
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, viewport_bg, &[]);
@@ -323,4 +322,3 @@ impl ImagePipeline {
         self.instance_capacity_bytes = new_cap;
     }
 }
-

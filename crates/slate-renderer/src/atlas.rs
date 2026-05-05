@@ -87,10 +87,7 @@ pub enum AtlasError {
     OutOfSpace,
     /// Caller asked for a region larger than the page itself.
     #[error("requested {requested:?} exceeds atlas page size {max}")]
-    TooLarge {
-        requested: (u32, u32),
-        max: u32,
-    },
+    TooLarge { requested: (u32, u32), max: u32 },
 }
 
 /// Successful allocation result. `uv_rect = [u_min, v_min, u_max, v_max]`
@@ -159,7 +156,6 @@ impl LruTracker {
             }
         }
     }
-
 }
 
 /// Single-page GPU atlas backed by an etagere shelf allocator.

@@ -248,19 +248,9 @@ fn multi_layer_disjoint_ranges_in_single_pass() {
             multiview_mask: None,
         });
         // Record layer 0 (white): range 0..2
-        pipeline.record(
-            &mut rpass,
-            &viewport_bg,
-            &unit_quad,
-            0..2,
-        );
+        pipeline.record(&mut rpass, &viewport_bg, &unit_quad, 0..2);
         // Record layer 1 (red): range 2..5
-        pipeline.record(
-            &mut rpass,
-            &viewport_bg,
-            &unit_quad,
-            2..5,
-        );
+        pipeline.record(&mut rpass, &viewport_bg, &unit_quad, 2..5);
     });
 
     // Centers of white rects (layer 0) at (14, 14) and (34, 14) should be opaque white.
@@ -313,12 +303,7 @@ fn premul_alpha_parity_with_single_instanced_rect() {
             timestamp_writes: None,
             multiview_mask: None,
         });
-        pipeline.record(
-            &mut rpass,
-            &viewport_bg,
-            &unit_quad,
-            0..1,
-        );
+        pipeline.record(&mut rpass, &viewport_bg, &unit_quad, 0..1);
     });
 
     // Center pixel (16, 16) should match smoke_premul: ≈(188, 0, 0, 128) ±2/255.
@@ -372,12 +357,7 @@ fn corner_radius_produces_rounded_corners() {
             timestamp_writes: None,
             multiview_mask: None,
         });
-        pipeline.record(
-            &mut rpass,
-            &viewport_bg,
-            &unit_quad,
-            0..1,
-        );
+        pipeline.record(&mut rpass, &viewport_bg, &unit_quad, 0..1);
     });
 
     // Center pixel (10, 10) should be opaque (well inside the rounded rect).

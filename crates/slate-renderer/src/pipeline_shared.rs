@@ -76,7 +76,10 @@ pub fn create_unit_quad(device: &Device) -> Buffer {
         usage: BufferUsages::VERTEX,
         mapped_at_creation: true,
     });
-    buffer.slice(..).get_mapped_range_mut().copy_from_slice(bytes);
+    buffer
+        .slice(..)
+        .get_mapped_range_mut()
+        .copy_from_slice(bytes);
     buffer.unmap();
     buffer
 }

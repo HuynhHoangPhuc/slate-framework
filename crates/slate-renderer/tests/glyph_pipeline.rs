@@ -63,8 +63,7 @@ fn upload_mask(
     height: u32,
     pixels: &[u8],
 ) -> [f32; 4] {
-    let (alloc_id, inset_uv) =
-        allocate_glyph(atlas, width, height).expect("allocate_glyph failed");
+    let (alloc_id, inset_uv) = allocate_glyph(atlas, width, height).expect("allocate_glyph failed");
     // The atlas allocation is (width+2)×(height+2); upload zeros for the
     // gutter and the caller-supplied mask in the inner 1..=width region.
     let aw = width + 2;

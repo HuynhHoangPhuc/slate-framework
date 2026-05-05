@@ -240,8 +240,8 @@ impl InstancedRectPipeline {
             self.last_instance_count,
         );
         let stride = mem::size_of::<RectInstance>() as BufferAddress;
-        let byte_range = (range.start as BufferAddress * stride)
-            ..(range.end as BufferAddress * stride);
+        let byte_range =
+            (range.start as BufferAddress * stride)..(range.end as BufferAddress * stride);
 
         // §Success: exactly one `pass.draw` per `record` invocation.
         pass.set_pipeline(&self.pipeline);
