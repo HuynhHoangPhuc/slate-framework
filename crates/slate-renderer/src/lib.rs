@@ -146,7 +146,9 @@ impl Renderer {
             .request_device(&DeviceDescriptor {
                 label: Some("slate-device"),
                 required_features: Features::empty(),
-                required_limits: Limits::downlevel_defaults(),
+                required_limits: Limits::downlevel_defaults()
+                    .using_resolution(adapter.limits())
+                    .using_alignment(adapter.limits()),
                 memory_hints: MemoryHints::Performance,
                 trace: Trace::Off,
                 experimental_features: ExperimentalFeatures::disabled(),
@@ -239,7 +241,8 @@ impl Renderer {
     /// Resize the surface. `new_size` is in physical pixels, matching
     /// the `(u32, u32)` payload of `Event::WindowResized`.
     pub fn resize(&mut self, new_size: (u32, u32)) {
-        let (w, h) = (new_size.0.max(1), new_size.1.max(1));
+        let max = self.device.limits().max_texture_dimension_2d;
+        let (w, h) = (new_size.0.max(1).min(max), new_size.1.max(1).min(max));
         self.surface_config.width = w;
         self.surface_config.height = h;
         self.surface.configure(&self.device, &self.surface_config);

@@ -40,6 +40,7 @@ fn main() {
             };
             log::info!("renderer ready");
             *renderer.borrow_mut() = Some(r);
+            window_ref.request_redraw();
         }
 
         Event::WindowResized { size, .. } => {
