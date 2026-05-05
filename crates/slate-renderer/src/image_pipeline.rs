@@ -36,17 +36,16 @@ use std::mem;
 use std::ops::Range;
 
 use wgpu::{
-    AddressMode, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout,
-    BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, BlendComponent,
-    BlendFactor, BlendOperation, BlendState, Buffer, BufferAddress, BufferDescriptor, BufferUsages,
-    ColorTargetState, ColorWrites, Device, FilterMode, FragmentState, MipmapFilterMode,
-    MultisampleState, PipelineLayoutDescriptor, PrimitiveState, PrimitiveTopology, Queue,
-    RenderPass, RenderPipeline, RenderPipelineDescriptor, Sampler, SamplerBindingType,
-    SamplerDescriptor, ShaderModuleDescriptor, ShaderSource, ShaderStages, TextureFormat,
-    TextureSampleType, TextureView, TextureViewDimension, VertexAttribute, VertexBufferLayout,
-    VertexFormat, VertexState, VertexStepMode,
+    BindGroup, BindGroupLayout, BlendComponent, BlendFactor, BlendOperation, BlendState, Buffer,
+    BufferAddress, BufferDescriptor, BufferUsages, ColorTargetState, ColorWrites, Device,
+    FragmentState, MultisampleState, PipelineLayoutDescriptor, PrimitiveState, PrimitiveTopology,
+    Queue, RenderPass, RenderPipeline, RenderPipelineDescriptor, Sampler, ShaderModuleDescriptor,
+    ShaderSource, TextureFormat, TextureView, VertexAttribute, VertexBufferLayout, VertexFormat,
+    VertexState, VertexStepMode,
 };
 
+use crate::atlas::{Atlas, Format};
+use crate::pipeline_shared::{atlas_bind_group, atlas_bind_group_layout, atlas_linear_sampler};
 use crate::scene::ImageInstance;
 
 /// Initial instance-buffer capacity (matches `InstancedRectPipeline`).
@@ -99,13 +98,13 @@ pub struct ImagePipeline {
 
 impl ImagePipeline {
     /// Build the pipeline. `viewport_bgl` comes from
-    /// [`crate::pipeline_shared::viewport_bind_group_layout`]; `atlas_view`
-    /// is the current `TextureView` from the renderer-owned color atlas.
+    /// [`crate::pipeline_shared::viewport_bind_group_layout`]; `image_atlas`
+    /// is the renderer-owned color atlas (must be `Rgba8UnormSrgb`).
     pub fn new(
         device: &Device,
         surface_format: TextureFormat,
         viewport_bgl: &BindGroupLayout,
-        atlas_view: &TextureView,
+        image_atlas: &Atlas,
     ) -> Self {
         // Phase 1 contract: surface must be sRGB so hw handles linear→sRGB
         // encoding. Non-sRGB surfaces compile and run but produce washed-out
@@ -118,46 +117,31 @@ impl ImagePipeline {
             "ImagePipeline expects an sRGB surface format (Bgra8UnormSrgb / \
              Rgba8UnormSrgb); got {surface_format:?}",
         );
+        // Mirror of GlyphPipeline's R8Unorm guard: catch the "glyph mask atlas
+        // wired to image pipeline" footgun. The shared atlas BGL accepts
+        // either format (filterable Float), so wgpu validation never sees the
+        // mistake; output would silently broadcast `tex.r` to all channels.
+        debug_assert_eq!(
+            image_atlas.format(),
+            Format::Rgba8UnormSrgb,
+            "ImagePipeline requires an Rgba8UnormSrgb atlas; got {:?}",
+            image_atlas.format(),
+        );
+        let atlas_view = image_atlas.texture_view();
         let shader = device.create_shader_module(ShaderModuleDescriptor {
             label: Some("image.wgsl"),
             source: ShaderSource::Wgsl(include_str!("shaders/image.wgsl").into()),
         });
 
-        let atlas_bgl = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-            label: Some("slate-image-atlas-bgl"),
-            entries: &[
-                BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: ShaderStages::FRAGMENT,
-                    ty: BindingType::Texture {
-                        sample_type: TextureSampleType::Float { filterable: true },
-                        view_dimension: TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: ShaderStages::FRAGMENT,
-                    ty: BindingType::Sampler(SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
-
-        let sampler = device.create_sampler(&SamplerDescriptor {
-            label: Some("slate-atlas-linear"),
-            address_mode_u: AddressMode::ClampToEdge,
-            address_mode_v: AddressMode::ClampToEdge,
-            address_mode_w: AddressMode::ClampToEdge,
-            mag_filter: FilterMode::Linear,
-            min_filter: FilterMode::Linear,
-            // No mips in Phase 1.
-            mipmap_filter: MipmapFilterMode::Nearest,
-            ..Default::default()
-        });
-
-        let atlas_bg = make_atlas_bind_group(device, &atlas_bgl, atlas_view, &sampler);
+        let atlas_bgl = atlas_bind_group_layout(device, "slate-image-atlas-bgl");
+        let sampler = atlas_linear_sampler(device, "slate-image-atlas-linear");
+        let atlas_bg = atlas_bind_group(
+            device,
+            "slate-image-atlas-bg",
+            &atlas_bgl,
+            atlas_view,
+            &sampler,
+        );
 
         let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: Some("image-pipeline-layout"),
@@ -240,7 +224,13 @@ impl ImagePipeline {
     /// Rebuild the atlas bind group with a new `TextureView`. Call this when
     /// the atlas re-allocates its underlying texture (Phase 7+ atlas growth).
     pub fn rebuild_atlas_bg(&mut self, device: &Device, atlas_view: &TextureView) {
-        self.atlas_bg = make_atlas_bind_group(device, &self.atlas_bgl, atlas_view, &self.sampler);
+        self.atlas_bg = atlas_bind_group(
+            device,
+            "slate-image-atlas-bg",
+            &self.atlas_bgl,
+            atlas_view,
+            &self.sampler,
+        );
     }
 
     /// Upload `instances` to the per-instance buffer. Call once per frame
@@ -319,24 +309,3 @@ impl ImagePipeline {
     }
 }
 
-fn make_atlas_bind_group(
-    device: &Device,
-    layout: &BindGroupLayout,
-    view: &TextureView,
-    sampler: &Sampler,
-) -> BindGroup {
-    device.create_bind_group(&BindGroupDescriptor {
-        label: Some("slate-image-atlas-bg"),
-        layout,
-        entries: &[
-            BindGroupEntry {
-                binding: 0,
-                resource: BindingResource::TextureView(view),
-            },
-            BindGroupEntry {
-                binding: 1,
-                resource: BindingResource::Sampler(sampler),
-            },
-        ],
-    })
-}

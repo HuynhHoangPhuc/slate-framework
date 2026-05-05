@@ -46,18 +46,16 @@ use std::mem;
 use std::ops::Range;
 
 use wgpu::{
-    AddressMode, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout,
-    BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, BlendComponent,
-    BlendFactor, BlendOperation, BlendState, Buffer, BufferAddress, BufferDescriptor, BufferUsages,
-    ColorTargetState, ColorWrites, Device, FilterMode, FragmentState, MipmapFilterMode,
-    MultisampleState, PipelineLayoutDescriptor, PrimitiveState, PrimitiveTopology, Queue,
-    RenderPass, RenderPipeline, RenderPipelineDescriptor, Sampler, SamplerBindingType,
-    SamplerDescriptor, ShaderModuleDescriptor, ShaderSource, ShaderStages, TextureFormat,
-    TextureSampleType, TextureView, TextureViewDimension, VertexAttribute, VertexBufferLayout,
-    VertexFormat, VertexState, VertexStepMode,
+    BindGroup, BindGroupLayout, BlendComponent, BlendFactor, BlendOperation, BlendState, Buffer,
+    BufferAddress, BufferDescriptor, BufferUsages, ColorTargetState, ColorWrites, Device,
+    FragmentState, MultisampleState, PipelineLayoutDescriptor, PrimitiveState, PrimitiveTopology,
+    Queue, RenderPass, RenderPipeline, RenderPipelineDescriptor, Sampler, ShaderModuleDescriptor,
+    ShaderSource, TextureFormat, TextureView, VertexAttribute, VertexBufferLayout, VertexFormat,
+    VertexState, VertexStepMode,
 };
 
-use crate::atlas::{AllocId, Atlas, AtlasAllocation, AtlasError, Format};
+use crate::atlas::{AllocId, Atlas, AtlasAllocation, AtlasError, Format, PAGE_SIZE};
+use crate::pipeline_shared::{atlas_bind_group, atlas_bind_group_layout, atlas_linear_sampler};
 use crate::scene::GlyphInstance;
 
 /// Initial instance-buffer capacity (matches sibling pipelines).
@@ -115,8 +113,8 @@ pub struct GlyphPipeline {
 
 impl GlyphPipeline {
     /// Build the pipeline. `viewport_bgl` comes from
-    /// [`crate::pipeline_shared::viewport_bind_group_layout`]; `atlas_view`
-    /// is the current `TextureView` from the renderer-owned glyph atlas.
+    /// [`crate::pipeline_shared::viewport_bind_group_layout`]; `glyph_atlas`
+    /// is the renderer-owned alpha-mask atlas (must be `R8Unorm`).
     pub fn new(
         device: &Device,
         surface_format: TextureFormat,
@@ -150,41 +148,15 @@ impl GlyphPipeline {
             source: ShaderSource::Wgsl(include_str!("shaders/glyph.wgsl").into()),
         });
 
-        let atlas_bgl = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-            label: Some("slate-glyph-atlas-bgl"),
-            entries: &[
-                BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: ShaderStages::FRAGMENT,
-                    ty: BindingType::Texture {
-                        sample_type: TextureSampleType::Float { filterable: true },
-                        view_dimension: TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: ShaderStages::FRAGMENT,
-                    ty: BindingType::Sampler(SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
-
-        let sampler = device.create_sampler(&SamplerDescriptor {
-            label: Some("slate-glyph-linear"),
-            address_mode_u: AddressMode::ClampToEdge,
-            address_mode_v: AddressMode::ClampToEdge,
-            address_mode_w: AddressMode::ClampToEdge,
-            mag_filter: FilterMode::Linear,
-            min_filter: FilterMode::Linear,
-            // No mips in Phase 1.
-            mipmap_filter: MipmapFilterMode::Nearest,
-            ..Default::default()
-        });
-
-        let atlas_bg = make_atlas_bind_group(device, &atlas_bgl, atlas_view, &sampler);
+        let atlas_bgl = atlas_bind_group_layout(device, "slate-glyph-atlas-bgl");
+        let sampler = atlas_linear_sampler(device, "slate-glyph-atlas-linear");
+        let atlas_bg = atlas_bind_group(
+            device,
+            "slate-glyph-atlas-bg",
+            &atlas_bgl,
+            atlas_view,
+            &sampler,
+        );
 
         let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: Some("glyph-pipeline-layout"),
@@ -267,7 +239,13 @@ impl GlyphPipeline {
     /// Rebuild the atlas bind group with a new `TextureView`. Call this when
     /// the atlas re-allocates its underlying texture (Phase 7+ atlas growth).
     pub fn rebuild_atlas_bg(&mut self, device: &Device, atlas_view: &TextureView) {
-        self.atlas_bg = make_atlas_bind_group(device, &self.atlas_bgl, atlas_view, &self.sampler);
+        self.atlas_bg = atlas_bind_group(
+            device,
+            "slate-glyph-atlas-bg",
+            &self.atlas_bgl,
+            atlas_view,
+            &self.sampler,
+        );
     }
 
     /// Upload `instances` to the per-instance buffer. Call once per frame
@@ -346,28 +324,6 @@ impl GlyphPipeline {
     }
 }
 
-fn make_atlas_bind_group(
-    device: &Device,
-    layout: &BindGroupLayout,
-    view: &TextureView,
-    sampler: &Sampler,
-) -> BindGroup {
-    device.create_bind_group(&BindGroupDescriptor {
-        label: Some("slate-glyph-atlas-bg"),
-        layout,
-        entries: &[
-            BindGroupEntry {
-                binding: 0,
-                resource: BindingResource::TextureView(view),
-            },
-            BindGroupEntry {
-                binding: 1,
-                resource: BindingResource::Sampler(sampler),
-            },
-        ],
-    })
-}
-
 /// Allocate a glyph slot with a 1-texel transparent gutter on every side.
 ///
 /// The atlas reserves a `(width + 2) × (height + 2)` region but the returned
@@ -383,9 +339,25 @@ pub fn allocate_glyph(
     width: u32,
     height: u32,
 ) -> Result<(AllocId, [f32; 4]), AtlasError> {
-    let AtlasAllocation { uv_rect, alloc_id } = atlas.allocate(width + 2, height + 2)?;
+    // Zero-sized glyph would yield a 2×2 alloc with a fully-collapsed inset
+    // uv_rect (sampler reads only gutter texels). Catch in debug; producers
+    // are expected to filter zero-metric glyphs upstream.
+    debug_assert!(
+        width > 0 && height > 0,
+        "glyph dimensions must be non-zero (got {width}×{height})",
+    );
+    // u32::MAX would panic on the +2 add; surface as TooLarge instead.
+    let padded_w = width.checked_add(2).ok_or(AtlasError::TooLarge {
+        requested: (width, height),
+        max: PAGE_SIZE,
+    })?;
+    let padded_h = height.checked_add(2).ok_or(AtlasError::TooLarge {
+        requested: (width, height),
+        max: PAGE_SIZE,
+    })?;
+    let AtlasAllocation { uv_rect, alloc_id } = atlas.allocate(padded_w, padded_h)?;
     // 1-texel inset in normalized coords.
-    let texel = 1.0 / crate::atlas::PAGE_SIZE as f32;
+    let texel = 1.0 / PAGE_SIZE as f32;
     let inset = [
         uv_rect[0] + texel,
         uv_rect[1] + texel,

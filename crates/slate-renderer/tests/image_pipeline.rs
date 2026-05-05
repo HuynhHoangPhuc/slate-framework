@@ -123,7 +123,7 @@ fn opaque_red_patch_renders_red() {
     let red_pixels: Vec<u8> = (0..16).flat_map(|_| [255u8, 0, 0, 255]).collect();
     let uv_rect = upload_patch(&mut atlas, &queue, 4, 4, &red_pixels);
 
-    let mut pipeline = ImagePipeline::new(&device, format, &bgl, atlas.texture_view());
+    let mut pipeline = ImagePipeline::new(&device, format, &bgl, &atlas);
 
     let instances = vec![ImageInstance {
         rect: [0.0, 0.0, w as f32, h as f32],
@@ -162,7 +162,7 @@ fn green_tint_zeroes_red_patch() {
     let red_pixels: Vec<u8> = (0..16).flat_map(|_| [255u8, 0, 0, 255]).collect();
     let uv_rect = upload_patch(&mut atlas, &queue, 4, 4, &red_pixels);
 
-    let mut pipeline = ImagePipeline::new(&device, format, &bgl, atlas.texture_view());
+    let mut pipeline = ImagePipeline::new(&device, format, &bgl, &atlas);
 
     // Premultiplied green tint: red × green = 0 in every channel.
     let green_tint = srgb_u8_to_linear_premul([0, 255, 0, 255]);
@@ -204,7 +204,7 @@ fn premul_half_alpha_red_patch_matches_smoke() {
     let half_alpha: Vec<u8> = (0..16).flat_map(|_| [255u8, 0, 0, 128]).collect();
     let uv_rect = upload_patch(&mut atlas, &queue, 4, 4, &half_alpha);
 
-    let mut pipeline = ImagePipeline::new(&device, format, &bgl, atlas.texture_view());
+    let mut pipeline = ImagePipeline::new(&device, format, &bgl, &atlas);
 
     let instances = vec![ImageInstance {
         rect: [0.0, 0.0, w as f32, h as f32],
@@ -240,7 +240,7 @@ fn capacity_grows_monotonically() {
     let format = TextureFormat::Bgra8UnormSrgb;
     let bgl = viewport_bind_group_layout(&device);
     let atlas = Atlas::new(&device, Format::Rgba8UnormSrgb);
-    let mut pipeline = ImagePipeline::new(&device, format, &bgl, atlas.texture_view());
+    let mut pipeline = ImagePipeline::new(&device, format, &bgl, &atlas);
 
     let stride = std::mem::size_of::<ImageInstance>() as u64;
     let initial = pipeline.capacity_bytes();
@@ -291,7 +291,7 @@ fn non_uniform_patch_preserves_orientation() {
     }
     let uv_rect = upload_patch(&mut atlas, &queue, 4, 4, &pixels);
 
-    let mut pipeline = ImagePipeline::new(&device, format, &bgl, atlas.texture_view());
+    let mut pipeline = ImagePipeline::new(&device, format, &bgl, &atlas);
 
     let instances = vec![ImageInstance {
         rect: [0.0, 0.0, w as f32, h as f32],
@@ -338,7 +338,7 @@ fn multi_layer_disjoint_ranges_in_single_pass() {
     let red_uv = upload_patch(&mut atlas, &queue, 4, 4, &red);
     let green_uv = upload_patch(&mut atlas, &queue, 4, 4, &green);
 
-    let mut pipeline = ImagePipeline::new(&device, format, &bgl, atlas.texture_view());
+    let mut pipeline = ImagePipeline::new(&device, format, &bgl, &atlas);
     let unit_quad = create_unit_quad(&device);
 
     // Layer 0: red on the left half. Layer 1: green on the right half.
@@ -400,7 +400,7 @@ fn rebuild_atlas_bg_does_not_break_subsequent_draws() {
     let red: Vec<u8> = (0..16).flat_map(|_| [255u8, 0, 0, 255]).collect();
     let uv_rect = upload_patch(&mut atlas, &queue, 4, 4, &red);
 
-    let mut pipeline = ImagePipeline::new(&device, format, &bgl, atlas.texture_view());
+    let mut pipeline = ImagePipeline::new(&device, format, &bgl, &atlas);
     pipeline.rebuild_atlas_bg(&device, atlas.texture_view());
 
     let instances = vec![ImageInstance {
@@ -431,7 +431,7 @@ fn empty_instances_is_a_noop() {
     let format = TextureFormat::Bgra8UnormSrgb;
     let bgl = viewport_bind_group_layout(&device);
     let atlas = Atlas::new(&device, Format::Rgba8UnormSrgb);
-    let mut pipeline = ImagePipeline::new(&device, format, &bgl, atlas.texture_view());
+    let mut pipeline = ImagePipeline::new(&device, format, &bgl, &atlas);
     let before = pipeline.capacity_bytes();
     pipeline.prepare(&device, &queue, &[]);
     assert_eq!(pipeline.capacity_bytes(), before);

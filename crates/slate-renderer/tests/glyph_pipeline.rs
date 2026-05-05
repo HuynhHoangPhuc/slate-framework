@@ -461,3 +461,62 @@ fn ten_glyphs_in_one_draw_render_correct_centers() {
         common::assert_pixel(&buf, w, cx, cy, expected, 2);
     }
 }
+
+#[test]
+fn sub_pixel_variant_does_not_affect_phase1_output() {
+    // Direct proof that `sub_pixel_variant` (location 4) is read end-to-end:
+    // render the same glyph twice with variant=0 vs variant=3 and assert byte-
+    // identical output. In Phase 1 the fragment shader's variant term is
+    // anchored as `+ vec4(0.0) * f32(variant)` so naga can't strip the
+    // location read across DX12/Metal/Vulkan/SPIR-V. If a future refactor
+    // dropped the anchor, naga would prune the attribute, the pipeline would
+    // fail validation, AND this test would catch a behavioral divergence
+    // *before* Phase 2's subpixel-AA path turns variant into a real input.
+    let Some((device, queue)) = common::make_headless_device() else {
+        eprintln!("glyph_pipeline: no GPU adapter — skipping");
+        return;
+    };
+    let format = TextureFormat::Bgra8UnormSrgb;
+    let (w, h) = (32u32, 32u32);
+    let bgl = viewport_bind_group_layout(&device);
+    let mut atlas = Atlas::new(&device, Format::R8Unorm);
+
+    let mask = vec![255u8; 16 * 16];
+    let uv_rect = upload_mask(&mut atlas, &queue, 16, 16, &mask);
+
+    let mut pipeline = GlyphPipeline::new(&device, format, &bgl, &atlas);
+
+    let make_instance = |variant: u32| GlyphInstance {
+        rect: [0.0, 0.0, w as f32, h as f32],
+        uv_rect,
+        color: [1.0, 0.0, 0.0, 1.0],
+        sub_pixel_variant: variant,
+        _pad: [0; 3],
+    };
+
+    let buf_v0 = run_glyph_test(
+        w,
+        h,
+        &[make_instance(0)],
+        &device,
+        &queue,
+        &mut pipeline,
+        "glyph-variant-0-pass",
+    );
+    let buf_v3 = run_glyph_test(
+        w,
+        h,
+        &[make_instance(3)],
+        &device,
+        &queue,
+        &mut pipeline,
+        "glyph-variant-3-pass",
+    );
+
+    assert_eq!(
+        buf_v0, buf_v3,
+        "Phase 1 output must be invariant to sub_pixel_variant; if this fires \
+         either the location-4 anchor was removed or Phase 2 semantics leaked \
+         into the shader",
+    );
+}

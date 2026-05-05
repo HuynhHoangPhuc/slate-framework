@@ -1,7 +1,9 @@
 //! GPU renderer for the slate-framework UI framework, built on `wgpu`.
 //!
-//! Phase 4: surface bring-up + clear-color render pass.
-//! Phase 5 will replace the stub render pass with the SDF rounded-rect shader.
+//! Owns the surface + device and exposes a stub clear-color render pass plus
+//! [`Renderer::render_with`], which lets callers issue draw calls against
+//! caller-built pipelines (`InstancedRectPipeline`, `ImagePipeline`,
+//! `GlyphPipeline`, …) inside the frame's render pass.
 //!
 //! # Lifecycle contract
 //!
@@ -61,7 +63,7 @@ use wgpu::{
 pub struct Renderer {
     // Instance must be kept alive for adapter/surface lifetimes.
     _instance: Instance,
-    // Adapter kept for potential future introspection / Phase 5 pipeline creation.
+    // Kept alive for adapter-info logging and potential future introspection.
     _adapter: Adapter,
     device: Device,
     queue: Queue,
@@ -189,7 +191,8 @@ impl Renderer {
     /// On `Outdated` or `Lost`, the surface is reconfigured and the frame is
     /// retried once. If the retry also fails, the error is propagated.
     ///
-    /// Phase 5 will replace the stub clear pass with the SDF rect shader.
+    /// This is the stub clear-only path; for caller-driven draws use
+    /// [`Renderer::render_with`].
     pub fn render(&mut self) -> Result<(), RenderError> {
         let frame = self.acquire_frame()?;
         self.draw_clear_pass(&frame);
@@ -241,7 +244,7 @@ impl Renderer {
         Ok(())
     }
 
-    // ----- Accessors for Phase 5 pipeline construction -----
+    // ----- Accessors for caller-driven pipeline construction -----
 
     /// The logical `wgpu` device.
     pub fn device(&self) -> &Device {
@@ -316,7 +319,7 @@ impl Renderer {
                 timestamp_writes: None,
                 multiview_mask: None::<NonZeroU32>,
             });
-            // Phase 5 draw calls go here.
+            // No-op pass: clear-only. For caller-driven draws use `render_with`.
         }
         self.queue.submit(std::iter::once(encoder.finish()));
     }

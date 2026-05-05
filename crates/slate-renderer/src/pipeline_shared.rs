@@ -13,8 +13,11 @@ use std::num::NonZeroU64;
 
 use bytemuck::{Pod, Zeroable};
 use wgpu::{
-    BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, Buffer,
-    BufferBindingType, BufferDescriptor, BufferUsages, Device, ShaderStages,
+    AddressMode, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout,
+    BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, Buffer,
+    BufferBindingType, BufferDescriptor, BufferUsages, Device, FilterMode, MipmapFilterMode,
+    Sampler, SamplerBindingType, SamplerDescriptor, ShaderStages, TextureSampleType, TextureView,
+    TextureViewDimension,
 };
 
 /// CPU mirror of WGSL `Viewport { size: vec2<f32>, _pad: vec2<f32> }`.
@@ -76,4 +79,75 @@ pub fn create_unit_quad(device: &Device) -> Buffer {
     buffer.slice(..).get_mapped_range_mut().copy_from_slice(bytes);
     buffer.unmap();
     buffer
+}
+
+/// Bind-group layout for atlas-sampling pipelines: filterable 2-D texture at
+/// binding 0, filtering sampler at binding 1, FRAGMENT visibility.
+///
+/// Format-agnostic: `Float { filterable: true }` accepts both `R8Unorm`
+/// (alpha mask, glyph atlas) and `Rgba8UnormSrgb` (color, image atlas).
+/// Per-pipeline `debug_assert!` on `Atlas::format()` is the format gate;
+/// this BGL deliberately does not encode the format.
+pub fn atlas_bind_group_layout(device: &Device, label: &str) -> BindGroupLayout {
+    device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+        label: Some(label),
+        entries: &[
+            BindGroupLayoutEntry {
+                binding: 0,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Texture {
+                    sample_type: TextureSampleType::Float { filterable: true },
+                    view_dimension: TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            BindGroupLayoutEntry {
+                binding: 1,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                count: None,
+            },
+        ],
+    })
+}
+
+/// Linear, clamp-to-edge atlas sampler. No mips in Phase 1.
+pub fn atlas_linear_sampler(device: &Device, label: &str) -> Sampler {
+    device.create_sampler(&SamplerDescriptor {
+        label: Some(label),
+        address_mode_u: AddressMode::ClampToEdge,
+        address_mode_v: AddressMode::ClampToEdge,
+        address_mode_w: AddressMode::ClampToEdge,
+        mag_filter: FilterMode::Linear,
+        min_filter: FilterMode::Linear,
+        mipmap_filter: MipmapFilterMode::Nearest,
+        ..Default::default()
+    })
+}
+
+/// Build the atlas bind group: layout from [`atlas_bind_group_layout`],
+/// the atlas's current `TextureView`, and a sampler from
+/// [`atlas_linear_sampler`].
+pub fn atlas_bind_group(
+    device: &Device,
+    label: &str,
+    layout: &BindGroupLayout,
+    view: &TextureView,
+    sampler: &Sampler,
+) -> BindGroup {
+    device.create_bind_group(&BindGroupDescriptor {
+        label: Some(label),
+        layout,
+        entries: &[
+            BindGroupEntry {
+                binding: 0,
+                resource: BindingResource::TextureView(view),
+            },
+            BindGroupEntry {
+                binding: 1,
+                resource: BindingResource::Sampler(sampler),
+            },
+        ],
+    })
 }
