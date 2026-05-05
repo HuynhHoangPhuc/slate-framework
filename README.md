@@ -19,7 +19,7 @@ Requires Rust 1.95+ (pinned via `rust-toolchain.toml`).
 
 ```bash
 cargo check --workspace
-cargo run --example hello-rect   # not yet functional in Phase 0
+cargo run -p hello-rect
 ```
 
 ## License
