@@ -39,11 +39,11 @@ use windows::Win32::UI::HiDpi::{
 use windows::Win32::UI::WindowsAndMessaging::{
     CS_HREDRAW, CS_OWNDC, CS_VREDRAW, CW_USEDEFAULT, CREATESTRUCTW, CreateWindowExW,
     DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect, GetMessageW,
-    GetWindowLongPtrW, GWLP_USERDATA, IDC_ARROW, LoadCursorW, MSG, PostQuitMessage,
-    RegisterClassExW, SetWindowLongPtrW, SetWindowPos, SetWindowTextW,
+    GetWindowLongPtrW, GWLP_USERDATA, IDC_ARROW, KillTimer, LoadCursorW, MSG, PostQuitMessage,
+    RegisterClassExW, SetTimer, SetWindowLongPtrW, SetWindowPos, SetWindowTextW,
     SWP_NOACTIVATE, SWP_NOZORDER, TranslateMessage, WINDOW_EX_STYLE, WNDCLASSEXW, WM_CLOSE,
-    WM_DESTROY, WM_DPICHANGED, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_SIZE,
-    WS_OVERLAPPEDWINDOW, WS_VISIBLE,
+    WM_DESTROY, WM_DPICHANGED, WM_ENTERSIZEMOVE, WM_EXITSIZEMOVE, WM_NCCREATE, WM_NCDESTROY,
+    WM_PAINT, WM_SIZE, WM_TIMER, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
 };
 use windows::core::{w, PCWSTR};
 
@@ -89,6 +89,11 @@ fn to_wide(s: &str) -> Vec<u16> {
 // ---------------------------------------------------------------------------
 
 const CLASS_NAME: PCWSTR = w!("SlateWindowClass");
+
+/// Identifier for the modal size-move timer. The value is arbitrary; uniqueness
+/// only needs to be per-HWND. Win32 routes WM_TIMER's WPARAM back to wnd_proc
+/// so the handler can distinguish multiple timers if added later.
+const SIZE_MOVE_TIMER_ID: usize = 0x5_1A_7E;
 
 // ---------------------------------------------------------------------------
 // WndProc trampoline — extern "system" callback with catch_unwind + abort (C4)
@@ -165,8 +170,18 @@ impl WinWindowInner {
     fn handle_message(&self, hwnd: HWND, msg: u32, _wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         match msg {
             WM_CLOSE => {
+                // Dispatch the event and then fall through to DefWindowProcW,
+                // whose default WM_CLOSE handler calls DestroyWindow. That in
+                // turn produces WM_DESTROY → `WindowDestroyed` is dispatched
+                // and the Arc cleanup runs in WM_NCDESTROY.
+                //
+                // This matches the macOS path where `windowWillClose:` always
+                // fires `WindowDestroyed` after `windowShouldClose:` allows
+                // the close. Phase 0 has no veto channel; future versions can
+                // add a `should_close` callback that gates DestroyWindow.
                 dispatch_event(Event::WindowCloseRequested { window: self.id });
-                LRESULT(0)
+                // SAFETY: default proc is always safe to call.
+                unsafe { DefWindowProcW(hwnd, msg, _wparam, lparam) }
             }
             WM_DESTROY => {
                 // Children may still be tearing down; defer Arc cleanup to WM_NCDESTROY.
@@ -176,8 +191,10 @@ impl WinWindowInner {
                 LRESULT(0)
             }
             WM_SIZE => {
-                // H7 fix: narrow LPARAM (i64 on x64) to u32 BEFORE masking.
-                // Direct mask on i64 leaks high 32 bits on x64 Windows.
+                // LPARAM is i64 on x64 Windows; cast to u32 first so the
+                // shift-right cannot accidentally surface sign-extended bits
+                // from the high half. The low 16 bits are width, the next
+                // 16 are height — matches Win32's LOWORD/HIWORD macros.
                 let lp = lparam.0 as u32;
                 let w = lp & 0xFFFF;
                 let h = (lp >> 16) & 0xFFFF;
@@ -191,6 +208,28 @@ impl WinWindowInner {
                 dispatch_event(Event::WindowRedrawRequested { window: self.id });
                 // SAFETY: Some(hwnd) is valid; None means entire client rect.
                 let _ = unsafe { ValidateRect(Some(hwnd), None) };
+                LRESULT(0)
+            }
+            WM_ENTERSIZEMOVE => {
+                // Win32 enters its own internal GetMessage loop while the user
+                // drags the window edge — our outer pump never sees WM_PAINT
+                // and the window goes white. Install a high-frequency timer
+                // and redraw from WM_TIMER to keep paint live during resize.
+                //
+                // SAFETY: hwnd is valid; period 1ms; no callback (use WM_TIMER).
+                unsafe { SetTimer(Some(hwnd), SIZE_MOVE_TIMER_ID, 1, None) };
+                LRESULT(0)
+            }
+            WM_EXITSIZEMOVE => {
+                // SAFETY: hwnd + timer id are valid; failure is non-fatal.
+                let _ = unsafe { KillTimer(Some(hwnd), SIZE_MOVE_TIMER_ID) };
+                LRESULT(0)
+            }
+            WM_TIMER if _wparam.0 == SIZE_MOVE_TIMER_ID => {
+                // Drive a redraw while the size-move modal loop holds the pump.
+                // WM_SIZE during the modal loop already dispatches the new
+                // dimensions, so we only need to request paint here.
+                dispatch_event(Event::WindowRedrawRequested { window: self.id });
                 LRESULT(0)
             }
             WM_DPICHANGED => {
@@ -455,10 +494,25 @@ impl Platform for WinPlatform {
         dispatch_event(Event::Resumed);
 
         // Message pump — blocks until WM_QUIT.
+        // GetMessageW returns:
+        //   > 0 — a normal message; translate + dispatch
+        //   = 0 — WM_QUIT received; exit cleanly
+        //   < 0 — error (BOOL is signed when used as i32); MSG is unspecified.
+        // The `.as_bool()` form treats any nonzero value as "got a message",
+        // so an error path would translate uninitialized MSG bytes. Branch
+        // on the raw return value instead.
         let mut msg = MSG::default();
-        // SAFETY: &mut msg is a valid output pointer; None = all windows on this thread.
-        while unsafe { GetMessageW(&mut msg, None, 0, 0) }.as_bool() {
-            // SAFETY: msg is a valid MSG from GetMessageW.
+        loop {
+            // SAFETY: &mut msg is a valid output pointer; None = all windows on this thread.
+            let ret = unsafe { GetMessageW(&mut msg, None, 0, 0) };
+            if ret.0 == 0 {
+                break;
+            }
+            if ret.0 == -1 {
+                log::error!("slate: GetMessageW returned -1; aborting message pump");
+                break;
+            }
+            // SAFETY: msg is a valid MSG from GetMessageW (ret > 0).
             let _ = unsafe { TranslateMessage(&msg) };
             // SAFETY: msg is a valid MSG from GetMessageW.
             unsafe { DispatchMessageW(&msg) };
