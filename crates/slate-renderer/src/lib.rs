@@ -31,6 +31,7 @@ pub mod instanced_rect_pipeline;
 pub mod pipeline_shared;
 pub mod rect_pipeline;
 pub mod scene;
+pub mod shadow_pipeline;
 pub use color::{
     linear_to_srgb_channel, linear_to_srgb_u8, srgb_channel_to_linear, srgb_to_linear,
     srgb_u8_to_linear, srgb_u8_to_linear_premul,
@@ -41,6 +42,7 @@ pub use instanced_rect_pipeline::InstancedRectPipeline;
 pub use pipeline_shared::{ViewportUniform, create_unit_quad, viewport_bind_group_layout};
 pub use rect_pipeline::{RectPipeline, RectUniform};
 pub use scene::{GlyphInstance, ImageInstance, Layer, RectInstance, Scene, ShadowInstance};
+pub use shadow_pipeline::ShadowPipeline;
 
 use std::num::NonZeroU32;
 use std::sync::Arc;
