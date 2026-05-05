@@ -7,6 +7,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+readme = "README.md"
+keywords = ["gui", "gpu", "wgpu", "renderer", "graphics"]
+categories = ["gui", "graphics", "rendering::graphics-api"]
 
 [dependencies]
 slate-platform = { path = "../slate-platform", version = "0.0.1" }

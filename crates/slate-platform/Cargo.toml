@@ -7,6 +7,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+readme = "README.md"
+keywords = ["gui", "window", "platform", "event-loop", "native"]
+categories = ["gui", "os"]
 
 [dependencies]
 raw-window-handle.workspace = true
