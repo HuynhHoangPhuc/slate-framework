@@ -17,9 +17,9 @@
 //!
 //! Pipeline does NOT own the atlas. `Renderer` (Phase 7) owns one shared
 //! color atlas; the pipeline holds a `BindGroup` referencing the atlas's
-//! `TextureView` plus a linear sampler. When the atlas re-allocates the
+//! texture view plus a linear sampler. When the atlas re-allocates the
 //! underlying texture (page growth in a future phase), the renderer must
-//! call [`rebuild_atlas_bg`] so the bind group's `TextureView` stays valid.
+//! call [`rebuild_atlas_bg`] with the new `Atlas` so the bind group stays valid.
 //!
 //! # Color contract
 //!
@@ -40,7 +40,7 @@ use wgpu::{
     BufferAddress, BufferDescriptor, BufferUsages, ColorTargetState, ColorWrites, Device,
     FragmentState, MultisampleState, PipelineLayoutDescriptor, PrimitiveState, PrimitiveTopology,
     Queue, RenderPass, RenderPipeline, RenderPipelineDescriptor, Sampler, ShaderModuleDescriptor,
-    ShaderSource, TextureFormat, TextureView, VertexAttribute, VertexBufferLayout, VertexFormat,
+    ShaderSource, TextureFormat, VertexAttribute, VertexBufferLayout, VertexFormat,
     VertexState, VertexStepMode,
 };
 
@@ -109,7 +109,7 @@ impl ImagePipeline {
         // Phase 1 contract: surface must be sRGB so hw handles linear→sRGB
         // encoding. Non-sRGB surfaces compile and run but produce washed-out
         // output (red-team P2-12).
-        debug_assert!(
+        assert!(
             matches!(
                 surface_format,
                 TextureFormat::Bgra8UnormSrgb | TextureFormat::Rgba8UnormSrgb
@@ -121,7 +121,7 @@ impl ImagePipeline {
         // wired to image pipeline" footgun. The shared atlas BGL accepts
         // either format (filterable Float), so wgpu validation never sees the
         // mistake; output would silently broadcast `tex.r` to all channels.
-        debug_assert_eq!(
+        assert_eq!(
             image_atlas.format(),
             Format::Rgba8UnormSrgb,
             "ImagePipeline requires an Rgba8UnormSrgb atlas; got {:?}",
@@ -221,9 +221,17 @@ impl ImagePipeline {
         }
     }
 
-    /// Rebuild the atlas bind group with a new `TextureView`. Call this when
-    /// the atlas re-allocates its underlying texture (Phase 7+ atlas growth).
-    pub fn rebuild_atlas_bg(&mut self, device: &Device, atlas_view: &TextureView) {
+    /// Rebuild the atlas bind group from a new `Atlas`. Call this when the
+    /// atlas re-allocates its underlying texture (Phase 7+ atlas growth).
+    /// Panics if `image_atlas` has the wrong format (must be `Rgba8UnormSrgb`).
+    pub fn rebuild_atlas_bg(&mut self, device: &Device, image_atlas: &Atlas) {
+        assert_eq!(
+            image_atlas.format(),
+            Format::Rgba8UnormSrgb,
+            "ImagePipeline::rebuild_atlas_bg requires an Rgba8UnormSrgb atlas; got {:?}",
+            image_atlas.format(),
+        );
+        let atlas_view = image_atlas.texture_view();
         self.atlas_bg = atlas_bind_group(
             device,
             "slate-image-atlas-bg",
@@ -272,16 +280,23 @@ impl ImagePipeline {
             range,
             self.last_instance_count,
         );
+        // Clamp so release builds don't silently draw stale instances past
+        // last_instance_count. The debug_assert above still catches caller
+        // bugs in debug builds.
+        let end = range.end.min(self.last_instance_count);
+        if end <= range.start {
+            return;
+        }
         let stride = mem::size_of::<ImageInstance>() as BufferAddress;
         let byte_range =
-            (range.start as BufferAddress * stride)..(range.end as BufferAddress * stride);
+            (range.start as BufferAddress * stride)..(end as BufferAddress * stride);
 
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, viewport_bg, &[]);
         pass.set_bind_group(1, &self.atlas_bg, &[]);
         pass.set_vertex_buffer(0, unit_quad.slice(..));
         pass.set_vertex_buffer(1, self.instance_buffer.slice(byte_range));
-        pass.draw(0..6, 0..(range.end - range.start));
+        pass.draw(0..6, 0..(end - range.start));
     }
 
     /// Current capacity in bytes — exposed for tests / observability.

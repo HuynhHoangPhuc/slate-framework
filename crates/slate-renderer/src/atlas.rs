@@ -373,6 +373,15 @@ impl Atlas {
         self.format
     }
 
+    /// Normalized UV size of one texel on this atlas page.
+    ///
+    /// Returns `1.0 / page_side_length`. Used by [`crate::allocate_glyph`] to
+    /// compute the 1-texel inset without coupling to the `PAGE_SIZE` constant
+    /// directly — Phase 2 multi-page atlases can override this per page.
+    pub fn texel_size_uv(&self) -> f32 {
+        1.0 / self.page_size as f32
+    }
+
     /// Whether `alloc_id` is currently live in the atlas.
     pub fn contains(&self, alloc_id: AllocId) -> bool {
         self.live.contains_key(&alloc_id)

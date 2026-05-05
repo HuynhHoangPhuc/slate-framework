@@ -17,10 +17,10 @@
 //! # Atlas binding
 //!
 //! Pipeline does NOT own the atlas. Phase 7 `Renderer` owns one shared glyph
-//! atlas; the pipeline holds a `BindGroup` referencing the atlas's
-//! `TextureView` plus a linear sampler. When the atlas re-allocates the
-//! underlying texture, the renderer must call [`rebuild_atlas_bg`] so the
-//! bind group's `TextureView` stays valid.
+//! atlas; the pipeline holds a `BindGroup` referencing the atlas's texture
+//! view plus a linear sampler. When the atlas re-allocates the underlying
+//! texture, the renderer must call [`rebuild_atlas_bg`] with the new `Atlas`
+//! so the bind group stays valid.
 //!
 //! # Color contract
 //!
@@ -50,7 +50,7 @@ use wgpu::{
     BufferAddress, BufferDescriptor, BufferUsages, ColorTargetState, ColorWrites, Device,
     FragmentState, MultisampleState, PipelineLayoutDescriptor, PrimitiveState, PrimitiveTopology,
     Queue, RenderPass, RenderPipeline, RenderPipelineDescriptor, Sampler, ShaderModuleDescriptor,
-    ShaderSource, TextureFormat, TextureView, VertexAttribute, VertexBufferLayout, VertexFormat,
+    ShaderSource, TextureFormat, VertexAttribute, VertexBufferLayout, VertexFormat,
     VertexState, VertexStepMode,
 };
 
@@ -123,7 +123,7 @@ impl GlyphPipeline {
     ) -> Self {
         // Phase 1 contract: surface must be sRGB so hw handles linear→sRGB
         // encoding. Glyph atlas itself is linear R8 — separate concern.
-        debug_assert!(
+        assert!(
             matches!(
                 surface_format,
                 TextureFormat::Bgra8UnormSrgb | TextureFormat::Rgba8UnormSrgb
@@ -136,7 +136,7 @@ impl GlyphPipeline {
         // R8Unorm and Rgba8UnormSrgb, so wgpu validation never sees the
         // mistake; output would silently be `texture.r` of an sRGB color
         // texel used as alpha mask.
-        debug_assert_eq!(
+        assert_eq!(
             glyph_atlas.format(),
             Format::R8Unorm,
             "GlyphPipeline requires an R8Unorm atlas; got {:?}",
@@ -236,9 +236,17 @@ impl GlyphPipeline {
         }
     }
 
-    /// Rebuild the atlas bind group with a new `TextureView`. Call this when
-    /// the atlas re-allocates its underlying texture (Phase 7+ atlas growth).
-    pub fn rebuild_atlas_bg(&mut self, device: &Device, atlas_view: &TextureView) {
+    /// Rebuild the atlas bind group from a new `Atlas`. Call this when the
+    /// atlas re-allocates its underlying texture (Phase 7+ atlas growth).
+    /// Panics if `glyph_atlas` has the wrong format (must be `R8Unorm`).
+    pub fn rebuild_atlas_bg(&mut self, device: &Device, glyph_atlas: &Atlas) {
+        assert_eq!(
+            glyph_atlas.format(),
+            Format::R8Unorm,
+            "GlyphPipeline::rebuild_atlas_bg requires an R8Unorm atlas; got {:?}",
+            glyph_atlas.format(),
+        );
+        let atlas_view = glyph_atlas.texture_view();
         self.atlas_bg = atlas_bind_group(
             device,
             "slate-glyph-atlas-bg",
@@ -287,16 +295,23 @@ impl GlyphPipeline {
             range,
             self.last_instance_count,
         );
+        // Clamp so release builds don't silently draw stale instances past
+        // last_instance_count. The debug_assert above still catches caller
+        // bugs in debug builds.
+        let end = range.end.min(self.last_instance_count);
+        if end <= range.start {
+            return;
+        }
         let stride = mem::size_of::<GlyphInstance>() as BufferAddress;
         let byte_range =
-            (range.start as BufferAddress * stride)..(range.end as BufferAddress * stride);
+            (range.start as BufferAddress * stride)..(end as BufferAddress * stride);
 
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, viewport_bg, &[]);
         pass.set_bind_group(1, &self.atlas_bg, &[]);
         pass.set_vertex_buffer(0, unit_quad.slice(..));
         pass.set_vertex_buffer(1, self.instance_buffer.slice(byte_range));
-        pass.draw(0..6, 0..(range.end - range.start));
+        pass.draw(0..6, 0..(end - range.start));
     }
 
     /// Current capacity in bytes — exposed for tests / observability.
@@ -356,8 +371,9 @@ pub fn allocate_glyph(
         max: PAGE_SIZE,
     })?;
     let AtlasAllocation { uv_rect, alloc_id } = atlas.allocate(padded_w, padded_h)?;
-    // 1-texel inset in normalized coords.
-    let texel = 1.0 / PAGE_SIZE as f32;
+    // 1-texel inset in normalized coords. Query the atlas so Phase 2
+    // multi-page atlases (potentially different page sizes) stay correct.
+    let texel = atlas.texel_size_uv();
     let inset = [
         uv_rect[0] + texel,
         uv_rect[1] + texel,

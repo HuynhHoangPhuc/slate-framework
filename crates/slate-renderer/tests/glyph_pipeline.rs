@@ -311,7 +311,7 @@ fn rebuild_atlas_bg_does_not_break_subsequent_draws() {
     let uv_rect = upload_mask(&mut atlas, &queue, 16, 16, &mask);
 
     let mut pipeline = GlyphPipeline::new(&device, format, &bgl, &atlas);
-    pipeline.rebuild_atlas_bg(&device, atlas.texture_view());
+    pipeline.rebuild_atlas_bg(&device, &atlas);
 
     let instances = vec![GlyphInstance {
         rect: [0.0, 0.0, w as f32, h as f32],

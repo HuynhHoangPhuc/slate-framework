@@ -401,7 +401,7 @@ fn rebuild_atlas_bg_does_not_break_subsequent_draws() {
     let uv_rect = upload_patch(&mut atlas, &queue, 4, 4, &red);
 
     let mut pipeline = ImagePipeline::new(&device, format, &bgl, &atlas);
-    pipeline.rebuild_atlas_bg(&device, atlas.texture_view());
+    pipeline.rebuild_atlas_bg(&device, &atlas);
 
     let instances = vec![ImageInstance {
         rect: [0.0, 0.0, w as f32, h as f32],
