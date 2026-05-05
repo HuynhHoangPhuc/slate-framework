@@ -23,7 +23,8 @@ use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{define_class, msg_send, DefinedClass, MainThreadOnly};
 use objc2_app_kit::{
     NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSBackingStoreType,
-    NSView, NSWindow, NSWindowDelegate, NSWindowStyleMask,
+    NSEvent, NSEventModifierFlags, NSEventType, NSView, NSWindow, NSWindowDelegate,
+    NSWindowStyleMask,
 };
 use objc2_foundation::{
     MainThreadMarker, NSNotification, NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize,
@@ -198,8 +199,8 @@ define_class!(
                         .map(|v| v.frame())
                         .unwrap_or(NSRect::ZERO);
                     let scale = win.backingScaleFactor();
-                    let w = (frame.size.width * scale) as u32;
-                    let h = (frame.size.height * scale) as u32;
+                    let w = (frame.size.width * scale).round() as u32;
+                    let h = (frame.size.height * scale).round() as u32;
                     dispatch_event(Event::WindowResized { window: id, size: (w, h) });
                 }
             });
@@ -221,11 +222,42 @@ define_class!(
         #[unsafe(method(windowWillClose:))]
         fn window_will_close(&self, _notification: &NSNotification) {
             let id = self.ivars().window_id.get();
-            let mtm = self.mtm();
             ffi_boundary(|| {
                 dispatch_event(Event::WindowDestroyed { window: id });
-                // Default policy: quit when the last window closes.
-                NSApplication::sharedApplication(mtm).terminate(None);
+                // Quit policy lives in the user's `WindowCloseRequested`
+                // handler; calling `terminate:` here would invoke `exit()`
+                // and skip `Event::Exiting` entirely.
+            });
+        }
+
+        /// Called when the window's backing scale factor changes (e.g. user
+        /// drags the window between displays of different DPI). Re-syncs the
+        /// `CAMetalLayer.contentsScale` so subsequent renders match the new
+        /// physical pixel density.
+        #[unsafe(method(windowDidChangeBackingProperties:))]
+        fn window_did_change_backing_properties(&self, notification: &NSNotification) {
+            let id = self.ivars().window_id.get();
+            ffi_boundary(|| {
+                let Some(win) = notification
+                    .object()
+                    .and_then(|obj| obj.downcast::<NSWindow>().ok())
+                else {
+                    return;
+                };
+                let scale = win.backingScaleFactor();
+                if let Some(view) = win.contentView() {
+                    if let Some(layer) = view.layer() {
+                        layer.setContentsScale(scale);
+                    }
+                    // Drawable size in physical pixels follows the new scale.
+                    let frame = view.frame();
+                    let w = (frame.size.width * scale).round() as u32;
+                    let h = (frame.size.height * scale).round() as u32;
+                    dispatch_event(Event::WindowResized {
+                        window: id,
+                        size: (w, h),
+                    });
+                }
             });
         }
     }
@@ -368,12 +400,14 @@ impl MacWindow {
 
 impl Window for MacWindow {
     fn size(&self) -> (u32, u32) {
-        // Physical pixels = logical content size × backing scale.
+        // Physical pixels = logical content size × backing scale. Round to the
+        // nearest integer so a 1.5× display reports 600 px for a 400 pt frame
+        // instead of truncating to 599.
         let frame = self.view.frame();
         let scale = self.ns_window.backingScaleFactor();
         (
-            (frame.size.width * scale) as u32,
-            (frame.size.height * scale) as u32,
+            (frame.size.width * scale).round() as u32,
+            (frame.size.height * scale).round() as u32,
         )
     }
 
@@ -511,8 +545,27 @@ impl Platform for MacPlatform {
     }
 
     fn quit(&self) {
-        // `terminate:` is idempotent; safe to call even if the run loop is not
-        // active (AppKit ignores it in that case).
-        self.app.terminate(None);
+        // Use `stop:` rather than `terminate:` so `app.run()` returns control
+        // to our caller — `terminate:` invokes `exit()` and skips the
+        // `Event::Exiting` dispatch in `run()`.
+        //
+        // `stop:` only takes effect on the next event-loop iteration; if no
+        // events are pending the loop blocks indefinitely. Post a synthetic
+        // ApplicationDefined event to guarantee the loop wakes immediately.
+        self.app.stop(None);
+        let event = NSEvent::otherEventWithType_location_modifierFlags_timestamp_windowNumber_context_subtype_data1_data2(
+            NSEventType::ApplicationDefined,
+            NSPoint::new(0.0, 0.0),
+            NSEventModifierFlags::empty(),
+            0.0,
+            0,
+            None,
+            0,
+            0,
+            0,
+        );
+        if let Some(event) = event {
+            self.app.postEvent_atStart(&event, true);
+        }
     }
 }
