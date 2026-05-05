@@ -1,5 +1,7 @@
 # slate-framework
 
+[![Release](https://img.shields.io/github/v/release/HuynhHoangPhuc/slate-framework)](https://github.com/HuynhHoangPhuc/slate-framework/releases)
+
 GPU-accelerated Rust UI framework. Native window/event-loop layer (no winit), `wgpu` rendering, custom WGSL SDF shaders.
 
 **Status:** Phase 1 complete — scene data structure, four instanced pipelines (rect, image, glyph, shadow), atlas module, painter's-algorithm layer stack, 62 tests passing.
