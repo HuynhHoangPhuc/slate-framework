@@ -1,6 +1,6 @@
-//! End-to-end smoke test for the Phase 1 premultiplied-alpha contract.
+//! End-to-end smoke test for the premultiplied-alpha contract.
 //!
-//! Renders the rect pipeline (`shaders/rect.wgsl`) into a 32×32 off-screen
+//! Renders a single rect via [`InstancedRectPipeline`] into a 32×32 off-screen
 //! `Bgra8UnormSrgb` texture with `srgb_u8_to_linear_premul([255, 0, 0, 128])`
 //! and asserts the center pixel reads back as roughly `(187, 0, 0, 128)`.
 //!
@@ -14,10 +14,13 @@
 
 mod common;
 
-use slate_renderer::{RectPipeline, RectUniform, srgb_u8_to_linear_premul};
+use slate_renderer::{
+    InstancedRectPipeline, RectInstance, ViewportUniform, create_unit_quad,
+    srgb_u8_to_linear_premul, viewport_bind_group_layout,
+};
 use wgpu::{
-    Color, LoadOp, Operations, RenderPassColorAttachment, RenderPassDescriptor, StoreOp,
-    TextureFormat,
+    BindGroupDescriptor, BindGroupEntry, BindingResource, BufferDescriptor, BufferUsages, Color,
+    LoadOp, Operations, RenderPassColorAttachment, RenderPassDescriptor, StoreOp, TextureFormat,
 };
 
 #[test]
@@ -28,20 +31,41 @@ fn premul_red_half_alpha_round_trips_through_pipeline() {
     };
 
     let format = TextureFormat::Bgra8UnormSrgb;
-    let pipeline = RectPipeline::new(&device, format);
-
     let (w, h) = (32u32, 32u32);
-    pipeline.upload(
-        &queue,
-        RectUniform {
-            center: [w as f32 / 2.0, h as f32 / 2.0],
-            half_size: [8.0, 8.0],
-            color: srgb_u8_to_linear_premul([255, 0, 0, 128]),
-            viewport_size: [w as f32, h as f32],
-            corner_radius: 0.0,
-            _pad: 0.0,
-        },
+
+    let bgl = viewport_bind_group_layout(&device);
+    let viewport_buf = device.create_buffer(&BufferDescriptor {
+        label: Some("smoke-viewport-buf"),
+        size: std::mem::size_of::<ViewportUniform>() as u64,
+        usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    queue.write_buffer(
+        &viewport_buf,
+        0,
+        bytemuck::bytes_of(&ViewportUniform {
+            size: [w as f32, h as f32],
+            _pad: [0.0; 2],
+        }),
     );
+    let viewport_bg = device.create_bind_group(&BindGroupDescriptor {
+        label: Some("smoke-viewport-bg"),
+        layout: &bgl,
+        entries: &[BindGroupEntry {
+            binding: 0,
+            resource: BindingResource::Buffer(viewport_buf.as_entire_buffer_binding()),
+        }],
+    });
+    let unit_quad = create_unit_quad(&device);
+    let mut pipeline = InstancedRectPipeline::new(&device, format, &bgl);
+
+    let instances = [RectInstance {
+        rect: [4.0, 4.0, 24.0, 24.0],
+        color: srgb_u8_to_linear_premul([255, 0, 0, 128]),
+        corner_radius: 0.0,
+        _pad: [0.0; 3],
+    }];
+    pipeline.prepare(&device, &queue, &instances);
 
     let buf = common::render_to_texture(&device, &queue, format, w, h, |encoder, view| {
         let mut rpass = encoder.begin_render_pass(&RenderPassDescriptor {
@@ -51,7 +75,6 @@ fn premul_red_half_alpha_round_trips_through_pipeline() {
                 depth_slice: None,
                 resolve_target: None,
                 ops: Operations {
-                    // Transparent black — premul invariant: rgb ≤ a, both 0.
                     load: LoadOp::Clear(Color::TRANSPARENT),
                     store: StoreOp::Store,
                 },
@@ -61,10 +84,10 @@ fn premul_red_half_alpha_round_trips_through_pipeline() {
             timestamp_writes: None,
             multiview_mask: None,
         });
-        pipeline.record(&mut rpass);
+        pipeline.record(&mut rpass, &viewport_bg, &unit_quad, 0..1);
     });
 
-    // Center pixel — well inside the half_size=8 rect, coverage = 1.0.
+    // Center pixel — well inside the rect, coverage = 1.0.
     common::assert_pixel(&buf, w, w / 2, h / 2, [188, 0, 0, 128], 2);
 
     // A pixel just outside the rect should be clear (fragment discards).

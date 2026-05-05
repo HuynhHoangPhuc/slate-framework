@@ -2,14 +2,15 @@
 //!
 //! The renderer is configured with a `*_Srgb` surface format, which means the
 //! GPU performs an automatic linear → sRGB encoding on every fragment-shader
-//! write. Callers therefore feed **linear** color values into [`RectUniform`]
-//! (and any future material struct).
+//! write. Callers therefore feed **linear** color values into instance structs
+//! ([`RectInstance`], [`ShadowInstance`], etc.).
 //!
 //! Most artwork pipelines deliver colors in sRGB-encoded form (CSS hex, Figma,
 //! design tokens, …). Use these helpers to convert at the boundary so the
 //! intent of "I want #66ccff on screen" is preserved.
 //!
-//! [`RectUniform`]: crate::rect_pipeline::RectUniform
+//! [`RectInstance`]: crate::scene::RectInstance
+//! [`ShadowInstance`]: crate::scene::ShadowInstance
 
 /// Convert a single sRGB-encoded channel in `[0.0, 1.0]` to linear space.
 ///

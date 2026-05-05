@@ -28,7 +28,6 @@ pub mod glyph_pipeline;
 pub mod image_pipeline;
 pub mod instanced_rect_pipeline;
 pub mod pipeline_shared;
-pub mod rect_pipeline;
 pub mod scene;
 pub mod shadow_pipeline;
 pub use color::{
@@ -39,7 +38,6 @@ pub use glyph_pipeline::{GlyphPipeline, allocate_glyph};
 pub use image_pipeline::ImagePipeline;
 pub use instanced_rect_pipeline::InstancedRectPipeline;
 pub use pipeline_shared::{ViewportUniform, create_unit_quad, viewport_bind_group_layout};
-pub use rect_pipeline::{RectPipeline, RectUniform};
 pub use scene::{GlyphInstance, ImageInstance, Layer, RectInstance, Scene, ShadowInstance};
 pub use shadow_pipeline::ShadowPipeline;
 
@@ -57,7 +55,7 @@ use wgpu::{
     SurfaceTargetUnsafe, TextureFormat, TextureUsages, TextureViewDescriptor, Trace,
 };
 
-use crate::atlas::{Atlas, Format};
+use crate::atlas::{AllocId, Atlas, Format};
 
 /// wgpu-based GPU renderer.
 ///
@@ -344,6 +342,19 @@ impl Renderer {
         &mut self.glyph_atlas
     }
 
+    /// Upload pixel data to a previously allocated image-atlas slot.
+    ///
+    /// Convenience wrapper that avoids the borrow-split problem callers hit
+    /// when they need `&Queue` (from `self`) and `&mut Atlas` simultaneously.
+    pub fn upload_to_image_atlas(&self, alloc_id: AllocId, pixels: &[u8]) {
+        self.image_atlas.upload(&self.queue, alloc_id, pixels);
+    }
+
+    /// Upload pixel data to a previously allocated glyph-atlas slot.
+    pub fn upload_to_glyph_atlas(&self, alloc_id: AllocId, pixels: &[u8]) {
+        self.glyph_atlas.upload(&self.queue, alloc_id, pixels);
+    }
+
     /// Acquire the next frame, submit a clear-color pass, and present.
     ///
     /// Stub clear-only path — use [`Renderer::render_scene`] for Scene-driven
@@ -351,49 +362,6 @@ impl Renderer {
     pub fn render(&mut self) -> Result<(), RenderError> {
         let frame = self.acquire_frame()?;
         self.draw_clear_pass(&frame);
-        frame.present();
-        Ok(())
-    }
-
-    /// Legacy shim: calls `draw` inside a render pass. Use
-    /// [`Renderer::render_scene`] instead.
-    #[deprecated(note = "use render_scene(&mut Scene) — removed after Phase 8 demo lands")]
-    pub fn render_with<F>(&mut self, mut draw: F) -> Result<(), RenderError>
-    where
-        F: FnMut(&mut wgpu::RenderPass<'_>),
-    {
-        let frame = self.acquire_frame()?;
-        let view = frame.texture.create_view(&TextureViewDescriptor::default());
-        let mut encoder = self
-            .device
-            .create_command_encoder(&CommandEncoderDescriptor {
-                label: Some("slate-frame-encoder"),
-            });
-        {
-            let mut rpass = encoder.begin_render_pass(&RenderPassDescriptor {
-                label: Some("slate-draw-pass"),
-                color_attachments: &[Some(RenderPassColorAttachment {
-                    view: &view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: Operations {
-                        load: LoadOp::Clear(Color {
-                            r: 0.1,
-                            g: 0.1,
-                            b: 0.15,
-                            a: 1.0,
-                        }),
-                        store: StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                occlusion_query_set: None,
-                timestamp_writes: None,
-                multiview_mask: None::<NonZeroU32>,
-            });
-            draw(&mut rpass);
-        }
-        self.queue.submit(std::iter::once(encoder.finish()));
         frame.present();
         Ok(())
     }
@@ -473,7 +441,7 @@ impl Renderer {
                 timestamp_writes: None,
                 multiview_mask: None::<NonZeroU32>,
             });
-            // No-op pass: clear-only. For caller-driven draws use `render_with`.
+            // No-op pass: clear-only. For scene-driven draws use `render_scene`.
         }
         self.queue.submit(std::iter::once(encoder.finish()));
     }

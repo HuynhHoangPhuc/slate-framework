@@ -5,9 +5,9 @@
 //   * a per-instance RectInstance (vertex buffer 1, VertexStepMode::Instance)
 //
 // Fragment stage runs the same `sdf_rounded_rect` + 1-px AA band as
-// `rect.wgsl` (Phase 0 / Phase 1 step 1) — math copied verbatim. The only
-// structural change vs `rect.wgsl` is the data path: per-instance vertex
-// attributes instead of a uniform buffer.
+// the original Phase 0 single-rect uniform shader — math copied verbatim.
+// The only structural change is the data path: per-instance vertex attributes
+// instead of a uniform buffer.
 //
 // Color contract: `RectInstance.color` is **linear, premultiplied** RGBA.
 // Blend state at pipeline-creation site is `One/OneMinusSrcAlpha` for both
@@ -70,7 +70,7 @@ fn vs_main(in: VsIn) -> VsOut {
     return out;
 }
 
-// Identical to `rect.wgsl::sdf_rounded_rect` — kept inline (no shared module).
+// SDF rounded-rect helper — kept inline (WGSL has no shared module).
 fn sdf_rounded_rect(p: vec2<f32>, half_size: vec2<f32>, radius: f32) -> f32 {
     let q = abs(p) - half_size + vec2(radius, radius);
     return length(max(q, vec2(0.0, 0.0))) + min(max(q.x, q.y), 0.0) - radius;

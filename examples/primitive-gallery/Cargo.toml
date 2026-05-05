@@ -1,0 +1,17 @@
+[package]
+name = "primitive-gallery"
+description = "Phase 1 anchor demo: renders all four primitive types across layered Scene"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+slate-platform = { path = "../../crates/slate-platform", version = "0.0.1" }
+slate-renderer = { path = "../../crates/slate-renderer", version = "0.0.1" }
+log.workspace = true
+env_logger.workspace = true
+pollster.workspace = true

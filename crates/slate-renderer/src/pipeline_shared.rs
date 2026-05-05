@@ -60,7 +60,7 @@ pub fn viewport_bind_group_layout(device: &Device) -> BindGroupLayout {
 /// `corner` at `@location(0)`. Index buffer is omitted — 6 verts is below
 /// the index-overhead break-even.
 pub fn create_unit_quad(device: &Device) -> Buffer {
-    // Same winding as `rect.wgsl::vs_main` (CCW).
+    // CCW winding (matches all instanced pipeline shaders).
     const QUAD: [[f32; 2]; 6] = [
         [-1.0, -1.0],
         [1.0, -1.0],

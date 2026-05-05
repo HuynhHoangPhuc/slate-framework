@@ -4,6 +4,7 @@ members = [
     "crates/slate-renderer",
     "crates/slate-framework",
     "examples/hello-rect",
+    "examples/primitive-gallery",
 ]
 resolver = "2"
 

@@ -1,6 +1,6 @@
 //! Instanced rounded-rect pipeline (Phase 2).
 //!
-//! Replaces Phase 0 / Phase 1's single-rect [`crate::RectPipeline`] (one
+//! Replaces the Phase 0 single-rect uniform pipeline (one
 //! 48-byte uniform per draw) with an instanced pipeline that draws every
 //! `RectInstance` from a [`crate::Scene`] in a single `draw(0..6, 0..N)` call.
 //! Shader math is byte-for-byte identical — only the data path changes.

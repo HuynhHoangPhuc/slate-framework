@@ -872,6 +872,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8cf8e6a8aa66ce33f63993ffc4ea4271eb5b0530a9002db8455ea6050c77bfa"
 
 [[package]]
+name = "primitive-gallery"
+version = "0.0.1"
+dependencies = [
+ "env_logger",
+ "log",
+ "pollster",
+ "slate-platform",
+ "slate-renderer",
+]
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
