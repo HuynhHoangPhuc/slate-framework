@@ -68,7 +68,6 @@ fn main() {
                 start.elapsed().as_secs_f32() * 1000.0
             );
             *renderer.borrow_mut() = Some(r);
-            window_ref.request_redraw();
         }
 
         Event::WindowResized { size, .. } => {
