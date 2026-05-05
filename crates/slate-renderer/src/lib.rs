@@ -1,9 +1,8 @@
 //! GPU renderer for the slate-framework UI framework, built on `wgpu`.
 //!
-//! Owns the surface + device and exposes a stub clear-color render pass plus
-//! [`Renderer::render_with`], which lets callers issue draw calls against
-//! caller-built pipelines (`InstancedRectPipeline`, `ImagePipeline`,
-//! `GlyphPipeline`, …) inside the frame's render pass.
+//! The primary entry point is [`Renderer::render_scene`], which takes a
+//! [`Scene`] and draws all layers (shadows → rects → glyphs → images per
+//! layer) in a single render pass with one `Queue::submit`.
 //!
 //! # Lifecycle contract
 //!
@@ -50,29 +49,44 @@ use std::sync::Arc;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use slate_platform::Window;
 use wgpu::{
-    Adapter, Backends, Color, CommandEncoderDescriptor, CurrentSurfaceTexture, Device,
+    Adapter, Backends, BindGroup, BindGroupDescriptor, BindGroupEntry, BindingResource, Buffer,
+    BufferDescriptor, BufferUsages, Color, CommandEncoderDescriptor, CurrentSurfaceTexture, Device,
     DeviceDescriptor, ExperimentalFeatures, Features, Instance, InstanceDescriptor, Limits, LoadOp,
     MemoryHints, Operations, PresentMode, Queue, RenderPassColorAttachment, RenderPassDescriptor,
     RequestAdapterOptions, RequestDeviceError, StoreOp, Surface, SurfaceConfiguration,
     SurfaceTargetUnsafe, TextureFormat, TextureUsages, TextureViewDescriptor, Trace,
 };
 
+use crate::atlas::{Atlas, Format};
+
 /// wgpu-based GPU renderer.
 ///
-/// Owns `Instance`, `Adapter`, `Device`, `Queue`, `Surface`, and `SurfaceConfiguration`.
-/// Also holds the `Arc<dyn Window>` to guarantee the surface stays valid as long as
-/// the renderer is alive (wgpu surfaces borrow the window's raw handle).
+/// Owns the full rendering stack: surface, device, atlases, pipelines, and
+/// shared resources (viewport uniform, unit quad). The primary render path is
+/// [`Renderer::render_scene`].
 pub struct Renderer {
-    // Instance must be kept alive for adapter/surface lifetimes.
     _instance: Instance,
-    // Kept alive for adapter-info logging and potential future introspection.
     _adapter: Adapter,
     device: Device,
     queue: Queue,
     surface: Surface<'static>,
     surface_config: SurfaceConfiguration,
-    // Keep window alive so the raw handle underlying the surface is never freed.
     _window: Arc<dyn Window>,
+
+    // Shared GPU resources (Phase 7).
+    viewport_buf: Buffer,
+    viewport_bg: BindGroup,
+    unit_quad: Buffer,
+
+    // Atlases.
+    image_atlas: Atlas,
+    glyph_atlas: Atlas,
+
+    // Pipelines.
+    rect_pipeline: InstancedRectPipeline,
+    shadow_pipeline: ShadowPipeline,
+    image_pipeline: ImagePipeline,
+    glyph_pipeline: GlyphPipeline,
 }
 
 impl Renderer {
@@ -168,6 +182,42 @@ impl Renderer {
         };
         surface.configure(&device, &surface_config);
 
+        // --- Shared resources (Phase 7) ---
+        let viewport_bgl = pipeline_shared::viewport_bind_group_layout(&device);
+        let viewport_buf = device.create_buffer(&BufferDescriptor {
+            label: Some("slate-viewport-buf"),
+            size: std::mem::size_of::<ViewportUniform>() as u64,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(
+            &viewport_buf,
+            0,
+            bytemuck::bytes_of(&ViewportUniform {
+                size: [surface_config.width as f32, surface_config.height as f32],
+                _pad: [0.0; 2],
+            }),
+        );
+        let viewport_bg = device.create_bind_group(&BindGroupDescriptor {
+            label: Some("slate-viewport-bg"),
+            layout: &viewport_bgl,
+            entries: &[BindGroupEntry {
+                binding: 0,
+                resource: BindingResource::Buffer(viewport_buf.as_entire_buffer_binding()),
+            }],
+        });
+        let unit_quad = pipeline_shared::create_unit_quad(&device);
+
+        // --- Atlases ---
+        let image_atlas = Atlas::new(&device, Format::Rgba8UnormSrgb);
+        let glyph_atlas = Atlas::new(&device, Format::R8Unorm);
+
+        // --- Pipelines ---
+        let rect_pipeline = InstancedRectPipeline::new(&device, format, &viewport_bgl);
+        let shadow_pipeline = ShadowPipeline::new(&device, format, &viewport_bgl);
+        let image_pipeline = ImagePipeline::new(&device, format, &viewport_bgl, &image_atlas);
+        let glyph_pipeline = GlyphPipeline::new(&device, format, &viewport_bgl, &glyph_atlas);
+
         Ok(Self {
             _instance: instance,
             _adapter: adapter,
@@ -176,6 +226,15 @@ impl Renderer {
             surface,
             surface_config,
             _window: window,
+            viewport_buf,
+            viewport_bg,
+            unit_quad,
+            image_atlas,
+            glyph_atlas,
+            rect_pipeline,
+            shadow_pipeline,
+            image_pipeline,
+            glyph_pipeline,
         })
     }
 
@@ -186,15 +245,109 @@ impl Renderer {
         self.surface_config.width = w;
         self.surface_config.height = h;
         self.surface.configure(&self.device, &self.surface_config);
+        self.queue.write_buffer(
+            &self.viewport_buf,
+            0,
+            bytemuck::bytes_of(&ViewportUniform {
+                size: [w as f32, h as f32],
+                _pad: [0.0; 2],
+            }),
+        );
+    }
+
+    /// Render a scene: all layers in push order, fixed primitive order within
+    /// each layer (shadows → rects → glyphs → images).
+    ///
+    /// Takes `&mut Scene` so it can call `finish()` internally — callers never
+    /// need to remember.
+    pub fn render_scene(&mut self, scene: &mut Scene) -> Result<(), RenderError> {
+        scene.finish();
+        self.image_atlas.begin_frame();
+        self.glyph_atlas.begin_frame();
+
+        // Phase A: PREPARE — all mutable upload work, no pass alive.
+        self.shadow_pipeline
+            .prepare(&self.device, &self.queue, &scene.shadows);
+        self.rect_pipeline
+            .prepare(&self.device, &self.queue, &scene.rects);
+        self.image_pipeline
+            .prepare(&self.device, &self.queue, &scene.images);
+        self.glyph_pipeline
+            .prepare(&self.device, &self.queue, &scene.glyphs);
+
+        // Phase B: RECORD — immutable iteration into a single pass.
+        let frame = self.acquire_frame()?;
+        let view = frame.texture.create_view(&TextureViewDescriptor::default());
+        let mut encoder = self
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor {
+                label: Some("slate-frame-encoder"),
+            });
+        {
+            let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                label: Some("slate-frame"),
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: Operations {
+                        load: LoadOp::Clear(Color::TRANSPARENT),
+                        store: StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+                multiview_mask: None::<NonZeroU32>,
+            });
+
+            for layer in &scene.layers {
+                self.shadow_pipeline.record(
+                    &mut pass,
+                    &self.viewport_bg,
+                    &self.unit_quad,
+                    layer.shadows.clone(),
+                );
+                self.rect_pipeline.record(
+                    &mut pass,
+                    &self.viewport_bg,
+                    &self.unit_quad,
+                    layer.rects.clone(),
+                );
+                self.glyph_pipeline.record(
+                    &mut pass,
+                    &self.viewport_bg,
+                    &self.unit_quad,
+                    layer.glyphs.clone(),
+                );
+                self.image_pipeline.record(
+                    &mut pass,
+                    &self.viewport_bg,
+                    &self.unit_quad,
+                    layer.images.clone(),
+                );
+            }
+        }
+
+        self.queue.submit(std::iter::once(encoder.finish()));
+        frame.present();
+        Ok(())
+    }
+
+    /// Mutable access to the image atlas (RGBA8) for uploading textures.
+    pub fn image_atlas_mut(&mut self) -> &mut Atlas {
+        &mut self.image_atlas
+    }
+
+    /// Mutable access to the glyph atlas (R8) for uploading glyph bitmaps.
+    pub fn glyph_atlas_mut(&mut self) -> &mut Atlas {
+        &mut self.glyph_atlas
     }
 
     /// Acquire the next frame, submit a clear-color pass, and present.
     ///
-    /// On `Outdated` or `Lost`, the surface is reconfigured and the frame is
-    /// retried once. If the retry also fails, the error is propagated.
-    ///
-    /// This is the stub clear-only path; for caller-driven draws use
-    /// [`Renderer::render_with`].
+    /// Stub clear-only path — use [`Renderer::render_scene`] for Scene-driven
+    /// rendering.
     pub fn render(&mut self) -> Result<(), RenderError> {
         let frame = self.acquire_frame()?;
         self.draw_clear_pass(&frame);
@@ -202,10 +355,9 @@ impl Renderer {
         Ok(())
     }
 
-    /// Like [`render`], but calls `draw` inside the render pass so callers can
-    /// issue additional draw commands (e.g. `RectPipeline::record`) before submit.
-    ///
-    /// The clear color and acquire/retry logic are identical to [`render`].
+    /// Legacy shim: calls `draw` inside a render pass. Use
+    /// [`Renderer::render_scene`] instead.
+    #[deprecated(note = "use render_scene(&mut Scene) — removed after Phase 8 demo lands")]
     pub fn render_with<F>(&mut self, mut draw: F) -> Result<(), RenderError>
     where
         F: FnMut(&mut wgpu::RenderPass<'_>),

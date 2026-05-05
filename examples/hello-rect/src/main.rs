@@ -1,15 +1,15 @@
-//! hello-rect — Phase 0 anchor demo.
+//! hello-rect — Phase 7 anchor demo.
 //!
-//! Opens a native window, initialises a wgpu renderer, and draws a single
-//! antialiased rounded rectangle via the SDF rect pipeline.
+//! Opens a native window, initialises the renderer, and draws a single
+//! antialiased rounded rectangle via the Scene-driven instanced rect pipeline.
 //!
-//! Run: `cargo run --example hello-rect`
+//! Run: `cargo run -p hello-rect`
 
 use std::cell::RefCell;
 use std::sync::Arc;
 
 use slate_platform::{DefaultPlatform, Event, Platform, Window, WindowOptions};
-use slate_renderer::{RectPipeline, RectUniform, Renderer, srgb_u8_to_linear_premul};
+use slate_renderer::{RectInstance, Renderer, Scene, srgb_u8_to_linear_premul};
 
 fn main() {
     env_logger::init();
@@ -22,21 +22,15 @@ fn main() {
         resizable: true,
     });
 
-    // Late-bound GPU state. Both are None until Event::Resumed fires (H2).
-    // RefCell for interior mutability across FnMut(Event) calls (C5).
     let renderer: RefCell<Option<Renderer>> = RefCell::new(None);
-    let pipeline: RefCell<Option<RectPipeline>> = RefCell::new(None);
+    let scene: RefCell<Scene> = RefCell::new(Scene::new());
 
-    // Borrow platform by reference so we can call quit() from inside the
-    // closure without moving it (Platform::run takes &self, not self) (C3).
     let platform_ref = &platform;
     let window_ref = window.clone();
 
     platform.run(move |event| {
         match event {
             Event::Resumed => {
-                // Renderer must be created here — after the OS run loop is alive.
-                // On macOS: NSApplication must be running before CAMetalLayer attaches.
                 let r = match pollster::block_on(Renderer::new(window_ref.clone())) {
                     Ok(r) => r,
                     Err(e) => {
@@ -45,65 +39,39 @@ fn main() {
                         return;
                     }
                 };
-                let p = RectPipeline::new(r.device(), r.surface_format());
                 log::info!("renderer ready");
                 *renderer.borrow_mut() = Some(r);
-                *pipeline.borrow_mut() = Some(p);
             }
 
             Event::WindowResized { size, .. } => {
-                // size is already in physical pixels (Window::size() contract).
                 if let Some(r) = renderer.borrow_mut().as_mut() {
                     r.resize(size);
                 }
             }
 
             Event::WindowRedrawRequested { .. } => {
-                // H6: silently skip until late init is complete.
-                if renderer.borrow().is_none() || pipeline.borrow().is_none() {
+                if renderer.borrow().is_none() {
                     return;
                 }
 
-                // window.size() returns physical pixels — use directly, no scale multiply.
                 let (w, h) = window_ref.size();
                 let scale = window_ref.scale_factor() as f32;
 
-                // Upload uniform (immutable borrows released before &mut renderer).
-                {
-                    let r_ref = renderer.borrow();
-                    let p_ref = pipeline.borrow();
-                    let r = r_ref.as_ref().unwrap();
-                    let p = p_ref.as_ref().unwrap();
-                    p.upload(
-                        r.queue(),
-                        RectUniform {
-                            viewport_size: [w as f32, h as f32],
-                            center: [w as f32 / 2.0, h as f32 / 2.0],
-                            // Logical 200×100 points → physical pixels.
-                            half_size: [200.0 * scale, 100.0 * scale],
-                            // Logical 24 pt corner radius → physical pixels.
-                            corner_radius: 24.0 * scale,
-                            // #66ccff (sRGB) → linear, premultiplied; the
-                            // pipeline blend assumes premultiplied source
-                            // (Phase 1 contract). Alpha = 0xff so premul ≡
-                            // straight linear; visual output unchanged.
-                            color: srgb_u8_to_linear_premul([0x66, 0xcc, 0xff, 0xff]),
-                            _pad: 0.0,
-                        },
-                    );
-                }
+                let mut s = scene.borrow_mut();
+                s.clear();
+                s.push_rect(RectInstance {
+                    rect: [
+                        w as f32 / 2.0 - 200.0 * scale,
+                        h as f32 / 2.0 - 100.0 * scale,
+                        400.0 * scale,
+                        200.0 * scale,
+                    ],
+                    color: srgb_u8_to_linear_premul([0x66, 0xcc, 0xff, 0xff]),
+                    corner_radius: 24.0 * scale,
+                    _pad: [0.0; 3],
+                });
 
-                // RectPipeline::record(&self, &mut RenderPass<'_>) has independent
-                // lifetimes (wgpu 29 set_pipeline/set_bind_group don't tie &self to 'pass),
-                // so borrowing pipeline inside the closure is safe.
-                // No ? inside FnMut(Event) — log and continue.
-                let result = renderer
-                    .borrow_mut()
-                    .as_mut()
-                    .unwrap()
-                    .render_with(|rpass| {
-                        pipeline.borrow().as_ref().unwrap().record(rpass);
-                    });
+                let result = renderer.borrow_mut().as_mut().unwrap().render_scene(&mut s);
                 if let Err(e) = result {
                     log::warn!("render skipped: {e:?}");
                 }
