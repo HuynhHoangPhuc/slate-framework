@@ -1,3 +1,8 @@
+// Each integration test file is a separate crate; an unused helper from one
+// crate's perspective is consumed by sibling test files. Suppress the
+// per-crate dead_code noise.
+#![allow(dead_code)]
+
 //! Shared headless-render test harness for slate-renderer integration tests.
 //!
 //! Each integration test file (e.g. `tests/smoke_premul.rs`) brings this in

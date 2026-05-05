@@ -21,6 +21,7 @@
 //! });
 //! ```
 
+pub mod atlas;
 pub mod color;
 pub mod instanced_rect_pipeline;
 pub mod pipeline_shared;

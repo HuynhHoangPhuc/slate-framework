@@ -17,3 +17,4 @@ bytemuck.workspace = true
 log.workspace = true
 thiserror.workspace = true
 pollster.workspace = true
+etagere = "0.2.4"
