@@ -397,17 +397,21 @@ impl Renderer {
                 // Suboptimal is still usable — reconfigure happens on the next resize event.
                 Ok(frame)
             }
-            CurrentSurfaceTexture::Outdated | CurrentSurfaceTexture::Lost => {
-                // Reconfigure and retry once.
+            CurrentSurfaceTexture::Outdated
+            | CurrentSurfaceTexture::Lost
+            | CurrentSurfaceTexture::Occluded => {
+                // Reconfigure and retry once. On macOS the first frame after
+                // window creation may return Occluded (CAMetalLayer has no
+                // drawables yet); a reconfigure + retry resolves it.
                 self.surface.configure(&self.device, &self.surface_config);
                 match self.surface.get_current_texture() {
                     CurrentSurfaceTexture::Success(frame)
                     | CurrentSurfaceTexture::Suboptimal(frame) => Ok(frame),
+                    CurrentSurfaceTexture::Occluded => Err(RenderError::Occluded),
                     other => Err(RenderError::AcquireFailed(format!("{other:?}"))),
                 }
             }
             CurrentSurfaceTexture::Timeout => Err(RenderError::Timeout),
-            CurrentSurfaceTexture::Occluded => Err(RenderError::Occluded),
             CurrentSurfaceTexture::Validation => {
                 Err(RenderError::AcquireFailed("validation error".to_owned()))
             }

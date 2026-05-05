@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
-use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send};
+use objc2::{ClassType, DefinedClass, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
     NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSBackingStoreType,
     NSEvent, NSEventModifierFlags, NSEventType, NSView, NSWindow, NSWindowDelegate,
@@ -45,6 +45,10 @@ use crate::{Event, Platform, Window, WindowId, WindowOptions};
 // `MacPlatform::run`. See the SAFETY block there for the soundness argument.
 type EventHandler = std::cell::RefCell<Option<Box<dyn FnMut(Event) + 'static>>>;
 
+/// Subtype marker for synthetic ApplicationDefined events that carry a redraw
+/// request. `data1` encodes the target `WindowId`.
+const REDRAW_EVENT_SUBTYPE: i16 = 42;
+
 thread_local! {
     static HANDLER: EventHandler = const { std::cell::RefCell::new(None) };
 }
@@ -56,6 +60,27 @@ fn dispatch_event(event: Event) {
             handler(event);
         }
     });
+}
+
+/// Post a synthetic event to the run loop that will be processed on the next
+/// iteration. Used by `request_redraw` to defer redraw delivery and avoid
+/// RefCell re-entrancy (safe to call from within a handler).
+fn post_redraw_event(window_id: WindowId) {
+    let event = NSEvent::otherEventWithType_location_modifierFlags_timestamp_windowNumber_context_subtype_data1_data2(
+        NSEventType::ApplicationDefined,
+        NSPoint::new(0.0, 0.0),
+        NSEventModifierFlags::empty(),
+        0.0,
+        0,
+        None,
+        REDRAW_EVENT_SUBTYPE,
+        window_id.0 as isize,
+        0,
+    );
+    if let Some(event) = event {
+        let mtm = MainThreadMarker::new().unwrap();
+        NSApplication::sharedApplication(mtm).postEvent_atStart(&event, false);
+    }
 }
 
 /// Abort-safe wrapper for every Rust body reachable from AppKit dispatch.
@@ -119,6 +144,15 @@ define_class!(
             true
         }
 
+        /// Provide a CAMetalLayer as the view's backing layer. Called once by
+        /// AppKit when `wantsLayer` is true. Supplying the layer here (instead
+        /// of via `setLayer:`) keeps the view layer-backed (not layer-hosting).
+        #[unsafe(method_id(makeBackingLayer))]
+        fn make_backing_layer(&self) -> Retained<objc2_quartz_core::CALayer> {
+            let metal_layer = CAMetalLayer::new();
+            Retained::into_super(metal_layer)
+        }
+
         /// Called by AppKit when the view's contents need refreshing.
         /// Translated to `Event::WindowRedrawRequested`.
         #[unsafe(method(drawRect:))]
@@ -140,16 +174,9 @@ impl MetalView {
         // `NSRect` and returns `Retained<NSView>`. The super-call signature matches.
         let view: Retained<Self> = unsafe { msg_send![super(this), initWithFrame: NSRect::ZERO] };
 
-        // Make the view layer-backed for Metal rendering.
+        // Trigger layer-backed mode. AppKit calls our `makeBackingLayer`
+        // override to create the CAMetalLayer.
         view.setWantsLayer(true);
-
-        // Create a CAMetalLayer and assign it as the view's backing layer.
-        // `CAMetalLayer::new()` is a safe factory. Casting the retained value
-        // to `&CALayer` via `AsRef` is valid because CAMetalLayer inherits
-        // from CALayer in the Obj-C class hierarchy.
-        let metal_layer = CAMetalLayer::new();
-        let ca_layer: &objc2_quartz_core::CALayer = metal_layer.as_ref();
-        view.setLayer(Some(ca_layer));
 
         view
     }
@@ -259,6 +286,18 @@ define_class!(
                 }
             });
         }
+
+        /// Called when the window's occlusion state changes. On macOS, the
+        /// first frame cannot render until the window is visible to the
+        /// compositor (wgpu checks occlusionState before nextDrawable).
+        /// Fire a redraw when the window becomes visible.
+        #[unsafe(method(windowDidChangeOcclusionState:))]
+        fn window_did_change_occlusion_state(&self, _notification: &NSNotification) {
+            let id = self.ivars().window_id.get();
+            ffi_boundary(|| {
+                post_redraw_event(id);
+            });
+        }
     }
 );
 
@@ -269,6 +308,44 @@ impl WindowDelegate {
         });
         // SAFETY: `NSObject`'s `init` has no additional requirements.
         unsafe { msg_send![super(this), init] }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SlateApplication — custom NSApplication subclass to intercept synthetic events
+// ---------------------------------------------------------------------------
+
+define_class!(
+    #[unsafe(super(NSApplication, NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[ivars = ()]
+    pub struct SlateApplication;
+
+    unsafe impl NSObjectProtocol for SlateApplication {}
+
+    impl SlateApplication {
+        /// Override sendEvent: to intercept our synthetic redraw events before
+        /// they reach the default (no-op) routing for ApplicationDefined events.
+        #[unsafe(method(sendEvent:))]
+        fn send_event(&self, event: &NSEvent) {
+            if event.r#type() == NSEventType::ApplicationDefined
+                && event.subtype() == objc2_app_kit::NSEventSubtype(REDRAW_EVENT_SUBTYPE)
+            {
+                let window_id = WindowId(event.data1() as u64);
+                ffi_boundary(|| {
+                    dispatch_event(Event::WindowRedrawRequested { window: window_id });
+                });
+                return;
+            }
+            // Forward all other events to the default NSApplication handling.
+            let _: () = unsafe { msg_send![super(self), sendEvent: event] };
+        }
+    }
+);
+
+impl SlateApplication {
+    fn shared(_mtm: MainThreadMarker) -> Retained<Self> {
+        unsafe { msg_send![Self::class(), sharedApplication] }
     }
 }
 
@@ -415,7 +492,9 @@ impl Window for MacWindow {
     }
 
     fn request_redraw(&self) {
-        self.view.setNeedsDisplay(true);
+        // Post a synthetic event processed on the next run loop iteration.
+        // Safe to call from within an event handler (no re-entrancy risk).
+        post_redraw_event(self.id);
     }
 
     fn set_title(&self, title: &str) {
@@ -477,7 +556,9 @@ impl Platform for MacPlatform {
         let mtm = MainThreadMarker::new()
             .expect("MacPlatform::new must be called from the main OS thread");
 
-        let app = NSApplication::sharedApplication(mtm);
+        // Use our NSApplication subclass so sendEvent: intercepts redraw events.
+        let slate_app = SlateApplication::shared(mtm);
+        let app: Retained<NSApplication> = Retained::into_super(slate_app);
         app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
 
         MacPlatform {
