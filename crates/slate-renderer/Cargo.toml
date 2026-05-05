@@ -12,7 +12,7 @@ keywords = ["gui", "gpu", "wgpu", "renderer", "graphics"]
 categories = ["gui", "graphics", "rendering::graphics-api"]
 
 [dependencies]
-slate-platform = { path = "../slate-platform", version = "0.0.1" }
+slate-platform = { path = "../slate-platform", version = "0.0.2" }
 wgpu.workspace = true
 raw-window-handle.workspace = true
 glam.workspace = true
