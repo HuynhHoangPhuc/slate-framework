@@ -43,6 +43,19 @@ use std::ops::Range;
 
 use bytemuck::{Pod, Zeroable};
 
+/// Truncate a `Vec::len()` to `u32`. The `Range<u32>` ranges in [`Layer`]
+/// cap a single scene at 4 G primitives per kind (256 GB at 64 B / instance —
+/// no realistic frame hits this); `debug_assert!` catches the boundary in
+/// development builds.
+#[inline]
+fn len_as_u32(n: usize) -> u32 {
+    debug_assert!(
+        n <= u32::MAX as usize,
+        "scene primitive count exceeds u32::MAX"
+    );
+    n as u32
+}
+
 // =====================================================================
 // Instance structs (GPU-bound, #[repr(C)] + Pod + Zeroable)
 // =====================================================================
@@ -206,51 +219,67 @@ impl Scene {
         self.cur_layer_open = false;
     }
 
-    /// Start a new layer. Implicitly closes the previous one (if any).
-    /// Subsequent `push_*` calls extend this layer.
+    /// Start a new layer; subsequent `push_*` calls extend it.
+    ///
+    /// Closes the previous layer (its `end` indices already reflect every
+    /// push since it was opened — closing is just a bookkeeping flip).
+    ///
+    /// Consecutive `push_layer` calls with no intervening primitive collapse
+    /// to a single empty layer (we don't accumulate zero-sized layers — the
+    /// renderer would just skip them).
     pub fn push_layer(&mut self) {
-        // Closing the previous layer is a no-op data-wise: its end indices
-        // already reflect every push since it was opened. We just flip the
-        // bookkeeping flag.
+        if self.cur_layer_open
+            && let Some(top) = self.layers.last()
+            && Self::layer_is_empty(top)
+        {
+            // Already sitting on an empty open layer — nothing to do.
+            return;
+        }
         self.layers.push(Layer::anchored(
-            self.rects.len() as u32,
-            self.shadows.len() as u32,
-            self.images.len() as u32,
-            self.glyphs.len() as u32,
+            len_as_u32(self.rects.len()),
+            len_as_u32(self.shadows.len()),
+            len_as_u32(self.images.len()),
+            len_as_u32(self.glyphs.len()),
         ));
         self.cur_layer_open = true;
+    }
+
+    fn layer_is_empty(l: &Layer) -> bool {
+        l.rects.is_empty() && l.shadows.is_empty() && l.images.is_empty() && l.glyphs.is_empty()
     }
 
     pub fn push_rect(&mut self, inst: RectInstance) {
         self.ensure_open_layer();
         self.rects.push(inst);
-        self.layers.last_mut().unwrap().rects.end = self.rects.len() as u32;
+        // ensure_open_layer guarantees layers is non-empty.
+        self.layers.last_mut().unwrap().rects.end = len_as_u32(self.rects.len());
     }
 
     pub fn push_shadow(&mut self, inst: ShadowInstance) {
         self.ensure_open_layer();
         self.shadows.push(inst);
-        self.layers.last_mut().unwrap().shadows.end = self.shadows.len() as u32;
+        self.layers.last_mut().unwrap().shadows.end = len_as_u32(self.shadows.len());
     }
 
     pub fn push_image(&mut self, inst: ImageInstance) {
         self.ensure_open_layer();
         self.images.push(inst);
-        self.layers.last_mut().unwrap().images.end = self.images.len() as u32;
+        self.layers.last_mut().unwrap().images.end = len_as_u32(self.images.len());
     }
 
     pub fn push_glyph(&mut self, inst: GlyphInstance) {
         self.ensure_open_layer();
         self.glyphs.push(inst);
-        self.layers.last_mut().unwrap().glyphs.end = self.glyphs.len() as u32;
+        self.layers.last_mut().unwrap().glyphs.end = len_as_u32(self.glyphs.len());
     }
 
     /// Close the currently-open layer. Called by `Renderer::render` before
     /// touching the scene; must not be called by external code.
     ///
-    /// Idempotent: a no-op if no layer is open. `dead_code` is silenced
-    /// because Phase 7 (`Renderer::render(&mut Scene)`) is the first
-    /// in-crate caller; tests exercise it through the test module path.
+    /// Idempotent: a no-op if no layer is open.
+    ///
+    /// `dead_code` is silenced because the only non-test caller lands in
+    /// Phase 7 (`Renderer::render(&mut Scene)` — see plan §7).
     #[allow(dead_code)]
     pub(crate) fn finish(&mut self) {
         self.cur_layer_open = false;
@@ -369,6 +398,30 @@ mod tests {
         assert_eq!(core::mem::size_of::<ShadowInstance>(), 48);
         assert_eq!(core::mem::size_of::<ImageInstance>(), 48);
         assert_eq!(core::mem::size_of::<GlyphInstance>(), 64);
+    }
+
+    #[test]
+    fn consecutive_push_layer_collapses_to_one_empty_layer() {
+        // Reviewer concern: back-to-back push_layer() shouldn't accumulate
+        // empty layers (the renderer would just skip them, but the bookkeeping
+        // is misleading). First call opens; subsequent calls on an empty open
+        // layer no-op.
+        let mut s = Scene::new();
+        s.push_layer();
+        s.push_layer();
+        s.push_layer();
+        assert_eq!(s.layers.len(), 1);
+
+        // After at least one push, push_layer should add a fresh layer again.
+        s.push_rect(dummy_rect());
+        s.push_layer();
+        assert_eq!(s.layers.len(), 2);
+        assert_eq!(s.layers[0].rects, 0..1);
+        assert_eq!(s.layers[1].rects, 1..1);
+
+        // Repeating push_layer on the (now empty) second layer collapses.
+        s.push_layer();
+        assert_eq!(s.layers.len(), 2);
     }
 
     #[test]
