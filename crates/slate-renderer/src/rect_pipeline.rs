@@ -25,9 +25,9 @@ use wgpu::{
     BindGroupLayoutEntry, BindingResource, BindingType, BlendComponent, BlendFactor,
     BlendOperation, BlendState, Buffer, BufferBindingType, BufferDescriptor, BufferUsages,
     ColorTargetState, ColorWrites, Device, FragmentState, MultisampleState,
-    PipelineLayoutDescriptor, PrimitiveState, PrimitiveTopology, Queue, RenderPass,
-    RenderPipeline, RenderPipelineDescriptor, ShaderModuleDescriptor, ShaderSource, ShaderStages,
-    TextureFormat, VertexState,
+    PipelineLayoutDescriptor, PrimitiveState, PrimitiveTopology, Queue, RenderPass, RenderPipeline,
+    RenderPipelineDescriptor, ShaderModuleDescriptor, ShaderSource, ShaderStages, TextureFormat,
+    VertexState,
 };
 
 // ----- Uniform data -----

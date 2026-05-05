@@ -20,15 +20,14 @@ use std::sync::Arc;
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
-use objc2::{define_class, msg_send, DefinedClass, MainThreadOnly};
+use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
     NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSBackingStoreType,
     NSEvent, NSEventModifierFlags, NSEventType, NSView, NSWindow, NSWindowDelegate,
     NSWindowStyleMask,
 };
 use objc2_foundation::{
-    MainThreadMarker, NSNotification, NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize,
-    NSString,
+    MainThreadMarker, NSNotification, NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString,
 };
 use objc2_quartz_core::CAMetalLayer;
 use raw_window_handle::{
@@ -139,8 +138,7 @@ impl MetalView {
         });
         // SAFETY: `NSView`'s designated initializer `initWithFrame:` takes an
         // `NSRect` and returns `Retained<NSView>`. The super-call signature matches.
-        let view: Retained<Self> =
-            unsafe { msg_send![super(this), initWithFrame: NSRect::ZERO] };
+        let view: Retained<Self> = unsafe { msg_send![super(this), initWithFrame: NSRect::ZERO] };
 
         // Make the view layer-backed for Metal rendering.
         view.setWantsLayer(true);
@@ -191,17 +189,18 @@ define_class!(
             let id = self.ivars().window_id.get();
             ffi_boundary(|| {
                 // Retrieve the physical size from the notification's NSWindow object.
-                if let Some(win) = notification.object()
+                if let Some(win) = notification
+                    .object()
                     .and_then(|obj| obj.downcast::<NSWindow>().ok())
                 {
-                    let frame = win
-                        .contentView()
-                        .map(|v| v.frame())
-                        .unwrap_or(NSRect::ZERO);
+                    let frame = win.contentView().map(|v| v.frame()).unwrap_or(NSRect::ZERO);
                     let scale = win.backingScaleFactor();
                     let w = (frame.size.width * scale).round() as u32;
                     let h = (frame.size.height * scale).round() as u32;
-                    dispatch_event(Event::WindowResized { window: id, size: (w, h) });
+                    dispatch_event(Event::WindowResized {
+                        window: id,
+                        size: (w, h),
+                    });
                 }
             });
         }
@@ -496,10 +495,7 @@ impl Platform for MacPlatform {
     where
         F: FnMut(Event),
     {
-        assert!(
-            !self.running.get(),
-            "MacPlatform::run called re-entrantly"
-        );
+        assert!(!self.running.get(), "MacPlatform::run called re-entrantly");
         self.running.set(true);
 
         // Erase the handler's lifetime to 'static for HANDLER thread-local storage.

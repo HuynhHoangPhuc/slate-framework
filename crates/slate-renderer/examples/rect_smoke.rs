@@ -16,7 +16,7 @@
 
 use wgpu::{
     Backends, BufferDescriptor, BufferUsages, Color, CommandEncoderDescriptor, DeviceDescriptor,
-    Extent3d, ExperimentalFeatures, Features, Instance, InstanceDescriptor, Limits, LoadOp,
+    ExperimentalFeatures, Extent3d, Features, Instance, InstanceDescriptor, Limits, LoadOp,
     MemoryHints, Operations, Origin3d, PollType, RenderPassColorAttachment, RenderPassDescriptor,
     RequestAdapterOptions, StoreOp, TexelCopyBufferInfo, TexelCopyBufferLayout,
     TexelCopyTextureInfo, TextureAspect, TextureDescriptor, TextureDimension, TextureFormat,

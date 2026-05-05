@@ -9,7 +9,7 @@ use std::cell::RefCell;
 use std::sync::Arc;
 
 use slate_platform::{DefaultPlatform, Event, Platform, Window, WindowOptions};
-use slate_renderer::{srgb_u8_to_linear, RectPipeline, RectUniform, Renderer};
+use slate_renderer::{RectPipeline, RectUniform, Renderer, srgb_u8_to_linear};
 
 fn main() {
     env_logger::init();
@@ -96,9 +96,13 @@ fn main() {
                 // lifetimes (wgpu 29 set_pipeline/set_bind_group don't tie &self to 'pass),
                 // so borrowing pipeline inside the closure is safe.
                 // No ? inside FnMut(Event) — log and continue.
-                let result = renderer.borrow_mut().as_mut().unwrap().render_with(|rpass| {
-                    pipeline.borrow().as_ref().unwrap().record(rpass);
-                });
+                let result = renderer
+                    .borrow_mut()
+                    .as_mut()
+                    .unwrap()
+                    .render_with(|rpass| {
+                        pipeline.borrow().as_ref().unwrap().record(rpass);
+                    });
                 if let Err(e) = result {
                     log::warn!("render skipped: {e:?}");
                 }

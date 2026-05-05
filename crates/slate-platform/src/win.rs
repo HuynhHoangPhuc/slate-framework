@@ -37,15 +37,15 @@ use windows::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForWindow, SetProcessDpiAwarenessContext,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CS_HREDRAW, CS_OWNDC, CS_VREDRAW, CW_USEDEFAULT, CREATESTRUCTW, CreateWindowExW,
-    DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect, GetMessageW,
-    GetWindowLongPtrW, GWLP_USERDATA, IDC_ARROW, KillTimer, LoadCursorW, MSG, PostQuitMessage,
-    RegisterClassExW, SetTimer, SetWindowLongPtrW, SetWindowPos, SetWindowTextW,
-    SWP_NOACTIVATE, SWP_NOZORDER, TranslateMessage, WINDOW_EX_STYLE, WNDCLASSEXW, WM_CLOSE,
-    WM_DESTROY, WM_DPICHANGED, WM_ENTERSIZEMOVE, WM_EXITSIZEMOVE, WM_NCCREATE, WM_NCDESTROY,
-    WM_PAINT, WM_SIZE, WM_TIMER, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
+    CREATESTRUCTW, CS_HREDRAW, CS_OWNDC, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW,
+    DefWindowProcW, DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetClientRect, GetMessageW,
+    GetWindowLongPtrW, IDC_ARROW, KillTimer, LoadCursorW, MSG, PostQuitMessage, RegisterClassExW,
+    SWP_NOACTIVATE, SWP_NOZORDER, SetTimer, SetWindowLongPtrW, SetWindowPos, SetWindowTextW,
+    TranslateMessage, WINDOW_EX_STYLE, WM_CLOSE, WM_DESTROY, WM_DPICHANGED, WM_ENTERSIZEMOVE,
+    WM_EXITSIZEMOVE, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_SIZE, WM_TIMER, WNDCLASSEXW,
+    WS_OVERLAPPEDWINDOW, WS_VISIBLE,
 };
-use windows::core::{w, PCWSTR};
+use windows::core::{PCWSTR, w};
 
 use crate::{Event, Platform, Window, WindowId, WindowOptions};
 
@@ -124,8 +124,7 @@ unsafe extern "system" fn wnd_proc_trampoline(
             return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
         }
 
-        let inner_ptr =
-            unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *const WinWindowInner;
+        let inner_ptr = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *const WinWindowInner;
         if inner_ptr.is_null() {
             return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
         }
@@ -377,8 +376,8 @@ impl HasWindowHandle for WinWindow {
     fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
         // SAFETY: hwnd.0 is the Win32 HWND value; NonZeroIsize is valid because
         // CreateWindowExW returns a non-null handle (or we would have panicked).
-        let hwnd_nzi = NonZeroIsize::new(self.inner.hwnd.0 as isize)
-            .expect("HWND must be non-null");
+        let hwnd_nzi =
+            NonZeroIsize::new(self.inner.hwnd.0 as isize).expect("HWND must be non-null");
         let mut handle = Win32WindowHandle::new(hwnd_nzi);
         handle.hinstance = NonZeroIsize::new(self.inner.hinstance.0 as isize);
         // SAFETY: the handle is valid for the duration of the `&self` borrow.
@@ -417,9 +416,8 @@ impl Platform for WinPlatform {
     fn new() -> Self {
         // H6 fix: enable per-monitor v2 DPI awareness once per process.
         // SAFETY: Always safe to call; failure (already set) is non-fatal.
-        let _ = unsafe {
-            SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)
-        };
+        let _ =
+            unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
 
         // SAFETY: None means "current module"; always succeeds for a running process.
         let hinstance: HINSTANCE = unsafe { GetModuleHandleW(None) }
@@ -428,8 +426,7 @@ impl Platform for WinPlatform {
 
         // H3 fix: register window class; idempotent under ERROR_CLASS_ALREADY_EXISTS.
         // SAFETY: All WNDCLASSEXW fields are valid Win32 values.
-        let cursor = unsafe { LoadCursorW(None, IDC_ARROW) }
-            .expect("LoadCursorW failed");
+        let cursor = unsafe { LoadCursorW(None, IDC_ARROW) }.expect("LoadCursorW failed");
 
         let wc = WNDCLASSEXW {
             cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,

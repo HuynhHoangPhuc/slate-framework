@@ -33,11 +33,10 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use slate_platform::Window;
 use wgpu::{
     Adapter, Backends, Color, CommandEncoderDescriptor, CurrentSurfaceTexture, Device,
-    DeviceDescriptor, ExperimentalFeatures, Features, Instance, InstanceDescriptor, Limits,
-    LoadOp, MemoryHints, Operations, PresentMode, Queue, RenderPassColorAttachment,
-    RenderPassDescriptor, RequestAdapterOptions, RequestDeviceError, StoreOp, Surface,
-    SurfaceConfiguration, SurfaceTargetUnsafe, TextureFormat, TextureUsages,
-    TextureViewDescriptor, Trace,
+    DeviceDescriptor, ExperimentalFeatures, Features, Instance, InstanceDescriptor, Limits, LoadOp,
+    MemoryHints, Operations, PresentMode, Queue, RenderPassColorAttachment, RenderPassDescriptor,
+    RequestAdapterOptions, RequestDeviceError, StoreOp, Surface, SurfaceConfiguration,
+    SurfaceTargetUnsafe, TextureFormat, TextureUsages, TextureViewDescriptor, Trace,
 };
 
 /// wgpu-based GPU renderer.
@@ -97,8 +96,7 @@ impl Renderer {
                 raw_display_handle: Some(raw_display),
             }
         };
-        let surface: Surface<'static> =
-            unsafe { instance.create_surface_unsafe(surface_target)? };
+        let surface: Surface<'static> = unsafe { instance.create_surface_unsafe(surface_target)? };
 
         let adapter = instance
             .request_adapter(&RequestAdapterOptions {
@@ -109,7 +107,10 @@ impl Renderer {
             .await
             .map_err(|_| RendererError::NoAdapter)?;
 
-        log::info!("slate-renderer: GPU adapter selected: {:?}", adapter.get_info());
+        log::info!(
+            "slate-renderer: GPU adapter selected: {:?}",
+            adapter.get_info()
+        );
 
         let (device, queue) = adapter
             .request_device(&DeviceDescriptor {
@@ -191,9 +192,7 @@ impl Renderer {
         F: FnMut(&mut wgpu::RenderPass<'_>),
     {
         let frame = self.acquire_frame()?;
-        let view = frame
-            .texture
-            .create_view(&TextureViewDescriptor::default());
+        let view = frame.texture.create_view(&TextureViewDescriptor::default());
         let mut encoder = self
             .device
             .create_command_encoder(&CommandEncoderDescriptor {
@@ -275,9 +274,7 @@ impl Renderer {
 
     /// Encode and submit a clear-color render pass (dark gray).
     fn draw_clear_pass(&self, frame: &wgpu::SurfaceTexture) {
-        let view = frame
-            .texture
-            .create_view(&TextureViewDescriptor::default());
+        let view = frame.texture.create_view(&TextureViewDescriptor::default());
         let mut encoder = self
             .device
             .create_command_encoder(&CommandEncoderDescriptor {
