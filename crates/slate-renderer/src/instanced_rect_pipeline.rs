@@ -84,6 +84,13 @@ pub struct InstancedRectPipeline {
     instance_buffer: Buffer,
     /// Capacity of `instance_buffer` in bytes.
     instance_capacity_bytes: u64,
+    /// Number of instances valid in `instance_buffer` after the last
+    /// `prepare`. Used by `record` to `debug_assert!` that requested ranges
+    /// fit the upload — a misbehaved caller asking for `range.end` past the
+    /// uploaded count would otherwise silently draw stale data left over
+    /// from a prior frame (capacity grows monotonically, so the slice is
+    /// in-bounds at the wgpu level — no panic/validation error).
+    last_instance_count: u32,
     /// `true` once we've warn-logged about hitting [`WARN_INSTANCE_CAP`];
     /// keeps the log to one line per session.
     warned_over_cap: bool,
@@ -176,6 +183,7 @@ impl InstancedRectPipeline {
             pipeline,
             instance_buffer,
             instance_capacity_bytes,
+            last_instance_count: 0,
             warned_over_cap: false,
         }
     }
@@ -185,6 +193,7 @@ impl InstancedRectPipeline {
     /// old buffer mid-pass).
     pub fn prepare(&mut self, device: &Device, queue: &Queue, instances: &[RectInstance]) {
         if instances.is_empty() {
+            self.last_instance_count = 0;
             return;
         }
         if instances.len() > WARN_INSTANCE_CAP && !self.warned_over_cap {
@@ -197,6 +206,9 @@ impl InstancedRectPipeline {
         }
         self.ensure_capacity(device, instances.len());
         queue.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(instances));
+        // Safe: u32 cap enforced by Scene's `len_as_u32`; WARN_INSTANCE_CAP
+        // (1 M) is well below u32::MAX (~4.3 G).
+        self.last_instance_count = instances.len() as u32;
     }
 
     /// Record one instanced draw covering `range` of the buffer uploaded in
@@ -217,10 +229,21 @@ impl InstancedRectPipeline {
         if range.is_empty() {
             return;
         }
+        // Guard against caller asking for instances past what `prepare`
+        // uploaded. `instance_buffer` capacity grows monotonically, so a
+        // stale slice would be in-bounds at the wgpu level but draw garbage.
+        debug_assert!(
+            range.end <= self.last_instance_count,
+            "InstancedRectPipeline::record: range {:?} extends past last_instance_count={}; \
+             prepare() was called with too few instances or not at all",
+            range,
+            self.last_instance_count,
+        );
         let stride = mem::size_of::<RectInstance>() as BufferAddress;
         let byte_range = (range.start as BufferAddress * stride)
             ..(range.end as BufferAddress * stride);
 
+        // §Success: exactly one `pass.draw` per `record` invocation.
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, viewport_bg, &[]);
         pass.set_vertex_buffer(0, unit_quad.slice(..));
@@ -235,7 +258,11 @@ impl InstancedRectPipeline {
 
     fn ensure_capacity(&mut self, device: &Device, n: usize) {
         let stride = mem::size_of::<RectInstance>() as u64;
-        let needed = n as u64 * stride;
+        // Defence-in-depth: WARN_INSTANCE_CAP (1 M) gates this in `prepare`,
+        // but `ensure_capacity` is reachable independently in tests.
+        let needed = (n as u64)
+            .checked_mul(stride)
+            .expect("instance count × stride overflows u64 (impossibly large frame)");
         if needed <= self.instance_capacity_bytes {
             return;
         }

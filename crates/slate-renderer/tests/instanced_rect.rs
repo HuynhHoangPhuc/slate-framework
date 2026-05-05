@@ -177,3 +177,270 @@ fn empty_instances_is_a_noop() {
     pipeline.prepare(&device, &queue, &[]);
     assert_eq!(pipeline.capacity_bytes(), before);
 }
+
+#[test]
+fn multi_layer_disjoint_ranges_in_single_pass() {
+    let Some((device, queue)) = common::make_headless_device() else {
+        eprintln!("instanced_rect: no GPU adapter — skipping");
+        return;
+    };
+
+    let format = TextureFormat::Bgra8UnormSrgb;
+    let (w, h) = (100u32, 100u32);
+    let (bgl, viewport_bg, _viewport_buf) = make_viewport(&device, &queue, w, h);
+    let unit_quad = create_unit_quad(&device);
+    let mut pipeline = InstancedRectPipeline::new(&device, format, &bgl);
+
+    // Prepare 5 rects: 2 in "layer 0" (indices 0..2), 3 in "layer 1" (indices 2..5).
+    let white = srgb_u8_to_linear_premul([255, 255, 255, 255]);
+    let red = srgb_u8_to_linear_premul([255, 0, 0, 255]);
+    let instances = vec![
+        // Layer 0 (indices 0..2): white rects
+        RectInstance {
+            rect: [10.0, 10.0, 8.0, 8.0],
+            color: white,
+            corner_radius: 0.0,
+            _pad: [0.0; 3],
+        },
+        RectInstance {
+            rect: [30.0, 10.0, 8.0, 8.0],
+            color: white,
+            corner_radius: 0.0,
+            _pad: [0.0; 3],
+        },
+        // Layer 1 (indices 2..5): red rects
+        RectInstance {
+            rect: [50.0, 10.0, 8.0, 8.0],
+            color: red,
+            corner_radius: 0.0,
+            _pad: [0.0; 3],
+        },
+        RectInstance {
+            rect: [70.0, 10.0, 8.0, 8.0],
+            color: red,
+            corner_radius: 0.0,
+            _pad: [0.0; 3],
+        },
+        RectInstance {
+            rect: [10.0, 30.0, 8.0, 8.0],
+            color: red,
+            corner_radius: 0.0,
+            _pad: [0.0; 3],
+        },
+    ];
+    pipeline.prepare(&device, &queue, &instances);
+
+    let buf = common::render_to_texture(&device, &queue, format, w, h, |encoder, view| {
+        let mut rpass = encoder.begin_render_pass(&RenderPassDescriptor {
+            label: Some("multi-layer-test-pass"),
+            color_attachments: &[Some(RenderPassColorAttachment {
+                view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: Operations {
+                    load: LoadOp::Clear(Color::TRANSPARENT),
+                    store: StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+            multiview_mask: None,
+        });
+        // Record layer 0 (white): range 0..2
+        pipeline.record(
+            &mut rpass,
+            &viewport_bg,
+            &unit_quad,
+            0..2,
+        );
+        // Record layer 1 (red): range 2..5
+        pipeline.record(
+            &mut rpass,
+            &viewport_bg,
+            &unit_quad,
+            2..5,
+        );
+    });
+
+    // Centers of white rects (layer 0) at (14, 14) and (34, 14) should be opaque white.
+    common::assert_pixel(&buf, w, 14, 14, [255, 255, 255, 255], 2);
+    common::assert_pixel(&buf, w, 34, 14, [255, 255, 255, 255], 2);
+
+    // Centers of red rects (layer 1) at (54, 14), (74, 14), (14, 34) should be opaque red.
+    common::assert_pixel(&buf, w, 54, 14, [255, 0, 0, 255], 2);
+    common::assert_pixel(&buf, w, 74, 14, [255, 0, 0, 255], 2);
+    common::assert_pixel(&buf, w, 14, 34, [255, 0, 0, 255], 2);
+}
+
+#[test]
+fn premul_alpha_parity_with_single_instanced_rect() {
+    let Some((device, queue)) = common::make_headless_device() else {
+        eprintln!("instanced_rect: no GPU adapter — skipping");
+        return;
+    };
+
+    let format = TextureFormat::Bgra8UnormSrgb;
+    let (w, h) = (32u32, 32u32);
+    let (bgl, viewport_bg, _viewport_buf) = make_viewport(&device, &queue, w, h);
+    let unit_quad = create_unit_quad(&device);
+    let mut pipeline = InstancedRectPipeline::new(&device, format, &bgl);
+
+    // Single instanced rect at center, same color as smoke_premul test:
+    // sRGB (255, 0, 0, 128) → linear premul (0.502, 0, 0, 0.502)
+    let instances = vec![RectInstance {
+        rect: [w as f32 / 2.0 - 8.0, h as f32 / 2.0 - 8.0, 16.0, 16.0],
+        color: srgb_u8_to_linear_premul([255, 0, 0, 128]),
+        corner_radius: 0.0,
+        _pad: [0.0; 3],
+    }];
+    pipeline.prepare(&device, &queue, &instances);
+
+    let buf = common::render_to_texture(&device, &queue, format, w, h, |encoder, view| {
+        let mut rpass = encoder.begin_render_pass(&RenderPassDescriptor {
+            label: Some("premul-parity-pass"),
+            color_attachments: &[Some(RenderPassColorAttachment {
+                view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: Operations {
+                    load: LoadOp::Clear(Color::TRANSPARENT),
+                    store: StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+            multiview_mask: None,
+        });
+        pipeline.record(
+            &mut rpass,
+            &viewport_bg,
+            &unit_quad,
+            0..1,
+        );
+    });
+
+    // Center pixel (16, 16) should match smoke_premul: ≈(188, 0, 0, 128) ±2/255.
+    // (This is the sRGB-encoded result of linear premul (0.502, 0, 0, 0.502)
+    // blended over transparent with One/OneMinusSrcAlpha blend state.)
+    common::assert_pixel(&buf, w, w / 2, h / 2, [188, 0, 0, 128], 2);
+
+    // Corner pixel (0, 0) should be clear (outside the rect).
+    common::assert_pixel(&buf, w, 0, 0, [0, 0, 0, 0], 0);
+}
+
+#[test]
+fn corner_radius_produces_rounded_corners() {
+    let Some((device, queue)) = common::make_headless_device() else {
+        eprintln!("instanced_rect: no GPU adapter — skipping");
+        return;
+    };
+
+    let format = TextureFormat::Bgra8UnormSrgb;
+    let (w, h) = (20u32, 20u32);
+    let (bgl, viewport_bg, _viewport_buf) = make_viewport(&device, &queue, w, h);
+    let unit_quad = create_unit_quad(&device);
+    let mut pipeline = InstancedRectPipeline::new(&device, format, &bgl);
+
+    // Single 16×16 rect at (2, 2) with corner_radius=8 (covers entire square).
+    // The SDF with radius=8 on a 16×16 rect means the rect occupies [0..16, 0..16]
+    // with center at (8, 8); radius-8 corners are fully rounded.
+    let white = srgb_u8_to_linear_premul([255, 255, 255, 255]);
+    let instances = vec![RectInstance {
+        rect: [2.0, 2.0, 16.0, 16.0],
+        color: white,
+        corner_radius: 8.0,
+        _pad: [0.0; 3],
+    }];
+    pipeline.prepare(&device, &queue, &instances);
+
+    let buf = common::render_to_texture(&device, &queue, format, w, h, |encoder, view| {
+        let mut rpass = encoder.begin_render_pass(&RenderPassDescriptor {
+            label: Some("corner-radius-pass"),
+            color_attachments: &[Some(RenderPassColorAttachment {
+                view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: Operations {
+                    load: LoadOp::Clear(Color::TRANSPARENT),
+                    store: StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+            multiview_mask: None,
+        });
+        pipeline.record(
+            &mut rpass,
+            &viewport_bg,
+            &unit_quad,
+            0..1,
+        );
+    });
+
+    // Center pixel (10, 10) should be opaque (well inside the rounded rect).
+    common::assert_pixel(&buf, w, 10, 10, [255, 255, 255, 255], 2);
+
+    // The four corners (e.g., pixel 2,2; 17,2; 2,17; 17,17) should be
+    // mostly discarded or very faint. With radius=8 on a 16×16 rect, the
+    // SDF at the corners is positive (outside), so coverage is near 0.
+    // Allow some AA bleed (tolerance=2), but expect mostly transparent.
+    common::assert_pixel(&buf, w, 2, 2, [0, 0, 0, 0], 1);
+    common::assert_pixel(&buf, w, 17, 2, [0, 0, 0, 0], 1);
+    common::assert_pixel(&buf, w, 2, 17, [0, 0, 0, 0], 1);
+    common::assert_pixel(&buf, w, 17, 17, [0, 0, 0, 0], 1);
+}
+
+#[test]
+fn empty_range_in_record_is_safe() {
+    let Some((device, queue)) = common::make_headless_device() else {
+        eprintln!("instanced_rect: no GPU adapter — skipping");
+        return;
+    };
+
+    let format = TextureFormat::Bgra8UnormSrgb;
+    let (w, h) = (100u32, 100u32);
+    let (bgl, viewport_bg, _viewport_buf) = make_viewport(&device, &queue, w, h);
+    let unit_quad = create_unit_quad(&device);
+    let mut pipeline = InstancedRectPipeline::new(&device, format, &bgl);
+
+    // Prepare with one rect.
+    let white = srgb_u8_to_linear_premul([255, 255, 255, 255]);
+    let instances = vec![RectInstance {
+        rect: [10.0, 10.0, 8.0, 8.0],
+        color: white,
+        corner_radius: 0.0,
+        _pad: [0.0; 3],
+    }];
+    pipeline.prepare(&device, &queue, &instances);
+
+    let buf = common::render_to_texture(&device, &queue, format, w, h, |encoder, view| {
+        let mut rpass = encoder.begin_render_pass(&RenderPassDescriptor {
+            label: Some("empty-range-test-pass"),
+            color_attachments: &[Some(RenderPassColorAttachment {
+                view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: Operations {
+                    load: LoadOp::Clear(Color::TRANSPARENT),
+                    store: StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+            multiview_mask: None,
+        });
+        // Record empty range — should not panic or crash.
+        pipeline.record(&mut rpass, &viewport_bg, &unit_quad, 0..0);
+        // Record non-empty range — should draw normally.
+        pipeline.record(&mut rpass, &viewport_bg, &unit_quad, 0..1);
+    });
+
+    // Center of the rect should still be drawn (the non-empty range call took effect).
+    common::assert_pixel(&buf, w, 14, 14, [255, 255, 255, 255], 2);
+    // Clear area should remain clear.
+    common::assert_pixel(&buf, w, 50, 50, [0, 0, 0, 0], 0);
+}

@@ -9,6 +9,7 @@
 //! `new`/`record`. Until Phase 7 lands, the test harness builds them inline.
 
 use std::mem;
+use std::num::NonZeroU64;
 
 use bytemuck::{Pod, Zeroable};
 use wgpu::{
@@ -42,7 +43,8 @@ pub fn viewport_bind_group_layout(device: &Device) -> BindGroupLayout {
             ty: BindingType::Buffer {
                 ty: BufferBindingType::Uniform,
                 has_dynamic_offset: false,
-                min_binding_size: None,
+                // Free validation: BGL-time check that bound buffer is ≥16 B.
+                min_binding_size: NonZeroU64::new(mem::size_of::<ViewportUniform>() as u64),
             },
             count: None,
         }],
