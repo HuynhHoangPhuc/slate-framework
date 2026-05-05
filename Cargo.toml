@@ -28,8 +28,25 @@ thiserror = "2"
 pollster = "0.4"
 # macOS-only deps (target.'cfg(target_os = "macos")')
 objc2 = "0.6"
-objc2-foundation = "0.3"
-objc2-app-kit = "0.3"
+objc2-foundation = { version = "0.3", features = [
+    "NSGeometry",
+    "NSNotification",
+    "NSObject",
+    "NSString",
+] }
+objc2-app-kit = { version = "0.3", features = [
+    "NSApplication",
+    "NSEvent",
+    "NSGraphics",
+    "NSGraphicsContext",
+    "NSResponder",
+    "NSView",
+    "NSWindow",
+] }
+objc2-quartz-core = { version = "0.3", features = [
+    "CALayer",
+    "CAMetalLayer",
+] }
 # Windows-only deps (target.'cfg(target_os = "windows")')
 windows = { version = "0.62", features = [
     "Win32_Foundation",
