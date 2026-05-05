@@ -21,7 +21,9 @@
 //! });
 //! ```
 
+pub mod color;
 pub mod rect_pipeline;
+pub use color::{srgb_channel_to_linear, srgb_to_linear, srgb_u8_to_linear};
 pub use rect_pipeline::{RectPipeline, RectUniform};
 
 use std::num::NonZeroU32;
@@ -122,7 +124,10 @@ impl Renderer {
 
         let caps = surface.get_capabilities(&adapter);
 
-        // Prefer Bgra8UnormSrgb for consistent gamma on both macOS and Windows.
+        // Prefer `Bgra8UnormSrgb` so blending happens in linear space and the
+        // GPU encodes to sRGB on store. Callers MUST hand the renderer LINEAR
+        // color values; convert at the boundary via [`crate::color`] helpers if
+        // your inputs come from sRGB sources (CSS hex, design tokens, ...).
         let format = caps
             .formats
             .iter()

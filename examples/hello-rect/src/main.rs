@@ -9,7 +9,7 @@ use std::cell::RefCell;
 use std::sync::Arc;
 
 use slate_platform::{DefaultPlatform, Event, Platform, Window, WindowOptions};
-use slate_renderer::{RectPipeline, RectUniform, Renderer};
+use slate_renderer::{srgb_u8_to_linear, RectPipeline, RectUniform, Renderer};
 
 fn main() {
     env_logger::init();
@@ -83,8 +83,10 @@ fn main() {
                             half_size: [200.0 * scale, 100.0 * scale],
                             // Logical 24 pt corner radius → physical pixels.
                             corner_radius: 24.0 * scale,
-                            // #66ccff in linear sRGB ≈ [0.40, 0.80, 1.00, 1.0].
-                            color: [0.4, 0.8, 1.0, 1.0],
+                            // #66ccff (sRGB) → linear; the surface re-encodes
+                            // to sRGB on write so what hits the screen is
+                            // exactly #66ccff.
+                            color: srgb_u8_to_linear([0x66, 0xcc, 0xff, 0xff]),
                             _pad: 0.0,
                         },
                     );
