@@ -10,8 +10,7 @@
 mod common;
 
 use slate_renderer::{
-    ShadowInstance, ShadowPipeline, ViewportUniform, create_unit_quad,
-    viewport_bind_group_layout,
+    ShadowInstance, ShadowPipeline, ViewportUniform, create_unit_quad, viewport_bind_group_layout,
 };
 use wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindingResource, Buffer,
@@ -82,7 +81,12 @@ fn render_shadow(
             timestamp_writes: None,
             multiview_mask: None::<std::num::NonZeroU32>,
         });
-        pipeline.record(&mut pass, &viewport_bg, &unit_quad, 0..instances.len() as u32);
+        pipeline.record(
+            &mut pass,
+            &viewport_bg,
+            &unit_quad,
+            0..instances.len() as u32,
+        );
     })
 }
 
@@ -121,10 +125,7 @@ fn shadow_center_has_high_alpha_edge_has_low() {
 
     // At ±3σ from rect edge (32 - 24 = 8, or 96 + 24 = 120), alpha should be near 0.
     let edge_a = pixel_alpha(&buf, w, 4, 64);
-    assert!(
-        edge_a < 15,
-        "far edge alpha should be near 0, got {edge_a}"
-    );
+    assert!(edge_a < 15, "far edge alpha should be near 0, got {edge_a}");
 }
 
 #[test]

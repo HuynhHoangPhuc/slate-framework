@@ -169,7 +169,12 @@ fn push_decorative_glyphs(scene: &mut Scene, digit_uvs: &[[f32; 4]], scale: f32,
         let hue = i as f32 / 50.0 * 360.0;
         let (r, g, b) = hsv_to_srgb(hue, 0.5, 1.0);
         scene.push_glyph(GlyphInstance {
-            rect: [ox + (i % cols) as f32 * gx_stride, oy + (i / cols) as f32 * gy_stride, gw, gh],
+            rect: [
+                ox + (i % cols) as f32 * gx_stride,
+                oy + (i / cols) as f32 * gy_stride,
+                gw,
+                gh,
+            ],
             uv_rect: digit_uvs[i % 10],
             color: srgb_u8_to_linear_premul([r, g, b, 0xFF]),
             sub_pixel_variant: 0,

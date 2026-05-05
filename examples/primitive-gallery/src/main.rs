@@ -8,8 +8,7 @@ use slate_platform::{DefaultPlatform, Event, Platform, Window, WindowOptions};
 use slate_renderer::{Renderer, Scene, allocate_glyph};
 
 use scene_builder::{
-    DIGIT_BITS, GLYPH_H, GLYPH_W, IMG_SIZE, build_scene, generate_checkerboard,
-    padded_glyph_pixels,
+    DIGIT_BITS, GLYPH_H, GLYPH_W, IMG_SIZE, build_scene, generate_checkerboard, padded_glyph_pixels,
 };
 
 fn main() {

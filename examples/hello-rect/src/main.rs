@@ -28,60 +28,58 @@ fn main() {
     let platform_ref = &platform;
     let window_ref = window.clone();
 
-    platform.run(move |event| {
-        match event {
-            Event::Resumed => {
-                let r = match pollster::block_on(Renderer::new(window_ref.clone())) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        log::error!("renderer init failed: {e}");
-                        platform_ref.quit();
-                        return;
-                    }
-                };
-                log::info!("renderer ready");
-                *renderer.borrow_mut() = Some(r);
-            }
-
-            Event::WindowResized { size, .. } => {
-                if let Some(r) = renderer.borrow_mut().as_mut() {
-                    r.resize(size);
-                }
-            }
-
-            Event::WindowRedrawRequested { .. } => {
-                if renderer.borrow().is_none() {
+    platform.run(move |event| match event {
+        Event::Resumed => {
+            let r = match pollster::block_on(Renderer::new(window_ref.clone())) {
+                Ok(r) => r,
+                Err(e) => {
+                    log::error!("renderer init failed: {e}");
+                    platform_ref.quit();
                     return;
                 }
+            };
+            log::info!("renderer ready");
+            *renderer.borrow_mut() = Some(r);
+        }
 
-                let (w, h) = window_ref.size();
-                let scale = window_ref.scale_factor() as f32;
+        Event::WindowResized { size, .. } => {
+            if let Some(r) = renderer.borrow_mut().as_mut() {
+                r.resize(size);
+            }
+        }
 
-                let mut s = scene.borrow_mut();
-                s.clear();
-                s.push_rect(RectInstance {
-                    rect: [
-                        w as f32 / 2.0 - 200.0 * scale,
-                        h as f32 / 2.0 - 100.0 * scale,
-                        400.0 * scale,
-                        200.0 * scale,
-                    ],
-                    color: srgb_u8_to_linear_premul([0x66, 0xcc, 0xff, 0xff]),
-                    corner_radius: 24.0 * scale,
-                    _pad: [0.0; 3],
-                });
-
-                let result = renderer.borrow_mut().as_mut().unwrap().render_scene(&mut s);
-                if let Err(e) = result {
-                    log::warn!("render skipped: {e:?}");
-                }
+        Event::WindowRedrawRequested { .. } => {
+            if renderer.borrow().is_none() {
+                return;
             }
 
-            Event::WindowCloseRequested { .. } => platform_ref.quit(),
+            let (w, h) = window_ref.size();
+            let scale = window_ref.scale_factor() as f32;
 
-            Event::Exiting => log::info!("bye"),
+            let mut s = scene.borrow_mut();
+            s.clear();
+            s.push_rect(RectInstance {
+                rect: [
+                    w as f32 / 2.0 - 200.0 * scale,
+                    h as f32 / 2.0 - 100.0 * scale,
+                    400.0 * scale,
+                    200.0 * scale,
+                ],
+                color: srgb_u8_to_linear_premul([0x66, 0xcc, 0xff, 0xff]),
+                corner_radius: 24.0 * scale,
+                _pad: [0.0; 3],
+            });
 
-            _ => {}
+            let result = renderer.borrow_mut().as_mut().unwrap().render_scene(&mut s);
+            if let Err(e) = result {
+                log::warn!("render skipped: {e:?}");
+            }
         }
+
+        Event::WindowCloseRequested { .. } => platform_ref.quit(),
+
+        Event::Exiting => log::info!("bye"),
+
+        _ => {}
     });
 }
