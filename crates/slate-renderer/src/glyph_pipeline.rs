@@ -1,0 +1,396 @@
+//! Atlas-sampled glyph pipeline (Phase 5).
+//!
+//! Renders every [`GlyphInstance`] from a [`crate::Scene`] in a single
+//! `draw(0..6, 0..N)` call, sampling from the shared R8 alpha atlas
+//! ([`crate::atlas::Atlas`] in `Format::R8Unorm`) tinted by per-instance
+//! premultiplied ink color.
+//!
+//! # Two-phase API (red-team P0-2)
+//!
+//! Same shape as [`crate::ImagePipeline`] / [`crate::InstancedRectPipeline`]:
+//!
+//! 1. [`prepare`] — `&mut self`, called BEFORE `begin_render_pass`. Uploads
+//!    instance data via `Queue::write_buffer`.
+//! 2. [`record`] — `&self`, called inside the render pass. Sets pipeline +
+//!    bind groups + vertex buffers, issues one `pass.draw`.
+//!
+//! # Atlas binding
+//!
+//! Pipeline does NOT own the atlas. Phase 7 `Renderer` owns one shared glyph
+//! atlas; the pipeline holds a `BindGroup` referencing the atlas's
+//! `TextureView` plus a linear sampler. When the atlas re-allocates the
+//! underlying texture, the renderer must call [`rebuild_atlas_bg`] so the
+//! bind group's `TextureView` stays valid.
+//!
+//! # Color contract
+//!
+//! `GlyphInstance.color` is **linear, premultiplied** RGBA — the fragment
+//! shader scales it by the sampled alpha mask, keeping the output
+//! premultiplied. Atlas pixels are 8-bit linear alpha (R8Unorm; alpha is
+//! never gamma-encoded). Blend is `One/OneMinusSrcAlpha` on both color and
+//! alpha.
+//!
+//! # 1px gutter
+//!
+//! Glyph producers and the demo seeder MUST go through [`allocate_glyph`]
+//! (not `Atlas::allocate` directly): it inflates the request by 1 transparent
+//! texel on every side and returns a uv_rect inset by 1 texel. This stops
+//! the linear sampler from bleeding between adjacent glyphs at fractional
+//! sub-pixel offsets.
+//!
+//! [`prepare`]: GlyphPipeline::prepare
+//! [`record`]: GlyphPipeline::record
+//! [`rebuild_atlas_bg`]: GlyphPipeline::rebuild_atlas_bg
+
+use std::mem;
+use std::ops::Range;
+
+use wgpu::{
+    AddressMode, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout,
+    BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, BlendComponent,
+    BlendFactor, BlendOperation, BlendState, Buffer, BufferAddress, BufferDescriptor, BufferUsages,
+    ColorTargetState, ColorWrites, Device, FilterMode, FragmentState, MipmapFilterMode,
+    MultisampleState, PipelineLayoutDescriptor, PrimitiveState, PrimitiveTopology, Queue,
+    RenderPass, RenderPipeline, RenderPipelineDescriptor, Sampler, SamplerBindingType,
+    SamplerDescriptor, ShaderModuleDescriptor, ShaderSource, ShaderStages, TextureFormat,
+    TextureSampleType, TextureView, TextureViewDimension, VertexAttribute, VertexBufferLayout,
+    VertexFormat, VertexState, VertexStepMode,
+};
+
+use crate::atlas::{AllocId, Atlas, AtlasAllocation, AtlasError, Format};
+use crate::scene::GlyphInstance;
+
+/// Initial instance-buffer capacity (matches sibling pipelines).
+const MIN_INSTANCES: u64 = 64;
+
+/// Soft cap above which `prepare` warn-logs once per session.
+const WARN_INSTANCE_CAP: usize = 1_000_000;
+
+/// Per-instance attributes for [`GlyphInstance`] (64 bytes: rect, uv_rect,
+/// color, sub_pixel_variant + pad). Locations 1..=4 reserved for instance
+/// data; location 0 is the unit-quad corner.
+const INSTANCE_ATTRS: [VertexAttribute; 4] = [
+    VertexAttribute {
+        format: VertexFormat::Float32x4,
+        offset: 0,
+        shader_location: 1,
+    },
+    VertexAttribute {
+        format: VertexFormat::Float32x4,
+        offset: 16,
+        shader_location: 2,
+    },
+    VertexAttribute {
+        format: VertexFormat::Float32x4,
+        offset: 32,
+        shader_location: 3,
+    },
+    VertexAttribute {
+        format: VertexFormat::Uint32,
+        offset: 48,
+        shader_location: 4,
+    },
+];
+
+const VERTEX_ATTRS: [VertexAttribute; 1] = [VertexAttribute {
+    format: VertexFormat::Float32x2,
+    offset: 0,
+    shader_location: 0,
+}];
+
+/// GPU pipeline that samples the R8 glyph atlas and renders all
+/// `GlyphInstance`s in a [`crate::Scene`] via instanced draw calls.
+pub struct GlyphPipeline {
+    pipeline: RenderPipeline,
+    instance_buffer: Buffer,
+    instance_capacity_bytes: u64,
+    last_instance_count: u32,
+    /// Bind-group layout for the atlas (`@group(1)`). Held so we can rebuild
+    /// the bind group when the atlas texture view changes.
+    atlas_bgl: BindGroupLayout,
+    atlas_bg: BindGroup,
+    sampler: Sampler,
+    warned_over_cap: bool,
+}
+
+impl GlyphPipeline {
+    /// Build the pipeline. `viewport_bgl` comes from
+    /// [`crate::pipeline_shared::viewport_bind_group_layout`]; `atlas_view`
+    /// is the current `TextureView` from the renderer-owned glyph atlas.
+    pub fn new(
+        device: &Device,
+        surface_format: TextureFormat,
+        viewport_bgl: &BindGroupLayout,
+        glyph_atlas: &Atlas,
+    ) -> Self {
+        // Phase 1 contract: surface must be sRGB so hw handles linear→sRGB
+        // encoding. Glyph atlas itself is linear R8 — separate concern.
+        debug_assert!(
+            matches!(
+                surface_format,
+                TextureFormat::Bgra8UnormSrgb | TextureFormat::Rgba8UnormSrgb
+            ),
+            "GlyphPipeline expects an sRGB surface format (Bgra8UnormSrgb / \
+             Rgba8UnormSrgb); got {surface_format:?}",
+        );
+        // Red-team H2: catch the "image atlas wired to glyph pipeline" footgun
+        // — the bind-group layout's `Float { filterable: true }` accepts both
+        // R8Unorm and Rgba8UnormSrgb, so wgpu validation never sees the
+        // mistake; output would silently be `texture.r` of an sRGB color
+        // texel used as alpha mask.
+        debug_assert_eq!(
+            glyph_atlas.format(),
+            Format::R8Unorm,
+            "GlyphPipeline requires an R8Unorm atlas; got {:?}",
+            glyph_atlas.format(),
+        );
+        let atlas_view = glyph_atlas.texture_view();
+        let shader = device.create_shader_module(ShaderModuleDescriptor {
+            label: Some("glyph.wgsl"),
+            source: ShaderSource::Wgsl(include_str!("shaders/glyph.wgsl").into()),
+        });
+
+        let atlas_bgl = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+            label: Some("slate-glyph-atlas-bgl"),
+            entries: &[
+                BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: BindingType::Texture {
+                        sample_type: TextureSampleType::Float { filterable: true },
+                        view_dimension: TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+
+        let sampler = device.create_sampler(&SamplerDescriptor {
+            label: Some("slate-glyph-linear"),
+            address_mode_u: AddressMode::ClampToEdge,
+            address_mode_v: AddressMode::ClampToEdge,
+            address_mode_w: AddressMode::ClampToEdge,
+            mag_filter: FilterMode::Linear,
+            min_filter: FilterMode::Linear,
+            // No mips in Phase 1.
+            mipmap_filter: MipmapFilterMode::Nearest,
+            ..Default::default()
+        });
+
+        let atlas_bg = make_atlas_bind_group(device, &atlas_bgl, atlas_view, &sampler);
+
+        let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            label: Some("glyph-pipeline-layout"),
+            bind_group_layouts: &[Some(viewport_bgl), Some(&atlas_bgl)],
+            immediate_size: 0,
+        });
+
+        let pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
+            label: Some("glyph-pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[
+                    VertexBufferLayout {
+                        array_stride: mem::size_of::<[f32; 2]>() as BufferAddress,
+                        step_mode: VertexStepMode::Vertex,
+                        attributes: &VERTEX_ATTRS,
+                    },
+                    VertexBufferLayout {
+                        array_stride: mem::size_of::<GlyphInstance>() as BufferAddress,
+                        step_mode: VertexStepMode::Instance,
+                        attributes: &INSTANCE_ATTRS,
+                    },
+                ],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(ColorTargetState {
+                    format: surface_format,
+                    // Phase 1 premultiplied contract.
+                    blend: Some(BlendState {
+                        color: BlendComponent {
+                            src_factor: BlendFactor::One,
+                            dst_factor: BlendFactor::OneMinusSrcAlpha,
+                            operation: BlendOperation::Add,
+                        },
+                        alpha: BlendComponent {
+                            src_factor: BlendFactor::One,
+                            dst_factor: BlendFactor::OneMinusSrcAlpha,
+                            operation: BlendOperation::Add,
+                        },
+                    }),
+                    write_mask: ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: PrimitiveState {
+                topology: PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
+        let instance_capacity_bytes = MIN_INSTANCES * mem::size_of::<GlyphInstance>() as u64;
+        let instance_buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("glyph-instances"),
+            size: instance_capacity_bytes,
+            usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        Self {
+            pipeline,
+            instance_buffer,
+            instance_capacity_bytes,
+            last_instance_count: 0,
+            atlas_bgl,
+            atlas_bg,
+            sampler,
+            warned_over_cap: false,
+        }
+    }
+
+    /// Rebuild the atlas bind group with a new `TextureView`. Call this when
+    /// the atlas re-allocates its underlying texture (Phase 7+ atlas growth).
+    pub fn rebuild_atlas_bg(&mut self, device: &Device, atlas_view: &TextureView) {
+        self.atlas_bg = make_atlas_bind_group(device, &self.atlas_bgl, atlas_view, &self.sampler);
+    }
+
+    /// Upload `instances` to the per-instance buffer. Call once per frame
+    /// **before** `begin_render_pass`.
+    pub fn prepare(&mut self, device: &Device, queue: &Queue, instances: &[GlyphInstance]) {
+        if instances.is_empty() {
+            self.last_instance_count = 0;
+            return;
+        }
+        if instances.len() > WARN_INSTANCE_CAP && !self.warned_over_cap {
+            log::warn!(
+                "GlyphPipeline: {} instances exceeds soft cap {}",
+                instances.len(),
+                WARN_INSTANCE_CAP,
+            );
+            self.warned_over_cap = true;
+        }
+        self.ensure_capacity(device, instances.len());
+        queue.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(instances));
+        self.last_instance_count = instances.len() as u32;
+    }
+
+    /// Record one instanced draw covering `range` of the buffer uploaded in
+    /// the matching `prepare` call.
+    pub fn record<'a>(
+        &'a self,
+        pass: &mut RenderPass<'a>,
+        viewport_bg: &'a BindGroup,
+        unit_quad: &'a Buffer,
+        range: Range<u32>,
+    ) {
+        if range.is_empty() {
+            return;
+        }
+        debug_assert!(
+            range.end <= self.last_instance_count,
+            "GlyphPipeline::record: range {:?} extends past last_instance_count={}; \
+             prepare() was called with too few instances or not at all",
+            range,
+            self.last_instance_count,
+        );
+        let stride = mem::size_of::<GlyphInstance>() as BufferAddress;
+        let byte_range =
+            (range.start as BufferAddress * stride)..(range.end as BufferAddress * stride);
+
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, viewport_bg, &[]);
+        pass.set_bind_group(1, &self.atlas_bg, &[]);
+        pass.set_vertex_buffer(0, unit_quad.slice(..));
+        pass.set_vertex_buffer(1, self.instance_buffer.slice(byte_range));
+        pass.draw(0..6, 0..(range.end - range.start));
+    }
+
+    /// Current capacity in bytes — exposed for tests / observability.
+    pub fn capacity_bytes(&self) -> u64 {
+        self.instance_capacity_bytes
+    }
+
+    fn ensure_capacity(&mut self, device: &Device, n: usize) {
+        let stride = mem::size_of::<GlyphInstance>() as u64;
+        let needed = (n as u64)
+            .checked_mul(stride)
+            .expect("instance count × stride overflows u64 (impossibly large frame)");
+        if needed <= self.instance_capacity_bytes {
+            return;
+        }
+        let min = MIN_INSTANCES * stride;
+        let new_cap = needed.next_power_of_two().max(min);
+        self.instance_buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("glyph-instances"),
+            size: new_cap,
+            usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        self.instance_capacity_bytes = new_cap;
+    }
+}
+
+fn make_atlas_bind_group(
+    device: &Device,
+    layout: &BindGroupLayout,
+    view: &TextureView,
+    sampler: &Sampler,
+) -> BindGroup {
+    device.create_bind_group(&BindGroupDescriptor {
+        label: Some("slate-glyph-atlas-bg"),
+        layout,
+        entries: &[
+            BindGroupEntry {
+                binding: 0,
+                resource: BindingResource::TextureView(view),
+            },
+            BindGroupEntry {
+                binding: 1,
+                resource: BindingResource::Sampler(sampler),
+            },
+        ],
+    })
+}
+
+/// Allocate a glyph slot with a 1-texel transparent gutter on every side.
+///
+/// The atlas reserves a `(width + 2) × (height + 2)` region but the returned
+/// `uv_rect` is inset by exactly 1 texel in each dimension, so linear
+/// sampling at a sub-pixel offset never pulls texels from a neighbouring
+/// glyph.
+///
+/// Caller is responsible for uploading the gutter pixels (zero-fill is fine
+/// — the pipeline never samples outside `uv_rect`). Returns `(alloc_id,
+/// inset_uv_rect)`.
+pub fn allocate_glyph(
+    atlas: &mut Atlas,
+    width: u32,
+    height: u32,
+) -> Result<(AllocId, [f32; 4]), AtlasError> {
+    let AtlasAllocation { uv_rect, alloc_id } = atlas.allocate(width + 2, height + 2)?;
+    // 1-texel inset in normalized coords.
+    let texel = 1.0 / crate::atlas::PAGE_SIZE as f32;
+    let inset = [
+        uv_rect[0] + texel,
+        uv_rect[1] + texel,
+        uv_rect[2] - texel,
+        uv_rect[3] - texel,
+    ];
+    Ok((alloc_id, inset))
+}
