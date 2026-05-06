@@ -39,7 +39,7 @@ pub use dilation::{MAX_DILATION, compute_dilation, compute_dilation_srgb, dilate
 pub use error::TextError;
 pub use fallback::{FontFallbackSystem, fix_missing_glyphs};
 pub use font_handle::FontHandle;
-pub use glyph_cache::{GlyphCache, PendingUploadPool};
+pub use glyph_cache::GlyphCache;
 pub use line_layout_cache::{LineLayoutCache, hash_text};
 pub use paragraph::{compute_alignment_offset, greedy_wrap, truncate_with_ellipsis};
 pub use run_builder::TextRunBuilder;

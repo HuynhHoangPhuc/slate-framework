@@ -102,7 +102,7 @@ impl<'a, B: TextBackend> TextRunBuilder<'a, B> {
                 continue;
             }
 
-            cache.materialize_one_immediate(self.backend, self.font, g.glyph_id, variant, atlas, queue)?;
+            cache.materialize(self.backend, self.font, g.glyph_id, variant, atlas, queue)?;
 
             if let Some(cg) = cache.get(fh, g.glyph_id, variant) {
                 let origin_x_px = (glyph_x_lpx + cg.metrics.bearing_x_lpx) * scale;

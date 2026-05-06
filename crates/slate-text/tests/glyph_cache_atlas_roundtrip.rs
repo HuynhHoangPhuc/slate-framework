@@ -144,36 +144,28 @@ fn cache_roundtrip_with_atlas() {
 
     let mut atlas = Atlas::new(&device, slate_renderer::atlas::Format::R8Unorm);
     let mut cache = GlyphCache::new();
-    let mut backend = MockBackend;
-    let font = backend.load_font("Test", 16.0, 1.0).unwrap();
+    let backend = MockBackend;
+    let mut font_backend = MockBackend;
+    let font = font_backend.load_font("Test", 16.0, 1.0).unwrap();
     let shaped = backend.shape_line(&font, "abc").unwrap();
 
-    // Materialize glyphs
-    cache.materialize(&backend, &font, &shaped).unwrap();
-    assert!(cache.pending_len() > 0, "should have pending uploads");
-
-    // Before flush: cache miss
-    assert!(
-        cache.get(font.handle(), 1, 0).is_none(),
-        "should not be cached before flush"
-    );
-
-    // Flush to atlas
-    cache.flush(&mut atlas, &queue).unwrap();
-    assert_eq!(
-        cache.pending_len(),
-        0,
-        "pending should be empty after flush"
-    );
-
-    // After flush: cache hit
     let fh = font.handle();
+
+    // Materialize each glyph/variant immediately
+    for g in &shaped.glyphs {
+        for v in 0u8..4 {
+            cache
+                .materialize(&backend, &font, g.glyph_id, v, &mut atlas, &queue)
+                .unwrap();
+        }
+    }
+
+    // After immediate upload: cache hit
     for g in &shaped.glyphs {
         for v in 0u8..4 {
             let cached = cache
                 .get(fh, g.glyph_id, v)
-                .expect("glyph should be cached after flush");
-            // Verify metrics match rasterization
+                .expect("glyph should be cached after immediate upload");
             assert_eq!(cached.metrics.width, g.glyph_id.min(16).max(1));
             assert_eq!(cached.metrics.height, v as u32 + 1);
             assert_eq!(cached.metrics.bearing_x_lpx, 1.0);
@@ -184,13 +176,13 @@ fn cache_roundtrip_with_atlas() {
         }
     }
 
-    // Second materialize should not add pending (all cached)
-    cache.materialize(&backend, &font, &shaped).unwrap();
-    assert_eq!(
-        cache.pending_len(),
-        0,
-        "no new pending after re-materialize"
-    );
+    // Second call returns false (already cached)
+    for g in &shaped.glyphs {
+        let was_miss = cache
+            .materialize(&backend, &font, g.glyph_id, 0, &mut atlas, &queue)
+            .unwrap();
+        assert!(!was_miss, "should be cache hit on second call");
+    }
 
     // Touch should not panic
     cache.touch(&mut atlas, fh, 1, 0);
@@ -205,15 +197,17 @@ fn second_get_returns_same_alloc_id() {
 
     let mut atlas = Atlas::new(&device, slate_renderer::atlas::Format::R8Unorm);
     let mut cache = GlyphCache::new();
-    let mut backend = MockBackend;
-    let font = backend.load_font("Test", 16.0, 1.0).unwrap();
+    let backend = MockBackend;
+    let mut font_backend = MockBackend;
+    let font = font_backend.load_font("Test", 16.0, 1.0).unwrap();
     let shaped = backend.shape_line(&font, "a").unwrap();
-
-    cache.materialize(&backend, &font, &shaped).unwrap();
-    cache.flush(&mut atlas, &queue).unwrap();
 
     let fh = font.handle();
     let gid = shaped.glyphs[0].glyph_id;
+
+    cache
+        .materialize(&backend, &font, gid, 0, &mut atlas, &queue)
+        .unwrap();
 
     let first = cache.get(fh, gid, 0).unwrap();
     let first_id = first.alloc.alloc_id;
