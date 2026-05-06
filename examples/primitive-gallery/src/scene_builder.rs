@@ -67,6 +67,14 @@ pub fn build_scene(
     let ox = 30.0 * scale;
     let oy = 40.0 * scale;
 
+    // Dark rectangle for light-on-dark text demo (positioned in right column)
+    scene.push_rect(RectInstance {
+        rect: [650.0 * scale, 175.0 * scale, 200.0 * scale, 40.0 * scale],
+        color: srgb_u8_to_linear_premul([0x1E, 0x1E, 0x2E, 0xFF]),
+        corner_radius: 6.0 * scale,
+        _pad: [0.0; 3],
+    });
+
     for i in 0..30 {
         scene.push_shadow(ShadowInstance {
             rect: [

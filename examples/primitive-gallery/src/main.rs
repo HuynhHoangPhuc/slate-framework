@@ -13,7 +13,10 @@ use slate_text::DirectWriteBackend as TextBackendImpl;
 #[cfg(target_os = "macos")]
 use slate_text::CoreTextBackend as TextBackendImpl;
 
-use slate_text::{GlyphCache, TEST_FONT, TextBackend, TextRunBuilder};
+use slate_text::{
+    Font, GlyphCache, LineLayoutCache, TEST_FONT, TextAlignment, TextBackend, TextRunBuilder,
+    compute_alignment_offset,
+};
 
 use scene_builder::{IMG_SIZE, build_scene, generate_checkerboard};
 
@@ -40,6 +43,7 @@ fn main() {
     let text_backend: RefCell<Option<TextBackendImpl>> = RefCell::new(None);
     let text_font: RefCell<Option<<TextBackendImpl as TextBackend>::Font>> = RefCell::new(None);
     let glyph_cache: RefCell<GlyphCache> = RefCell::new(GlyphCache::new());
+    let line_cache: RefCell<LineLayoutCache> = RefCell::new(LineLayoutCache::new());
 
     let platform_ref = &platform;
     let window_ref = window.clone();
@@ -100,11 +104,15 @@ fn main() {
                 &text_backend,
                 &text_font,
                 &glyph_cache,
+                &line_cache,
                 &renderer,
                 fps,
                 scale,
                 w as f32,
             );
+
+            // Finish line layout cache frame (two-frame rolling)
+            line_cache.borrow().finish_frame();
 
             let mut s = scene.borrow_mut();
             build_scene(&mut s, w as f32, h as f32, scale, uv, &text_glyphs);
@@ -137,7 +145,8 @@ use slate_renderer::GlyphInstance;
 fn build_text_glyphs(
     backend_cell: &RefCell<Option<TextBackendImpl>>,
     font_cell: &RefCell<Option<<TextBackendImpl as TextBackend>::Font>>,
-    cache_cell: &RefCell<GlyphCache>,
+    glyph_cache_cell: &RefCell<GlyphCache>,
+    line_cache_cell: &RefCell<LineLayoutCache>,
     renderer_cell: &RefCell<Option<Renderer>>,
     fps: f32,
     scale: f32,
@@ -149,47 +158,36 @@ fn build_text_glyphs(
         return Vec::new();
     };
 
-    let mut cache = cache_cell.borrow_mut();
+    let mut glyph_cache = glyph_cache_cell.borrow_mut();
+    let line_cache = line_cache_cell.borrow();
     let mut renderer = renderer_cell.borrow_mut();
     let renderer = renderer.as_mut().unwrap();
 
-    // Shape text lines
+    // Get font handle for cache keying
+    let font_handle = font.handle();
+
+    // Shape text lines (cached via LineLayoutCache)
     let hello_text = "Hello, world!";
     let fps_text = format!("{fps:.1} fps");
 
-    let Ok(hello_shaped) = backend.shape_line(font, hello_text) else {
-        return Vec::new();
-    };
-    let Ok(fps_shaped) = backend.shape_line(font, &fps_text) else {
-        return Vec::new();
-    };
+    let hello_shaped = line_cache.get_or_shape(hello_text, font_handle, || {
+        backend.shape_line(font, hello_text).unwrap()
+    });
+    let fps_shaped = line_cache.get_or_shape(&fps_text, font_handle, || {
+        backend.shape_line(font, &fps_text).unwrap()
+    });
 
-    // Materialize glyphs (rasterize cache misses)
-    if cache.materialize(backend, font, &hello_shaped).is_err() {
-        return Vec::new();
-    }
-    if cache.materialize(backend, font, &fps_shaped).is_err() {
-        return Vec::new();
-    }
-
-    // Flush to atlas
-    let (atlas, queue) = renderer.glyph_atlas_and_queue();
-    if cache.flush(atlas, queue).is_err() {
-        return Vec::new();
-    }
-
-    // Build glyph instances
+    // Build glyph instances (lazy rasterization)
     let mut glyphs = Vec::new();
 
     // Hello world - white text at top-right area
     let hello_builder = TextRunBuilder {
         backend,
         font,
-        cache: &cache,
         baseline_lpx: [w / scale - hello_shaped.width_lpx - 20.0, 60.0],
         color: srgb_u8_to_linear_premul([0xFF, 0xFF, 0xFF, 0xFF]),
     };
-    if let Ok(instances) = hello_builder.build(&hello_shaped) {
+    if let Ok(instances) = hello_builder.build(&hello_shaped, &mut *glyph_cache) {
         glyphs.extend(instances);
     }
 
@@ -197,12 +195,70 @@ fn build_text_glyphs(
     let fps_builder = TextRunBuilder {
         backend,
         font,
-        cache: &cache,
         baseline_lpx: [w / scale - fps_shaped.width_lpx - 10.0, 25.0],
         color: srgb_u8_to_linear_premul([0xFF, 0xFF, 0x00, 0xFF]),
     };
-    if let Ok(instances) = fps_builder.build(&fps_shaped) {
+    if let Ok(instances) = fps_builder.build(&fps_shaped, &mut *glyph_cache) {
         glyphs.extend(instances);
+    }
+
+    // Multi-line paragraph demo with word wrap
+    let paragraph_text = "This is a multi-line paragraph with automatic word wrapping. \
+        The greedy algorithm breaks text at spaces to fit within the maximum width.";
+    let max_width = 280.0;
+    let paragraph_x = 650.0;
+    let paragraph_y = 50.0;
+
+    if let Ok(paragraph_lines) = backend.shape_paragraph(font, paragraph_text, max_width) {
+        for line in &paragraph_lines {
+            let x_offset = compute_alignment_offset(line.width_lpx, max_width, TextAlignment::Left);
+            let builder = TextRunBuilder {
+                backend,
+                font,
+                baseline_lpx: [paragraph_x + x_offset, paragraph_y + line.y_offset_lpx],
+                color: srgb_u8_to_linear_premul([0xCC, 0xCC, 0xCC, 0xFF]),
+            };
+            if let Ok(instances) = builder.build(line, &mut *glyph_cache) {
+                glyphs.extend(instances);
+            }
+        }
+    }
+
+    // Extended Latin demo (font fallback showcase - no emoji, deferred to 2c)
+    let extended_text = "Extended: Grüß Gott! Ça va? Ñoño";
+    let extended_shaped = line_cache.get_or_shape(extended_text, font_handle, || {
+        backend.shape_line(font, extended_text).unwrap()
+    });
+    let extended_builder = TextRunBuilder {
+        backend,
+        font,
+        baseline_lpx: [paragraph_x, paragraph_y + 90.0],
+        color: srgb_u8_to_linear_premul([0x88, 0xCC, 0xFF, 0xFF]),
+    };
+    if let Ok(instances) = extended_builder.build(&extended_shaped, &mut *glyph_cache) {
+        glyphs.extend(instances);
+    }
+
+    // Light-on-dark demo (tests font smoothing dilation on macOS)
+    // Note: The dark rect is rendered in scene_builder; we just add white text here
+    let light_text = "Light on dark";
+    let light_shaped = line_cache.get_or_shape(light_text, font_handle, || {
+        backend.shape_line(font, light_text).unwrap()
+    });
+    let light_builder = TextRunBuilder {
+        backend,
+        font,
+        baseline_lpx: [paragraph_x + 10.0, paragraph_y + 140.0],
+        color: srgb_u8_to_linear_premul([0xFF, 0xFF, 0xFF, 0xFF]),
+    };
+    if let Ok(instances) = light_builder.build(&light_shaped, &mut *glyph_cache) {
+        glyphs.extend(instances);
+    }
+
+    // Flush to atlas after building (rasterized on demand)
+    let (atlas, queue) = renderer.glyph_atlas_and_queue();
+    if glyph_cache.flush(atlas, queue).is_err() {
+        return glyphs;
     }
 
     glyphs

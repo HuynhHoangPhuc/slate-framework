@@ -13,6 +13,9 @@ slate-renderer = { path = "../slate-renderer" }
 thiserror.workspace = true
 log.workspace = true
 wgpu.workspace = true
+parking_lot = "0.12"
+fxhash = "0.2"
+ttf-parser = "0.25"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { workspace = true, features = ["Win32_Graphics_DirectWrite"] }

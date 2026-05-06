@@ -6,9 +6,11 @@
 mod font_load;
 mod rasterize;
 mod shaping;
+mod system_fonts;
 
 use crate::{
-    FontHandle, FontMetrics, GlyphBitmap, ShapedLine, TextBackend, TextError, backend::Font,
+    FontHandle, FontMetrics, GlyphBitmap, GlyphBounds, ShapedLine, TextBackend, TextError,
+    backend::Font, types::FontDescriptor,
 };
 use objc2_core_foundation::{CFData, CFRetained};
 use objc2_core_text::CTFont;
@@ -128,5 +130,17 @@ impl TextBackend for CoreTextBackend {
             font.scale,
             variant,
         )
+    }
+
+    fn glyph_raster_bounds(
+        &self,
+        font: &Self::Font,
+        glyph_id: u32,
+    ) -> Result<GlyphBounds, TextError> {
+        rasterize::get_glyph_bounds(&font.ct_font, glyph_id as u16, font.scale)
+    }
+
+    fn enumerate_system_fonts(&self) -> Result<Vec<FontDescriptor>, TextError> {
+        system_fonts::enumerate_system_fonts()
     }
 }

@@ -12,7 +12,9 @@ use slate_text::error::TextError;
 use slate_text::font_handle::FontHandle;
 use slate_text::glyph_cache::GlyphCache;
 use slate_text::run_builder::TextRunBuilder;
-use slate_text::types::{FontMetrics, GlyphBitmap, ShapedGlyph, ShapedLine};
+use slate_text::types::{
+    FontDescriptor, FontId, FontMetrics, GlyphBitmap, GlyphBounds, ShapedGlyph, ShapedLine,
+};
 
 /// Mock font for controlled testing.
 struct MockFont {
@@ -85,6 +87,7 @@ impl TextBackend for MockBackend {
             .enumerate()
             .map(|(i, _)| ShapedGlyph {
                 glyph_id: i as u32 + 1,
+                font_id: FontId::PRIMARY,
                 x_advance_lpx: 8.0,
                 x_offset_lpx: 0.0,
                 y_offset_lpx: 0.0,
@@ -96,6 +99,7 @@ impl TextBackend for MockBackend {
             width_lpx: width,
             ascent_lpx: 12.0,
             descent_lpx: -3.0,
+            y_offset_lpx: 0.0,
         })
     }
 
@@ -125,6 +129,21 @@ impl TextBackend for MockBackend {
             alpha,
         })
     }
+
+    fn glyph_raster_bounds(
+        &self,
+        _font: &Self::Font,
+        _glyph_id: u32,
+    ) -> Result<GlyphBounds, TextError> {
+        Ok(GlyphBounds {
+            width: 8,
+            height: 12,
+        })
+    }
+
+    fn enumerate_system_fonts(&self) -> Result<Vec<FontDescriptor>, TextError> {
+        Ok(vec![])
+    }
 }
 
 #[test]
@@ -142,19 +161,17 @@ fn text_pipeline_builds_glyph_instances() {
     // Shape "Hello"
     let shaped = backend.shape_line(&font, "Hello").unwrap();
 
-    // Materialize and flush
-    cache.materialize(&backend, &font, &shaped).unwrap();
-    cache.flush(&mut atlas, &queue).unwrap();
-
-    // Build glyph instances
+    // Build glyph instances (lazy rasterization)
+    // First build() queues glyphs, flush() uploads, second build() returns instances
     let builder = TextRunBuilder {
         backend: &backend,
         font: &font,
-        cache: &cache,
         baseline_lpx: [10.0, 50.0],
         color: srgb_u8_to_linear_premul([0xFF, 0xFF, 0xFF, 0xFF]),
     };
-    let instances = builder.build(&shaped).unwrap();
+    let _ = builder.build(&shaped, &mut cache).unwrap();
+    cache.flush(&mut atlas, &queue).unwrap();
+    let instances = builder.build(&shaped, &mut cache).unwrap();
 
     // Should have 5 glyph instances for "Hello"
     assert_eq!(instances.len(), 5);
@@ -181,17 +198,16 @@ fn glyph_instances_positions_advance_correctly() {
     let font = backend.load_font("Test", 16.0, 1.0).unwrap();
 
     let shaped = backend.shape_line(&font, "AB").unwrap();
-    cache.materialize(&backend, &font, &shaped).unwrap();
-    cache.flush(&mut atlas, &queue).unwrap();
 
     let builder = TextRunBuilder {
         backend: &backend,
         font: &font,
-        cache: &cache,
         baseline_lpx: [0.0, 20.0],
         color: [1.0; 4],
     };
-    let instances = builder.build(&shaped).unwrap();
+    let _ = builder.build(&shaped, &mut cache).unwrap();
+    cache.flush(&mut atlas, &queue).unwrap();
+    let instances = builder.build(&shaped, &mut cache).unwrap();
 
     assert_eq!(instances.len(), 2);
     // Second glyph should be positioned after the first

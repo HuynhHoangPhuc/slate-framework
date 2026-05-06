@@ -43,4 +43,8 @@ pub enum TextError {
         /// The sub-pixel variant (0-3).
         variant: u8,
     },
+
+    /// System font enumeration failed.
+    #[error("system font enumeration failed: {0}")]
+    SystemFontEnumeration(String),
 }

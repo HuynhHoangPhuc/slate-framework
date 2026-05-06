@@ -4,7 +4,7 @@
 
 GPU-accelerated Rust UI framework. Native window/event-loop layer (no winit), `wgpu` rendering, custom WGSL SDF shaders.
 
-**Status:** Phase 1 complete — scene data structure, four instanced pipelines (rect, image, glyph, shadow), atlas module, painter's-algorithm layer stack, 62 tests passing.
+**Status:** Phase 2b complete — native text rendering (CoreText/DirectWrite), glyph cache, multi-line layout, font fallback chains, font smoothing dilation. Phase 1 foundations: scene data structure, four instanced pipelines, atlas module, layer stack.
 
 ## Workspace
 
@@ -12,9 +12,10 @@ GPU-accelerated Rust UI framework. Native window/event-loop layer (no winit), `w
 |---|---|
 | `slate-platform` | Native window + event loop (macOS via `objc2-app-kit`, Windows via `windows-rs`) |
 | `slate-renderer` | `wgpu` integration, WGSL shaders, four instanced pipelines + atlas module |
+| `slate-text` | Native text shaping (CoreText/DirectWrite), glyph cache, paragraph layout, font fallback |
 | `slate-framework` | Umbrella crate; re-exports public API |
 | `examples/hello-rect` | Anchor demo: opens a window and draws a rounded rect |
-| `examples/primitive-gallery` | Phase 1 showcase: 150+ procedurally-generated primitives (checkerboard + dot-matrix glyphs) across 2 layers with FPS overlay |
+| `examples/primitive-gallery` | Phase 2b showcase: native text rendering, multi-line layout, font fallback, light-on-dark |
 
 ## Build
 

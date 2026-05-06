@@ -16,6 +16,21 @@ pub struct ShapedLine {
     pub ascent_lpx: f32,
     /// Descent below baseline in logical pixels (negative).
     pub descent_lpx: f32,
+    /// Vertical offset from paragraph origin in logical pixels.
+    /// For single-line shaping, this is 0.0.
+    pub y_offset_lpx: f32,
+}
+
+/// Text alignment for multi-line layout.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum TextAlignment {
+    /// Left-aligned (default for LTR text).
+    #[default]
+    Left,
+    /// Center-aligned within container width.
+    Center,
+    /// Right-aligned.
+    Right,
 }
 
 /// A single shaped glyph with positioning info.
@@ -23,6 +38,8 @@ pub struct ShapedLine {
 pub struct ShapedGlyph {
     /// Glyph index in the font.
     pub glyph_id: u32,
+    /// Font that produced this glyph (for fallback chains).
+    pub font_id: FontId,
     /// Horizontal advance to next glyph in logical pixels.
     pub x_advance_lpx: f32,
     /// Horizontal offset from pen position in logical pixels.
@@ -87,4 +104,64 @@ pub struct CachedGlyph {
     pub alloc: slate_renderer::atlas::AtlasAllocation,
     /// Glyph metrics.
     pub metrics: GlyphMetrics,
+}
+
+/// Raster bounds for a glyph (pre-rasterization query).
+///
+/// Used for bounds-check-before-rasterize pattern: query bounds first (cheap),
+/// then only rasterize if non-zero. Whitespace glyphs return zero bounds.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct GlyphBounds {
+    /// Bitmap width in pixels (0 for whitespace).
+    pub width: u32,
+    /// Bitmap height in pixels (0 for whitespace).
+    pub height: u32,
+}
+
+/// Unique identifier for a font in a fallback chain.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct FontId(pub u32);
+
+impl FontId {
+    /// Primary font ID (always 0).
+    pub const PRIMARY: Self = Self(0);
+}
+
+/// Font style variant.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub enum FontStyle {
+    #[default]
+    Regular,
+    Italic,
+    Bold,
+    BoldItalic,
+}
+
+/// System font metadata without loading the full font.
+#[derive(Clone, Debug)]
+pub struct FontDescriptor {
+    /// Font family name (e.g., "Arial", "Helvetica").
+    pub family: String,
+    /// PostScript name for unique font identification.
+    pub postscript_name: String,
+    /// Font weight (100-900, 400 = regular, 700 = bold).
+    pub weight: u16,
+    /// Font style variant.
+    pub style: FontStyle,
+    /// Path to the font file, if available.
+    pub path: Option<std::path::PathBuf>,
+}
+
+impl GlyphBounds {
+    /// Zero bounds for whitespace glyphs.
+    pub const ZERO: Self = Self {
+        width: 0,
+        height: 0,
+    };
+
+    /// Returns true if this glyph is whitespace (zero bounds).
+    #[inline]
+    pub fn is_whitespace(&self) -> bool {
+        self.width == 0 || self.height == 0
+    }
 }

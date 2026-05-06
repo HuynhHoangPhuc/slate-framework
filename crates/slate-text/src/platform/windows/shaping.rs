@@ -3,6 +3,7 @@
 //! Phase 2a uses GetGlyphIndices directly for simple LTR ASCII text.
 //! Full IDWriteTextAnalyzer support deferred to Phase 2b.
 
+use crate::types::FontId;
 use crate::{FontMetrics, ShapedGlyph, ShapedLine, TextError};
 use windows::Win32::Graphics::DirectWrite::{DWRITE_GLYPH_METRICS, IDWriteFontFace};
 
@@ -23,6 +24,7 @@ pub fn shape_line(
             width_lpx: 0.0,
             ascent_lpx: metrics.ascent_lpx,
             descent_lpx: metrics.descent_lpx,
+            y_offset_lpx: 0.0,
         });
     }
 
@@ -61,6 +63,7 @@ pub fn shape_line(
         let advance = design_metrics[i].advanceWidth as f32 * units_to_lpx;
         let glyph = ShapedGlyph {
             glyph_id: glyph_indices[i] as u32,
+            font_id: FontId::PRIMARY,
             x_advance_lpx: advance,
             x_offset_lpx: 0.0,
             y_offset_lpx: 0.0,
@@ -74,5 +77,6 @@ pub fn shape_line(
         width_lpx,
         ascent_lpx: metrics.ascent_lpx,
         descent_lpx: metrics.descent_lpx,
+        y_offset_lpx: 0.0,
     })
 }

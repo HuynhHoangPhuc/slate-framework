@@ -19,19 +19,34 @@
 //! - DirectWrite (DIP-native) is 1:1 with logical pixels
 
 pub mod backend;
+pub mod bounds_cache;
+pub mod deferred_font;
+pub mod dilation;
 pub mod error;
+pub mod fallback;
 pub mod font_handle;
 pub mod glyph_cache;
+pub mod line_layout_cache;
+pub mod paragraph;
 pub mod platform;
 pub mod run_builder;
 pub mod types;
 
 pub use backend::{Font, TextBackend};
+pub use bounds_cache::RasterBoundsCache;
+pub use deferred_font::{CharacterSet, DeferredFont};
+pub use dilation::{MAX_DILATION, compute_dilation, compute_dilation_srgb, dilate_bounds};
 pub use error::TextError;
+pub use fallback::{FontFallbackSystem, fix_missing_glyphs};
 pub use font_handle::FontHandle;
-pub use glyph_cache::GlyphCache;
+pub use glyph_cache::{GlyphCache, PendingUploadPool};
+pub use line_layout_cache::{LineLayoutCache, hash_text};
+pub use paragraph::{compute_alignment_offset, greedy_wrap, truncate_with_ellipsis};
 pub use run_builder::TextRunBuilder;
-pub use types::{CachedGlyph, FontMetrics, GlyphBitmap, GlyphMetrics, ShapedGlyph, ShapedLine};
+pub use types::{
+    CachedGlyph, FontDescriptor, FontId, FontMetrics, FontStyle, GlyphBitmap, GlyphBounds,
+    GlyphMetrics, ShapedGlyph, ShapedLine, TextAlignment,
+};
 
 /// Bundled DejaVu Sans font for testing and default text rendering.
 pub const TEST_FONT: &[u8] = include_bytes!("../assets/dejavu-sans.ttf");

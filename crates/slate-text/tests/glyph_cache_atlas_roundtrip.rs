@@ -7,7 +7,9 @@ use slate_text::backend::{Font, TextBackend};
 use slate_text::error::TextError;
 use slate_text::font_handle::FontHandle;
 use slate_text::glyph_cache::GlyphCache;
-use slate_text::types::{FontMetrics, GlyphBitmap, ShapedGlyph, ShapedLine};
+use slate_text::types::{
+    FontDescriptor, FontId, FontMetrics, GlyphBitmap, GlyphBounds, ShapedGlyph, ShapedLine,
+};
 
 /// Mock font for testing.
 struct MockFont {
@@ -80,6 +82,7 @@ impl TextBackend for MockBackend {
             .enumerate()
             .map(|(i, _)| ShapedGlyph {
                 glyph_id: i as u32 + 1, // Start at 1 to avoid 0-size bitmaps
+                font_id: FontId::PRIMARY,
                 x_advance_lpx: 10.0,
                 x_offset_lpx: 0.0,
                 y_offset_lpx: 0.0,
@@ -91,6 +94,7 @@ impl TextBackend for MockBackend {
             width_lpx: width,
             ascent_lpx: 12.0,
             descent_lpx: -3.0,
+            y_offset_lpx: 0.0,
         })
     }
 
@@ -112,6 +116,22 @@ impl TextBackend for MockBackend {
             advance_x_lpx: (w as f32) + 2.0,
             alpha,
         })
+    }
+
+    fn glyph_raster_bounds(
+        &self,
+        _font: &Self::Font,
+        glyph_id: u32,
+    ) -> Result<GlyphBounds, TextError> {
+        let w = glyph_id.min(16).max(1);
+        Ok(GlyphBounds {
+            width: w,
+            height: 4,
+        })
+    }
+
+    fn enumerate_system_fonts(&self) -> Result<Vec<FontDescriptor>, TextError> {
+        Ok(vec![])
     }
 }
 

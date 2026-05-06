@@ -9,15 +9,16 @@ use crate::types::ShapedLine;
 
 /// Builds `GlyphInstance`s from shaped text for GPU rendering.
 ///
+/// Uses lazy per-variant rasterization: computes sub-pixel variant from screen
+/// position, then rasterizes only the needed variant on demand.
+///
 /// Coordinates are accumulated in logical pixels (lpx); physical conversion
 /// happens once at the end to avoid precision loss.
 pub struct TextRunBuilder<'a, B: TextBackend> {
-    /// Text backend (for scale factor).
+    /// Text backend (for rasterization and bounds queries).
     pub backend: &'a B,
     /// Font used for rendering.
     pub font: &'a B::Font,
-    /// Glyph cache with pre-rasterized glyphs.
-    pub cache: &'a GlyphCache,
     /// Baseline origin in logical pixels `[x, y]`.
     pub baseline_lpx: [f32; 2],
     /// Text color (premultiplied RGBA).
@@ -25,17 +26,57 @@ pub struct TextRunBuilder<'a, B: TextBackend> {
 }
 
 impl<'a, B: TextBackend> TextRunBuilder<'a, B> {
-    /// Builds GPU glyph instances from shaped text.
+    /// Builds GPU glyph instances from shaped text with lazy rasterization.
     ///
-    /// Cache misses (whitespace or un-rasterized glyphs) are skipped silently.
-    /// The glyph's advance still contributes to pen position, but no quad is
-    /// generated. This handles whitespace correctly but cannot distinguish
-    /// expected whitespace from bugs where visible glyphs weren't materialized.
+    /// Computes sub-pixel variant from screen position and rasterizes missing
+    /// glyphs on demand (only the variant actually needed). Whitespace glyphs
+    /// are skipped efficiently using bounds-check-before-rasterize pattern.
     ///
-    /// Phase 2b will adopt Zed's bounds-check-before-rasterize pattern to fix
-    /// this limitation. See `plans/reports/decision-260506-1020-zed-style-bounds-check-glyph-rasterization.md`.
-    pub fn build(&self, shaped: &ShapedLine) -> Result<Vec<GlyphInstance>, TextError> {
+    /// The glyph's advance contributes to pen position regardless of visibility.
+    ///
+    /// # Arguments
+    ///
+    /// * `shaped` - Shaped line of text
+    /// * `cache` - Glyph cache (mutated to rasterize and queue missing glyphs)
+    pub fn build(
+        &self,
+        shaped: &ShapedLine,
+        cache: &mut GlyphCache,
+    ) -> Result<Vec<GlyphInstance>, TextError> {
+        self.build_line_at(shaped, cache, 0.0)
+    }
+
+    /// Builds GPU glyph instances from a paragraph (multiple lines).
+    ///
+    /// Each line's `y_offset_lpx` is added to the baseline Y position.
+    /// Use with `shape_paragraph()` results.
+    ///
+    /// # Arguments
+    ///
+    /// * `lines` - Shaped lines from `shape_paragraph()`
+    /// * `cache` - Glyph cache (mutated to rasterize and queue missing glyphs)
+    pub fn build_paragraph(
+        &self,
+        lines: &[ShapedLine],
+        cache: &mut GlyphCache,
+    ) -> Result<Vec<GlyphInstance>, TextError> {
+        let mut out = Vec::new();
+        for line in lines {
+            let instances = self.build_line_at(line, cache, line.y_offset_lpx)?;
+            out.extend(instances);
+        }
+        Ok(out)
+    }
+
+    /// Builds GPU glyph instances for a single line at a given Y offset.
+    fn build_line_at(
+        &self,
+        shaped: &ShapedLine,
+        cache: &mut GlyphCache,
+        y_offset_lpx: f32,
+    ) -> Result<Vec<GlyphInstance>, TextError> {
         let scale = self.font.scale();
+        let fh = self.font.handle();
         let mut out = Vec::with_capacity(shaped.glyphs.len());
         let mut pen_x_lpx = self.baseline_lpx[0];
 
@@ -44,10 +85,18 @@ impl<'a, B: TextBackend> TextRunBuilder<'a, B> {
             let glyph_x_px = glyph_x_lpx * scale;
             let variant = compute_variant(glyph_x_px);
 
-            // Cache miss = whitespace or empty glyph, skip (advance only, no quad)
-            if let Some(cg) = self.cache.get(self.font.handle(), g.glyph_id, variant) {
+            let bounds = self.backend.glyph_raster_bounds(self.font, g.glyph_id)?;
+            if bounds.is_whitespace() {
+                pen_x_lpx += g.x_advance_lpx;
+                continue;
+            }
+
+            cache.materialize_one(self.backend, self.font, g.glyph_id, variant)?;
+
+            if let Some(cg) = cache.get(fh, g.glyph_id, variant) {
                 let origin_x_px = (glyph_x_lpx + cg.metrics.bearing_x_lpx) * scale;
-                let origin_y_px = (self.baseline_lpx[1] - cg.metrics.bearing_y_lpx) * scale;
+                let origin_y_px =
+                    (self.baseline_lpx[1] + y_offset_lpx - cg.metrics.bearing_y_lpx) * scale;
 
                 out.push(GlyphInstance {
                     rect: [

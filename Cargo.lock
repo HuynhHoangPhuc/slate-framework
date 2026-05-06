@@ -274,6 +274,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "byteorder"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
+
+[[package]]
 name = "byteorder-lite"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -548,6 +554,15 @@ dependencies = [
  "futures-task",
  "pin-project-lite",
  "slab",
+]
+
+[[package]]
+name = "fxhash"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c31b6d751ae2c7f11320402d34e41349dd1016f8d5d45e48c4312bc8625af50c"
+dependencies = [
+ "byteorder",
 ]
 
 [[package]]
@@ -1759,6 +1774,7 @@ name = "slate-text"
 version = "0.0.2"
 dependencies = [
  "bytemuck",
+ "fxhash",
  "image",
  "image-compare",
  "log",
@@ -1767,9 +1783,11 @@ dependencies = [
  "objc2-core-graphics",
  "objc2-core-text",
  "objc2-foundation",
+ "parking_lot",
  "pollster",
  "slate-renderer",
  "thiserror",
+ "ttf-parser",
  "wgpu",
  "windows",
 ]
@@ -1869,6 +1887,12 @@ dependencies = [
  "weezl",
  "zune-jpeg",
 ]
+
+[[package]]
+name = "ttf-parser"
+version = "0.25.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
 
 [[package]]
 name = "unicode-ident"

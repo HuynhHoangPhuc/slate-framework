@@ -3,7 +3,7 @@
 //! Shapes text using CTLine and extracts glyph positioning information.
 
 use crate::error::TextError;
-use crate::types::{FontMetrics, ShapedGlyph, ShapedLine};
+use crate::types::{FontId, FontMetrics, ShapedGlyph, ShapedLine};
 use objc2_core_foundation::CFRange;
 use objc2_core_text::{
     CTFont, CTLineCreateWithAttributedString, CTLineGetGlyphRuns, CTRunGetAdvances,
@@ -36,6 +36,7 @@ pub fn shape_line(
             width_lpx: 0.0,
             ascent_lpx: metrics.ascent_lpx,
             descent_lpx: metrics.descent_lpx,
+            y_offset_lpx: 0.0,
         });
     }
 
@@ -121,6 +122,7 @@ pub fn shape_line(
 
             glyphs.push(ShapedGlyph {
                 glyph_id,
+                font_id: FontId::PRIMARY,
                 x_advance_lpx: x_advance_pt * PT_TO_LPX,
                 x_offset_lpx: x_offset_pt * PT_TO_LPX,
                 y_offset_lpx: y_offset_pt * PT_TO_LPX,
@@ -135,5 +137,6 @@ pub fn shape_line(
         width_lpx: (total_width_pt as f32) * PT_TO_LPX,
         ascent_lpx: metrics.ascent_lpx,
         descent_lpx: metrics.descent_lpx,
+        y_offset_lpx: 0.0,
     })
 }

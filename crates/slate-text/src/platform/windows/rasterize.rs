@@ -3,7 +3,7 @@
 //! Uses ALIASED_1x1 texture type for greyscale AA (not ClearType RGB).
 //! Sub-pixel variants via DWRITE_MATRIX.dx translation.
 
-use crate::{GlyphBitmap, TextError};
+use crate::{GlyphBitmap, GlyphBounds, TextError};
 use std::mem::ManuallyDrop;
 use windows::Win32::Graphics::DirectWrite::{
     DWRITE_GLYPH_METRICS, DWRITE_GLYPH_OFFSET, DWRITE_GLYPH_RUN, DWRITE_GRID_FIT_MODE_DEFAULT,
@@ -118,6 +118,44 @@ fn get_glyph_advance(
 
     let units_to_lpx = em_size_dip / font_metrics.designUnitsPerEm as f32;
     Ok(metrics[0].advanceWidth as f32 * units_to_lpx)
+}
+
+/// Query glyph raster bounds without rasterizing.
+///
+/// Returns `GlyphBounds::ZERO` for whitespace glyphs.
+pub fn get_glyph_bounds(
+    factory: &IDWriteFactory5,
+    font_face: &IDWriteFontFace,
+    em_size_dip: f32,
+    glyph_id: u16,
+) -> Result<GlyphBounds, TextError> {
+    with_glyph_run(font_face, em_size_dip, glyph_id, |run| {
+        let analysis = unsafe {
+            factory.CreateGlyphRunAnalysis(
+                run,
+                None,
+                DWRITE_RENDERING_MODE1_NATURAL,
+                DWRITE_MEASURING_MODE_NATURAL,
+                DWRITE_GRID_FIT_MODE_DEFAULT,
+                DWRITE_TEXT_ANTIALIAS_MODE_GRAYSCALE,
+                0.0,
+                0.0,
+            )
+        }
+        .map_err(|e| TextError::RasterizationFailed(format!("CreateGlyphRunAnalysis: {}", e)))?;
+
+        let bounds = unsafe { analysis.GetAlphaTextureBounds(DWRITE_TEXTURE_ALIASED_1x1) }
+            .map_err(|e| TextError::RasterizationFailed(format!("GetAlphaTextureBounds: {}", e)))?;
+
+        if bounds.right <= bounds.left || bounds.bottom <= bounds.top {
+            return Ok(GlyphBounds::ZERO);
+        }
+
+        Ok(GlyphBounds {
+            width: (bounds.right - bounds.left) as u32,
+            height: (bounds.bottom - bounds.top) as u32,
+        })
+    })
 }
 
 /// Helper to safely manage DWRITE_GLYPH_RUN with ManuallyDrop fontFace.

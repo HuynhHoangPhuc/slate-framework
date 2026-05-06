@@ -24,7 +24,8 @@
 
 use crate::error::TextError;
 use crate::font_handle::FontHandle;
-use crate::types::{FontMetrics, GlyphBitmap, ShapedLine};
+use crate::paragraph::greedy_wrap;
+use crate::types::{FontDescriptor, FontMetrics, GlyphBitmap, GlyphBounds, ShapedLine};
 
 /// Native text shaping and rasterization backend.
 ///
@@ -94,6 +95,50 @@ pub trait TextBackend {
         glyph_id: u32,
         variant: u8,
     ) -> Result<GlyphBitmap, TextError>;
+
+    /// Query glyph raster bounds without rasterizing.
+    ///
+    /// Returns `GlyphBounds::ZERO` for whitespace glyphs. This is the
+    /// bounds-check-before-rasterize pattern: query bounds first (cheap, O(1) cached),
+    /// then only rasterize if non-zero.
+    ///
+    /// # Arguments
+    ///
+    /// * `font` - Font to query
+    /// * `glyph_id` - Glyph index in the font
+    fn glyph_raster_bounds(
+        &self,
+        font: &Self::Font,
+        glyph_id: u32,
+    ) -> Result<GlyphBounds, TextError>;
+
+    /// Shape a paragraph of text into multiple wrapped lines.
+    ///
+    /// Breaks text at spaces using greedy first-fit algorithm. Each returned
+    /// `ShapedLine` has `y_offset_lpx` set to its vertical position.
+    ///
+    /// # Arguments
+    ///
+    /// * `font` - Font to use for shaping
+    /// * `text` - Input text to wrap
+    /// * `max_width_lpx` - Maximum line width in logical pixels
+    fn shape_paragraph(
+        &self,
+        font: &Self::Font,
+        text: &str,
+        max_width_lpx: f32,
+    ) -> Result<Vec<ShapedLine>, TextError>
+    where
+        Self: Sized,
+    {
+        greedy_wrap(self, font, text, max_width_lpx)
+    }
+
+    /// Enumerate system fonts without loading them.
+    ///
+    /// Returns metadata for all installed fonts. This is O(1) per font with
+    /// no font file loading—only metadata extraction.
+    fn enumerate_system_fonts(&self) -> Result<Vec<FontDescriptor>, TextError>;
 }
 
 /// Platform font instance with metrics and handle.

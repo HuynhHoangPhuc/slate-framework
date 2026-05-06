@@ -4,7 +4,7 @@
 //! Produces 4 sub-pixel X variants (0.0/0.25/0.5/0.75 pixel offsets).
 
 use crate::error::TextError;
-use crate::types::GlyphBitmap;
+use crate::types::{GlyphBitmap, GlyphBounds};
 use objc2_core_graphics::{
     CGAffineTransform, CGBitmapInfo, CGColorSpace, CGContext, CGFloat, CGPoint,
     kCGBitmapByteOrderDefault, kCGImageAlphaOnly,
@@ -163,6 +163,48 @@ pub fn rasterize(
         advance_x_lpx,
         alpha: cropped,
     })
+}
+
+/// Query glyph raster bounds without rasterizing.
+///
+/// Uses CTFontGetBoundingRectsForGlyphs for O(1) bounds query.
+/// Returns `GlyphBounds::ZERO` for whitespace glyphs.
+///
+/// CoreText returns bounds in points; we convert to physical pixels via:
+/// pixels = points * PT_TO_LPX * scale
+pub fn get_glyph_bounds(
+    ct_font: &CTFont,
+    glyph_id: u16,
+    scale: f32,
+) -> Result<GlyphBounds, TextError> {
+    use objc2_core_text::{CTFontGetBoundingRectsForGlyphs, kCTFontOrientationDefault};
+
+    let mut bounds = objc2_core_graphics::CGRect {
+        origin: objc2_core_graphics::CGPoint { x: 0.0, y: 0.0 },
+        size: objc2_core_graphics::CGSize {
+            width: 0.0,
+            height: 0.0,
+        },
+    };
+
+    unsafe {
+        CTFontGetBoundingRectsForGlyphs(
+            ct_font,
+            kCTFontOrientationDefault,
+            &glyph_id,
+            &mut bounds,
+            1,
+        );
+    }
+
+    if bounds.size.width <= 0.0 || bounds.size.height <= 0.0 {
+        return Ok(GlyphBounds::ZERO);
+    }
+
+    let width = (bounds.size.width as f32 * PT_TO_LPX * scale).ceil() as u32;
+    let height = (bounds.size.height as f32 * PT_TO_LPX * scale).ceil() as u32;
+
+    Ok(GlyphBounds { width, height })
 }
 
 /// Find tight bounding box of non-zero pixels in buffer.

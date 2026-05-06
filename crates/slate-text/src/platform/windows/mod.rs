@@ -6,9 +6,11 @@
 mod font_load;
 mod rasterize;
 mod shaping;
+mod system_fonts;
 
 use crate::{
-    FontHandle, FontMetrics, GlyphBitmap, ShapedLine, TextBackend, TextError, backend::Font,
+    FontHandle, FontMetrics, GlyphBitmap, GlyphBounds, ShapedLine, TextBackend, TextError,
+    backend::Font, types::FontDescriptor,
 };
 use std::marker::PhantomData;
 use windows::Win32::Graphics::DirectWrite::{
@@ -139,5 +141,22 @@ impl TextBackend for DirectWriteBackend {
             glyph_id as u16,
             variant,
         )
+    }
+
+    fn glyph_raster_bounds(
+        &self,
+        font: &Self::Font,
+        glyph_id: u32,
+    ) -> Result<GlyphBounds, TextError> {
+        rasterize::get_glyph_bounds(
+            &self.factory,
+            &font.font_face,
+            font.em_size_dip,
+            glyph_id as u16,
+        )
+    }
+
+    fn enumerate_system_fonts(&self) -> Result<Vec<FontDescriptor>, TextError> {
+        system_fonts::enumerate_system_fonts(&self.factory)
     }
 }
