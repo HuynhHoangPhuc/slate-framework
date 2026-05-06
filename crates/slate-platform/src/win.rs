@@ -37,13 +37,13 @@ use windows::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForWindow, SetProcessDpiAwarenessContext,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CREATESTRUCTW, CS_HREDRAW, CS_OWNDC, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW,
-    DefWindowProcW, DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetClientRect, GetMessageW,
-    GetWindowLongPtrW, IDC_ARROW, KillTimer, LoadCursorW, MSG, PostQuitMessage, RegisterClassExW,
-    SWP_NOACTIVATE, SWP_NOZORDER, SetTimer, SetWindowLongPtrW, SetWindowPos, SetWindowTextW,
-    TranslateMessage, WINDOW_EX_STYLE, WM_CLOSE, WM_DESTROY, WM_DPICHANGED, WM_ENTERSIZEMOVE,
-    WM_EXITSIZEMOVE, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_SIZE, WM_TIMER, WNDCLASSEXW,
-    WS_OVERLAPPEDWINDOW, WS_VISIBLE,
+    CREATESTRUCTW, CS_OWNDC, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow,
+    DispatchMessageW, GWLP_USERDATA, GetClientRect, GetMessageW, GetWindowLongPtrW, IDC_ARROW,
+    LoadCursorW, MSG, PostQuitMessage, RegisterClassExW, SWP_NOACTIVATE, SWP_NOZORDER,
+    SetWindowLongPtrW, SetWindowPos, SetWindowTextW, TranslateMessage, WINDOW_EX_STYLE,
+    WM_CLOSE, WM_DESTROY, WM_DPICHANGED, WM_ENTERSIZEMOVE, WM_ERASEBKGND, WM_EXITSIZEMOVE,
+    WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_SIZE, WNDCLASSEXW, WS_OVERLAPPEDWINDOW,
+    WS_VISIBLE,
 };
 use windows::core::{PCWSTR, w};
 
@@ -57,6 +57,7 @@ type EventHandler = std::cell::RefCell<Option<Box<dyn FnMut(Event) + 'static>>>;
 
 thread_local! {
     static HANDLER: EventHandler = const { std::cell::RefCell::new(None) };
+    static IN_SIZE_MOVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static NEXT_WINDOW_ID: Cell<u64> = const { Cell::new(1) };
 }
 
@@ -89,11 +90,6 @@ fn to_wide(s: &str) -> Vec<u16> {
 // ---------------------------------------------------------------------------
 
 const CLASS_NAME: PCWSTR = w!("SlateWindowClass");
-
-/// Identifier for the modal size-move timer. The value is arbitrary; uniqueness
-/// only needs to be per-HWND. Win32 routes WM_TIMER's WPARAM back to wnd_proc
-/// so the handler can distinguish multiple timers if added later.
-const SIZE_MOVE_TIMER_ID: usize = 0x5_1A_7E;
 
 // ---------------------------------------------------------------------------
 // WndProc trampoline — extern "system" callback with catch_unwind + abort (C4)
@@ -190,18 +186,27 @@ impl WinWindowInner {
                 LRESULT(0)
             }
             WM_SIZE => {
-                // LPARAM is i64 on x64 Windows; cast to u32 first so the
-                // shift-right cannot accidentally surface sign-extended bits
-                // from the high half. The low 16 bits are width, the next
-                // 16 are height — matches Win32's LOWORD/HIWORD macros.
                 let lp = lparam.0 as u32;
                 let w = lp & 0xFFFF;
                 let h = (lp >> 16) & 0xFFFF;
-                dispatch_event(Event::WindowResized {
-                    window: self.id,
-                    size: (w, h),
-                });
+                // During the modal size-move loop, suppress resize events so
+                // the renderer keeps its old surface config. DWM stretches the
+                // last presented frame to fill the new window size — matching
+                // macOS CoreAnimation's layer-stretching behavior.
+                if !IN_SIZE_MOVE.with(|f| f.get()) {
+                    dispatch_event(Event::WindowResized {
+                        window: self.id,
+                        size: (w, h),
+                    });
+                }
                 LRESULT(0)
+            }
+            WM_ERASEBKGND => {
+                // Suppress background erase to prevent flicker during resize.
+                // The GPU renderer (wgpu) owns the entire client area; letting
+                // Windows erase it would flash a white/black frame between the
+                // old and new GPU frame. Returning 1 tells Windows we handled it.
+                LRESULT(1)
             }
             WM_PAINT => {
                 dispatch_event(Event::WindowRedrawRequested { window: self.id });
@@ -210,24 +215,21 @@ impl WinWindowInner {
                 LRESULT(0)
             }
             WM_ENTERSIZEMOVE => {
-                // Win32 enters its own internal GetMessage loop while the user
-                // drags the window edge — our outer pump never sees WM_PAINT
-                // and the window goes white. Install a high-frequency timer
-                // and redraw from WM_TIMER to keep paint live during resize.
-                //
-                // SAFETY: hwnd is valid; period 1ms; no callback (use WM_TIMER).
-                unsafe { SetTimer(Some(hwnd), SIZE_MOVE_TIMER_ID, 1, None) };
+                IN_SIZE_MOVE.with(|f| f.set(true));
                 LRESULT(0)
             }
             WM_EXITSIZEMOVE => {
-                // SAFETY: hwnd + timer id are valid; failure is non-fatal.
-                let _ = unsafe { KillTimer(Some(hwnd), SIZE_MOVE_TIMER_ID) };
-                LRESULT(0)
-            }
-            WM_TIMER if _wparam.0 == SIZE_MOVE_TIMER_ID => {
-                // Drive a redraw while the size-move modal loop holds the pump.
-                // WM_SIZE during the modal loop already dispatches the new
-                // dimensions, so we only need to request paint here.
+                IN_SIZE_MOVE.with(|f| f.set(false));
+                // Resize ended — reconfigure the surface to the final size
+                // and render one correct frame.
+                let mut rect = RECT::default();
+                let _ = unsafe { GetClientRect(hwnd, &mut rect) };
+                let w = (rect.right - rect.left) as u32;
+                let h = (rect.bottom - rect.top) as u32;
+                dispatch_event(Event::WindowResized {
+                    window: self.id,
+                    size: (w, h),
+                });
                 dispatch_event(Event::WindowRedrawRequested { window: self.id });
                 LRESULT(0)
             }
@@ -430,7 +432,7 @@ impl Platform for WinPlatform {
 
         let wc = WNDCLASSEXW {
             cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
-            style: CS_HREDRAW | CS_VREDRAW | CS_OWNDC,
+            style: CS_OWNDC,
             lpfnWndProc: Some(wnd_proc_trampoline),
             hInstance: hinstance,
             lpszClassName: CLASS_NAME,

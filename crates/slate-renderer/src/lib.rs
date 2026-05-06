@@ -245,6 +245,9 @@ impl Renderer {
         let (w, h) = (new_size.0.max(1).min(max), new_size.1.max(1).min(max));
         self.surface_config.width = w;
         self.surface_config.height = h;
+        // Flush in-flight GPU work before reconfiguring the swapchain.
+        // Without this, DWM may composite a stale buffer during resize.
+        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
         self.surface.configure(&self.device, &self.surface_config);
         self.queue.write_buffer(
             &self.viewport_buf,
