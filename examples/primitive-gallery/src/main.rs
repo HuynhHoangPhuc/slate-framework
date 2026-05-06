@@ -163,6 +163,9 @@ fn build_text_glyphs(
     let mut renderer = renderer_cell.borrow_mut();
     let renderer = renderer.as_mut().unwrap();
 
+    // Get atlas and queue for immediate glyph upload
+    let (atlas, queue) = renderer.glyph_atlas_and_queue();
+
     // Get font handle for cache keying
     let font_handle = font.handle();
 
@@ -177,7 +180,7 @@ fn build_text_glyphs(
         backend.shape_line(font, &fps_text).unwrap()
     });
 
-    // Build glyph instances (lazy rasterization)
+    // Build glyph instances (immediate rasterization and upload)
     let mut glyphs = Vec::new();
 
     // Hello world - white text at top-right area
@@ -187,7 +190,7 @@ fn build_text_glyphs(
         baseline_lpx: [w / scale - hello_shaped.width_lpx - 20.0, 60.0],
         color: srgb_u8_to_linear_premul([0xFF, 0xFF, 0xFF, 0xFF]),
     };
-    if let Ok(instances) = hello_builder.build(&hello_shaped, &mut *glyph_cache) {
+    if let Ok(instances) = hello_builder.build(&hello_shaped, &mut *glyph_cache, atlas, queue) {
         glyphs.extend(instances);
     }
 
@@ -198,7 +201,7 @@ fn build_text_glyphs(
         baseline_lpx: [w / scale - fps_shaped.width_lpx - 10.0, 25.0],
         color: srgb_u8_to_linear_premul([0xFF, 0xFF, 0x00, 0xFF]),
     };
-    if let Ok(instances) = fps_builder.build(&fps_shaped, &mut *glyph_cache) {
+    if let Ok(instances) = fps_builder.build(&fps_shaped, &mut *glyph_cache, atlas, queue) {
         glyphs.extend(instances);
     }
 
@@ -218,7 +221,7 @@ fn build_text_glyphs(
                 baseline_lpx: [paragraph_x + x_offset, paragraph_y + line.y_offset_lpx],
                 color: srgb_u8_to_linear_premul([0xCC, 0xCC, 0xCC, 0xFF]),
             };
-            if let Ok(instances) = builder.build(line, &mut *glyph_cache) {
+            if let Ok(instances) = builder.build(line, &mut *glyph_cache, atlas, queue) {
                 glyphs.extend(instances);
             }
         }
@@ -235,7 +238,7 @@ fn build_text_glyphs(
         baseline_lpx: [paragraph_x, paragraph_y + 90.0],
         color: srgb_u8_to_linear_premul([0x88, 0xCC, 0xFF, 0xFF]),
     };
-    if let Ok(instances) = extended_builder.build(&extended_shaped, &mut *glyph_cache) {
+    if let Ok(instances) = extended_builder.build(&extended_shaped, &mut *glyph_cache, atlas, queue) {
         glyphs.extend(instances);
     }
 
@@ -251,14 +254,8 @@ fn build_text_glyphs(
         baseline_lpx: [paragraph_x + 10.0, paragraph_y + 140.0],
         color: srgb_u8_to_linear_premul([0xFF, 0xFF, 0xFF, 0xFF]),
     };
-    if let Ok(instances) = light_builder.build(&light_shaped, &mut *glyph_cache) {
+    if let Ok(instances) = light_builder.build(&light_shaped, &mut *glyph_cache, atlas, queue) {
         glyphs.extend(instances);
-    }
-
-    // Flush to atlas after building (rasterized on demand)
-    let (atlas, queue) = renderer.glyph_atlas_and_queue();
-    if glyph_cache.flush(atlas, queue).is_err() {
-        return glyphs;
     }
 
     glyphs

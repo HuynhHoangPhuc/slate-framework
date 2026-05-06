@@ -1,5 +1,6 @@
 //! Text run builder — converts shaped glyphs to GPU instances.
 
+use slate_renderer::atlas::Atlas;
 use slate_renderer::scene::GlyphInstance;
 
 use crate::TextError;
@@ -26,24 +27,28 @@ pub struct TextRunBuilder<'a, B: TextBackend> {
 }
 
 impl<'a, B: TextBackend> TextRunBuilder<'a, B> {
-    /// Builds GPU glyph instances from shaped text with lazy rasterization.
+    /// Builds GPU glyph instances from shaped text with immediate rasterization.
     ///
     /// Computes sub-pixel variant from screen position and rasterizes missing
-    /// glyphs on demand (only the variant actually needed). Whitespace glyphs
-    /// are skipped efficiently using bounds-check-before-rasterize pattern.
+    /// glyphs on demand, uploading immediately to the atlas. This ensures glyphs
+    /// are available in cache within the same frame.
     ///
-    /// The glyph's advance contributes to pen position regardless of visibility.
+    /// Whitespace glyphs are skipped efficiently using bounds-check-before-rasterize.
     ///
     /// # Arguments
     ///
     /// * `shaped` - Shaped line of text
-    /// * `cache` - Glyph cache (mutated to rasterize and queue missing glyphs)
+    /// * `cache` - Glyph cache (mutated to rasterize missing glyphs)
+    /// * `atlas` - GPU atlas for glyph storage
+    /// * `queue` - GPU queue for upload commands
     pub fn build(
         &self,
         shaped: &ShapedLine,
         cache: &mut GlyphCache,
+        atlas: &mut Atlas,
+        queue: &wgpu::Queue,
     ) -> Result<Vec<GlyphInstance>, TextError> {
-        self.build_line_at(shaped, cache, 0.0)
+        self.build_line_at(shaped, cache, atlas, queue, 0.0)
     }
 
     /// Builds GPU glyph instances from a paragraph (multiple lines).
@@ -54,15 +59,19 @@ impl<'a, B: TextBackend> TextRunBuilder<'a, B> {
     /// # Arguments
     ///
     /// * `lines` - Shaped lines from `shape_paragraph()`
-    /// * `cache` - Glyph cache (mutated to rasterize and queue missing glyphs)
+    /// * `cache` - Glyph cache (mutated to rasterize missing glyphs)
+    /// * `atlas` - GPU atlas for glyph storage
+    /// * `queue` - GPU queue for upload commands
     pub fn build_paragraph(
         &self,
         lines: &[ShapedLine],
         cache: &mut GlyphCache,
+        atlas: &mut Atlas,
+        queue: &wgpu::Queue,
     ) -> Result<Vec<GlyphInstance>, TextError> {
         let mut out = Vec::new();
         for line in lines {
-            let instances = self.build_line_at(line, cache, line.y_offset_lpx)?;
+            let instances = self.build_line_at(line, cache, atlas, queue, line.y_offset_lpx)?;
             out.extend(instances);
         }
         Ok(out)
@@ -73,6 +82,8 @@ impl<'a, B: TextBackend> TextRunBuilder<'a, B> {
         &self,
         shaped: &ShapedLine,
         cache: &mut GlyphCache,
+        atlas: &mut Atlas,
+        queue: &wgpu::Queue,
         y_offset_lpx: f32,
     ) -> Result<Vec<GlyphInstance>, TextError> {
         let scale = self.font.scale();
@@ -91,7 +102,7 @@ impl<'a, B: TextBackend> TextRunBuilder<'a, B> {
                 continue;
             }
 
-            cache.materialize_one(self.backend, self.font, g.glyph_id, variant)?;
+            cache.materialize_one_immediate(self.backend, self.font, g.glyph_id, variant, atlas, queue)?;
 
             if let Some(cg) = cache.get(fh, g.glyph_id, variant) {
                 let origin_x_px = (glyph_x_lpx + cg.metrics.bearing_x_lpx) * scale;

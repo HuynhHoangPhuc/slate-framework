@@ -127,6 +127,9 @@ impl GlyphCache {
     ///
     /// Returns `true` if the glyph was rasterized and queued (cache miss),
     /// `false` if already cached or pending.
+    ///
+    /// **Note:** Use `materialize_one_immediate()` if you need the glyph available
+    /// in cache immediately (e.g., during a single-pass build).
     pub fn materialize_one<B: TextBackend>(
         &mut self,
         backend: &B,
@@ -154,6 +157,55 @@ impl GlyphCache {
             variant,
             bitmap,
         });
+        Ok(true)
+    }
+
+    /// Rasterizes and immediately uploads a single glyph variant.
+    ///
+    /// Unlike `materialize_one()`, this allocates atlas space and uploads to GPU
+    /// immediately, making the glyph available in cache for subsequent `get()` calls
+    /// in the same frame.
+    ///
+    /// Use this for single-pass text rendering where glyphs must be available
+    /// immediately after materialization.
+    ///
+    /// Returns `true` if the glyph was rasterized and uploaded (cache miss),
+    /// `false` if already cached.
+    pub fn materialize_one_immediate<B: TextBackend>(
+        &mut self,
+        backend: &B,
+        font: &B::Font,
+        glyph_id: u32,
+        variant: u8,
+        atlas: &mut Atlas,
+        queue: &wgpu::Queue,
+    ) -> Result<bool, TextError> {
+        let key = (font.handle(), glyph_id, variant);
+
+        if self.cache.contains_key(&key) {
+            return Ok(false);
+        }
+
+        let bitmap = backend.rasterize_glyph(font, glyph_id, variant)?;
+        if bitmap.width == 0 || bitmap.height == 0 {
+            return Ok(false);
+        }
+
+        let (alloc_id, uv_rect) = allocate_glyph(atlas, bitmap.width, bitmap.height)
+            .map_err(|e| TextError::RasterizationFailed(format!("atlas alloc: {e:?}")))?;
+
+        let padded = pad_with_gutter(&bitmap.alpha, bitmap.width, bitmap.height);
+        atlas.upload(queue, alloc_id, &padded);
+
+        let metrics = GlyphMetrics::from_bitmap(&bitmap);
+        self.cache.insert(
+            key,
+            CachedGlyph {
+                alloc: AtlasAllocation { uv_rect, alloc_id },
+                metrics,
+            },
+        );
+
         Ok(true)
     }
 

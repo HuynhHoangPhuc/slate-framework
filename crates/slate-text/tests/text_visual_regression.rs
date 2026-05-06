@@ -161,17 +161,14 @@ fn text_pipeline_builds_glyph_instances() {
     // Shape "Hello"
     let shaped = backend.shape_line(&font, "Hello").unwrap();
 
-    // Build glyph instances (lazy rasterization)
-    // First build() queues glyphs, flush() uploads, second build() returns instances
+    // Build glyph instances (immediate rasterization and upload)
     let builder = TextRunBuilder {
         backend: &backend,
         font: &font,
         baseline_lpx: [10.0, 50.0],
         color: srgb_u8_to_linear_premul([0xFF, 0xFF, 0xFF, 0xFF]),
     };
-    let _ = builder.build(&shaped, &mut cache).unwrap();
-    cache.flush(&mut atlas, &queue).unwrap();
-    let instances = builder.build(&shaped, &mut cache).unwrap();
+    let instances = builder.build(&shaped, &mut cache, &mut atlas, &queue).unwrap();
 
     // Should have 5 glyph instances for "Hello"
     assert_eq!(instances.len(), 5);
@@ -205,9 +202,7 @@ fn glyph_instances_positions_advance_correctly() {
         baseline_lpx: [0.0, 20.0],
         color: [1.0; 4],
     };
-    let _ = builder.build(&shaped, &mut cache).unwrap();
-    cache.flush(&mut atlas, &queue).unwrap();
-    let instances = builder.build(&shaped, &mut cache).unwrap();
+    let instances = builder.build(&shaped, &mut cache, &mut atlas, &queue).unwrap();
 
     assert_eq!(instances.len(), 2);
     // Second glyph should be positioned after the first
