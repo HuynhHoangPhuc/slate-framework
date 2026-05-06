@@ -4,26 +4,46 @@
 
 use crate::error::TextError;
 use crate::types::{FontId, FontMetrics, ShapedGlyph, ShapedLine};
-use objc2_core_foundation::CFRange;
-use objc2_core_text::{
-    CTFont, CTLineCreateWithAttributedString, CTLineGetGlyphRuns, CTRunGetAdvances,
-    CTRunGetGlyphCount, CTRunGetGlyphs, CTRunGetPositions, kCTFontAttributeName,
-};
-use objc2_foundation::{NSAttributedString, NSDictionary, NSString};
+use objc2_core_foundation::{CFIndex, CFRange, CGPoint, CGSize};
+use objc2_core_text::{CTFont, CTRun, kCTFontAttributeName};
+use std::ffi::c_void;
 
 use super::PT_TO_LPX;
 
+// External CoreFoundation functions
+unsafe extern "C" {
+    fn CFStringCreateWithCString(
+        alloc: *const c_void,
+        c_str: *const i8,
+        encoding: u32,
+    ) -> *const c_void;
+    fn CFDictionaryCreate(
+        allocator: *const c_void,
+        keys: *const *const c_void,
+        values: *const *const c_void,
+        num_values: CFIndex,
+        key_callbacks: *const c_void,
+        value_callbacks: *const c_void,
+    ) -> *const c_void;
+    fn CFAttributedStringCreate(
+        alloc: *const c_void,
+        string: *const c_void,
+        attributes: *const c_void,
+    ) -> *const c_void;
+    fn CTLineCreateWithAttributedString(attr_string: *const c_void) -> *const c_void;
+    fn CTLineGetGlyphRuns(line: *const c_void) -> *const c_void;
+    fn CFArrayGetCount(array: *const c_void) -> CFIndex;
+    fn CFArrayGetValueAtIndex(array: *const c_void, idx: CFIndex) -> *const c_void;
+    fn CTRunGetGlyphCount(run: *const c_void) -> CFIndex;
+    fn CTRunGetGlyphs(run: *const c_void, range: CFRange, buffer: *mut u16);
+    fn CTRunGetPositions(run: *const c_void, range: CFRange, buffer: *mut CGPoint);
+    fn CTRunGetAdvances(run: *const c_void, range: CFRange, buffer: *mut CGSize);
+    fn CFRelease(cf: *const c_void);
+}
+
+const K_CF_STRING_ENCODING_UTF8: u32 = 0x08000100;
+
 /// Shape a line of text into positioned glyphs.
-///
-/// # Arguments
-///
-/// * `ct_font` - CoreText font to shape with
-/// * `text` - UTF-8 text to shape
-/// * `metrics` - Font metrics for line height info
-///
-/// # Returns
-///
-/// ShapedLine with glyphs in visual order and total width.
 pub fn shape_line(
     ct_font: &CTFont,
     text: &str,
@@ -40,103 +60,122 @@ pub fn shape_line(
         });
     }
 
-    // Create NSString from text
-    let ns_string = NSString::from_str(text);
+    // Create C string from text
+    let c_str = std::ffi::CString::new(text).map_err(|_| {
+        TextError::ShapingFailed("Text contains null bytes".into())
+    })?;
 
-    // Create attributes dictionary with font
-    let font_key = unsafe { kCTFontAttributeName };
-    let attrs = unsafe { NSDictionary::from_retained_objects(&[font_key], &[ct_font.as_ref()]) };
-
-    // Create attributed string
-    let attr_string = unsafe {
-        NSAttributedString::initWithString_attributes(
-            NSAttributedString::alloc(),
-            &ns_string,
-            Some(&attrs),
-        )
-    };
-
-    // Create CTLine
-    let line = unsafe { CTLineCreateWithAttributedString(&attr_string) };
-
-    // Get glyph runs
-    let runs = unsafe { CTLineGetGlyphRuns(&line) };
-    let run_count = unsafe { runs.len() };
-
-    let mut glyphs = Vec::new();
-    let mut total_width_pt: f64 = 0.0;
-
-    for i in 0..run_count {
-        let run = unsafe { runs.get(i) }.expect("run index out of bounds");
-        let glyph_count = unsafe { CTRunGetGlyphCount(run) };
-
-        if glyph_count == 0 {
-            continue;
+    unsafe {
+        // Create CFString from text
+        let cf_string = CFStringCreateWithCString(
+            std::ptr::null(),
+            c_str.as_ptr(),
+            K_CF_STRING_ENCODING_UTF8,
+        );
+        if cf_string.is_null() {
+            return Err(TextError::ShapingFailed("Failed to create CFString".into()));
         }
 
-        // Allocate buffers for glyph data
-        let mut glyph_ids: Vec<u16> = vec![0; glyph_count];
-        let mut positions: Vec<objc2_core_graphics::CGPoint> =
-            vec![objc2_core_graphics::CGPoint { x: 0.0, y: 0.0 }; glyph_count];
-        let mut advances: Vec<objc2_core_graphics::CGSize> = vec![
-            objc2_core_graphics::CGSize {
-                width: 0.0,
-                height: 0.0
-            };
-            glyph_count
-        ];
+        // Create attributes dictionary with font
+        let font_key = kCTFontAttributeName as *const _ as *const c_void;
+        let font_value = ct_font as *const CTFont as *const c_void;
+        let keys = [font_key];
+        let values = [font_value];
 
-        // Get glyph IDs
-        unsafe {
-            CTRunGetGlyphs(
-                run,
-                CFRange::new(0, glyph_count as isize),
-                glyph_ids.as_mut_ptr(),
-            );
+        let attrs = CFDictionaryCreate(
+            std::ptr::null(),
+            keys.as_ptr(),
+            values.as_ptr(),
+            1,
+            std::ptr::null(), // kCFTypeDictionaryKeyCallBacks
+            std::ptr::null(), // kCFTypeDictionaryValueCallBacks
+        );
+
+        // Create attributed string
+        let attr_string = CFAttributedStringCreate(std::ptr::null(), cf_string, attrs);
+        CFRelease(cf_string);
+        if !attrs.is_null() {
+            CFRelease(attrs);
+        }
+        if attr_string.is_null() {
+            return Err(TextError::ShapingFailed("Failed to create CFAttributedString".into()));
         }
 
-        // Get positions
-        unsafe {
-            CTRunGetPositions(
-                run,
-                CFRange::new(0, glyph_count as isize),
-                positions.as_mut_ptr(),
-            );
+        // Create CTLine
+        let line = CTLineCreateWithAttributedString(attr_string);
+        CFRelease(attr_string);
+        if line.is_null() {
+            return Err(TextError::ShapingFailed("Failed to create CTLine".into()));
         }
 
-        // Get advances
-        unsafe {
-            CTRunGetAdvances(
-                run,
-                CFRange::new(0, glyph_count as isize),
-                advances.as_mut_ptr(),
-            );
+        // Get glyph runs
+        let runs = CTLineGetGlyphRuns(line);
+        let run_count = CFArrayGetCount(runs);
+
+        let mut glyphs = Vec::new();
+        let mut total_width_pt: f64 = 0.0;
+
+        for i in 0..run_count {
+            let run = CFArrayGetValueAtIndex(runs, i);
+            if run.is_null() {
+                continue;
+            }
+            let _run_ref: &CTRun = &*(run as *const CTRun);
+            let glyph_count = CTRunGetGlyphCount(run) as usize;
+
+            if glyph_count == 0 {
+                continue;
+            }
+
+            // Allocate buffers for glyph data
+            let mut glyph_ids: Vec<u16> = vec![0; glyph_count];
+            let mut positions: Vec<CGPoint> = vec![CGPoint { x: 0.0, y: 0.0 }; glyph_count];
+            let mut advances: Vec<CGSize> = vec![
+                CGSize {
+                    width: 0.0,
+                    height: 0.0
+                };
+                glyph_count
+            ];
+
+            let range = CFRange::new(0, glyph_count as CFIndex);
+
+            // Get glyph IDs
+            CTRunGetGlyphs(run, range, glyph_ids.as_mut_ptr());
+
+            // Get positions
+            CTRunGetPositions(run, range, positions.as_mut_ptr());
+
+            // Get advances
+            CTRunGetAdvances(run, range, advances.as_mut_ptr());
+
+            // Convert to ShapedGlyph
+            for j in 0..glyph_count {
+                let glyph_id = glyph_ids[j] as u32;
+                let x_advance_pt = advances[j].width as f32;
+                let x_offset_pt = positions[j].x as f32;
+                let y_offset_pt = positions[j].y as f32;
+
+                glyphs.push(ShapedGlyph {
+                    glyph_id,
+                    font_id: FontId::PRIMARY,
+                    x_advance_lpx: x_advance_pt * PT_TO_LPX,
+                    x_offset_lpx: x_offset_pt * PT_TO_LPX,
+                    y_offset_lpx: y_offset_pt * PT_TO_LPX,
+                });
+
+                total_width_pt += advances[j].width;
+            }
         }
 
-        // Convert to ShapedGlyph
-        for j in 0..glyph_count {
-            let glyph_id = glyph_ids[j] as u32;
-            let x_advance_pt = advances[j].width as f32;
-            let x_offset_pt = positions[j].x as f32;
-            let y_offset_pt = positions[j].y as f32;
+        CFRelease(line);
 
-            glyphs.push(ShapedGlyph {
-                glyph_id,
-                font_id: FontId::PRIMARY,
-                x_advance_lpx: x_advance_pt * PT_TO_LPX,
-                x_offset_lpx: x_offset_pt * PT_TO_LPX,
-                y_offset_lpx: y_offset_pt * PT_TO_LPX,
-            });
-
-            total_width_pt += advances[j].width;
-        }
+        Ok(ShapedLine {
+            glyphs,
+            width_lpx: (total_width_pt as f32) * PT_TO_LPX,
+            ascent_lpx: metrics.ascent_lpx,
+            descent_lpx: metrics.descent_lpx,
+            y_offset_lpx: 0.0,
+        })
     }
-
-    Ok(ShapedLine {
-        glyphs,
-        width_lpx: (total_width_pt as f32) * PT_TO_LPX,
-        ascent_lpx: metrics.ascent_lpx,
-        descent_lpx: metrics.descent_lpx,
-        y_offset_lpx: 0.0,
-    })
 }

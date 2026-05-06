@@ -29,16 +29,19 @@ pub struct CoreTextBackend {
 
 impl CoreTextBackend {
     /// Create a new CoreText backend.
-    pub fn new() -> Self {
-        Self {
+    ///
+    /// Returns Ok on macOS since CoreText is always available.
+    /// Returns Result for API parity with DirectWriteBackend.
+    pub fn new() -> Result<Self, TextError> {
+        Ok(Self {
             _not_send: PhantomData,
-        }
+        })
     }
 }
 
 impl Default for CoreTextBackend {
     fn default() -> Self {
-        Self::new()
+        Self::new().expect("CoreText backend initialization should never fail")
     }
 }
 

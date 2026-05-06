@@ -6,7 +6,7 @@ use slate_text::{CoreTextBackend, TEST_FONT, TextBackend};
 
 #[test]
 fn rasterizes_uppercase_h() {
-    let mut backend = CoreTextBackend::new();
+    let mut backend = CoreTextBackend::new().unwrap();
     let font = backend
         .load_font_from_bytes(TEST_FONT, 16.0, 2.0)
         .expect("failed to load font");
@@ -39,7 +39,7 @@ fn rasterizes_uppercase_h() {
 
 #[test]
 fn four_variants_differ() {
-    let mut backend = CoreTextBackend::new();
+    let mut backend = CoreTextBackend::new().unwrap();
     let font = backend
         .load_font_from_bytes(TEST_FONT, 16.0, 2.0)
         .expect("failed to load font");
@@ -85,7 +85,7 @@ fn four_variants_differ() {
 
 #[test]
 fn whitespace_returns_empty_bitmap() {
-    let mut backend = CoreTextBackend::new();
+    let mut backend = CoreTextBackend::new().unwrap();
     let font = backend
         .load_font_from_bytes(TEST_FONT, 16.0, 1.0)
         .expect("failed to load font");
@@ -114,7 +114,7 @@ fn whitespace_returns_empty_bitmap() {
 
 #[test]
 fn invalid_variant_returns_error() {
-    let mut backend = CoreTextBackend::new();
+    let mut backend = CoreTextBackend::new().unwrap();
     let font = backend
         .load_font_from_bytes(TEST_FONT, 16.0, 1.0)
         .expect("failed to load font");
@@ -129,7 +129,7 @@ fn invalid_variant_returns_error() {
 
 #[test]
 fn bearing_values_are_reasonable() {
-    let mut backend = CoreTextBackend::new();
+    let mut backend = CoreTextBackend::new().unwrap();
     let font = backend
         .load_font_from_bytes(TEST_FONT, 16.0, 2.0)
         .expect("failed to load font");

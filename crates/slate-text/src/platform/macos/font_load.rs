@@ -5,13 +5,8 @@
 
 use crate::error::TextError;
 use crate::types::FontMetrics;
-use objc2_core_foundation::{CFData, CFRetained};
-use objc2_core_graphics::CGFloat;
-use objc2_core_text::{
-    CTFont, CTFontCreateWithFontDescriptor, CTFontGetAscent, CTFontGetCapHeight, CTFontGetDescent,
-    CTFontGetLeading, CTFontGetUnitsPerEm, CTFontGetXHeight,
-    CTFontManagerCreateFontDescriptorFromData,
-};
+use objc2_core_foundation::{CFData, CFRetained, CGFloat};
+use objc2_core_text::{CTFont, CTFontManagerCreateFontDescriptorFromData};
 use std::ptr;
 
 use super::PT_TO_LPX;
@@ -42,7 +37,7 @@ pub fn create_font_from_bytes(
     size_lpx: f32,
 ) -> Result<(CFRetained<CTFont>, CFRetained<CFData>), TextError> {
     // Create CFData wrapping the static bytes (no copy, no deallocation)
-    let data = unsafe { CFData::from_bytes(bytes) };
+    let data = CFData::from_bytes(bytes);
 
     // Create font descriptor from the data
     let descriptor =
@@ -56,8 +51,7 @@ pub fn create_font_from_bytes(
     let ct_size_pt = (size_lpx as f64) * LPX_TO_PT;
 
     // Create the font at the specified size
-    let ct_font =
-        unsafe { CTFontCreateWithFontDescriptor(&descriptor, ct_size_pt as CGFloat, ptr::null()) };
+    let ct_font = unsafe { CTFont::with_font_descriptor(&descriptor, ct_size_pt as CGFloat, ptr::null()) };
 
     Ok((ct_font, data))
 }
@@ -65,12 +59,12 @@ pub fn create_font_from_bytes(
 /// Extract font metrics from a CTFont, converting from points to logical pixels.
 pub fn extract_metrics(ct_font: &CTFont) -> FontMetrics {
     // CT returns metrics in points at the font's current size
-    let ascent_pt = unsafe { CTFontGetAscent(ct_font) } as f32;
-    let descent_pt = unsafe { CTFontGetDescent(ct_font) } as f32;
-    let leading_pt = unsafe { CTFontGetLeading(ct_font) } as f32;
-    let x_height_pt = unsafe { CTFontGetXHeight(ct_font) } as f32;
-    let cap_height_pt = unsafe { CTFontGetCapHeight(ct_font) } as f32;
-    let units_per_em = unsafe { CTFontGetUnitsPerEm(ct_font) };
+    let ascent_pt = unsafe { ct_font.ascent() } as f32;
+    let descent_pt = unsafe { ct_font.descent() } as f32;
+    let leading_pt = unsafe { ct_font.leading() } as f32;
+    let x_height_pt = unsafe { ct_font.x_height() } as f32;
+    let cap_height_pt = unsafe { ct_font.cap_height() } as f32;
+    let units_per_em = unsafe { ct_font.units_per_em() };
 
     FontMetrics {
         ascent_lpx: ascent_pt * PT_TO_LPX,

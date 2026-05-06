@@ -5,29 +5,14 @@
 
 use crate::error::TextError;
 use crate::types::{GlyphBitmap, GlyphBounds};
-use objc2_core_graphics::{
-    CGAffineTransform, CGBitmapInfo, CGColorSpace, CGContext, CGFloat, CGPoint,
-    kCGBitmapByteOrderDefault, kCGImageAlphaOnly,
-};
-use objc2_core_text::{
-    CTFont, CTFontDrawGlyphs, CTFontGetAdvancesForGlyphs, kCTFontOrientationDefault,
-};
+use objc2_core_foundation::{CGFloat, CGPoint, CGRect, CGSize};
+use objc2_core_graphics::{CGBitmapContextCreate, CGContext, CGImageAlphaInfo};
+use objc2_core_text::{CTFont, CTFontOrientation};
+use std::ptr::NonNull;
 
 use super::PT_TO_LPX;
 
 /// Rasterize a glyph to an alpha bitmap.
-///
-/// # Arguments
-///
-/// * `ct_font` - CoreText font
-/// * `glyph_id` - Glyph index in the font
-/// * `size_lpx` - Font size in logical pixels
-/// * `scale` - Display scale factor (e.g., 2.0 for Retina)
-/// * `variant` - Sub-pixel X variant (0-3)
-///
-/// # Returns
-///
-/// GlyphBitmap with tight-cropped alpha data and metrics in logical pixels.
 pub fn rasterize(
     ct_font: &CTFont,
     glyph_id: u16,
@@ -53,16 +38,16 @@ pub fn rasterize(
     // Allocate alpha buffer
     let mut buffer: Vec<u8> = vec![0; render_w * render_h];
 
-    // Create alpha-only bitmap context
+    // Create alpha-only bitmap context using CGBitmapContextCreate
     let ctx = unsafe {
-        CGContext::new(
+        CGBitmapContextCreate(
             buffer.as_mut_ptr().cast(),
             render_w,
             render_h,
             8,        // bits per component
             render_w, // bytes per row
             None,     // colorspace (NULL for alpha-only)
-            kCGImageAlphaOnly.0 | kCGBitmapByteOrderDefault.0,
+            CGImageAlphaInfo::Only.0,
         )
     };
 
@@ -73,51 +58,57 @@ pub fn rasterize(
     };
 
     // Configure antialiasing (greyscale AA, no LCD subpixel)
-    unsafe {
-        ctx.set_should_antialias(true);
-        ctx.set_should_smooth_fonts(false);
-        ctx.set_allows_font_subpixel_positioning(false);
-        ctx.set_should_subpixel_position_fonts(false);
-        ctx.set_should_subpixel_quantize_fonts(false);
-    }
+    CGContext::set_should_antialias(Some(&*ctx), true);
+    CGContext::set_should_smooth_fonts(Some(&*ctx), false);
+    CGContext::set_allows_font_subpixel_positioning(Some(&*ctx), false);
+    CGContext::set_should_subpixel_position_fonts(Some(&*ctx), false);
+    CGContext::set_should_subpixel_quantize_fonts(Some(&*ctx), false);
 
     // Apply transforms:
     // 1. Flip Y (CoreGraphics has origin at bottom-left)
     // 2. Translate for sub-pixel variant
     // 3. Scale for display density
-    let sub_pixel_offset = (variant as CGFloat) * 0.25;
+    let sub_pixel_offset: CGFloat = (variant as CGFloat) * 0.25;
 
     // Position glyph in center of buffer with room for bearings
-    let baseline_x = (render_w as CGFloat) * 0.25;
-    let baseline_y = (render_h as CGFloat) * 0.25;
+    let baseline_x: CGFloat = (render_w as CGFloat) * 0.25;
+    let baseline_y: CGFloat = (render_h as CGFloat) * 0.25;
 
-    unsafe {
-        // Flip Y coordinate system
-        ctx.translate_ctm(0.0, render_h as CGFloat);
-        ctx.scale_ctm(1.0, -1.0);
+    // Flip Y coordinate system
+    CGContext::translate_ctm(Some(&*ctx), 0.0, render_h as CGFloat);
+    CGContext::scale_ctm(Some(&*ctx), 1.0, -1.0);
 
-        // Move to baseline position
-        ctx.translate_ctm(baseline_x + sub_pixel_offset, baseline_y);
+    // Move to baseline position
+    CGContext::translate_ctm(Some(&*ctx), baseline_x + sub_pixel_offset, baseline_y);
 
-        // Apply display scale
-        ctx.scale_ctm(scale as CGFloat, scale as CGFloat);
-    }
+    // Apply display scale
+    CGContext::scale_ctm(Some(&*ctx), scale as CGFloat, scale as CGFloat);
 
     // Draw the glyph
     let glyph = glyph_id;
     let position = CGPoint { x: 0.0, y: 0.0 };
 
     unsafe {
-        CTFontDrawGlyphs(ct_font, &glyph, &position, 1, &ctx);
+        ct_font.draw_glyphs(
+            NonNull::from(&glyph),
+            NonNull::from(&position),
+            1,
+            &ctx,
+        );
     }
 
     // Get advance width
-    let mut advance = objc2_core_graphics::CGSize {
+    let mut advance = CGSize {
         width: 0.0,
         height: 0.0,
     };
     unsafe {
-        CTFontGetAdvancesForGlyphs(ct_font, kCTFontOrientationDefault, &glyph, &mut advance, 1);
+        ct_font.advances_for_glyphs(
+            CTFontOrientation::Default,
+            NonNull::from(&glyph),
+            &mut advance as *mut CGSize,
+            1,
+        );
     }
     let advance_x_lpx = (advance.width as f32) * PT_TO_LPX;
 
@@ -166,33 +157,24 @@ pub fn rasterize(
 }
 
 /// Query glyph raster bounds without rasterizing.
-///
-/// Uses CTFontGetBoundingRectsForGlyphs for O(1) bounds query.
-/// Returns `GlyphBounds::ZERO` for whitespace glyphs.
-///
-/// CoreText returns bounds in points; we convert to physical pixels via:
-/// pixels = points * PT_TO_LPX * scale
 pub fn get_glyph_bounds(
     ct_font: &CTFont,
     glyph_id: u16,
     scale: f32,
 ) -> Result<GlyphBounds, TextError> {
-    use objc2_core_text::{CTFontGetBoundingRectsForGlyphs, kCTFontOrientationDefault};
-
-    let mut bounds = objc2_core_graphics::CGRect {
-        origin: objc2_core_graphics::CGPoint { x: 0.0, y: 0.0 },
-        size: objc2_core_graphics::CGSize {
+    let mut bounds = CGRect {
+        origin: CGPoint { x: 0.0, y: 0.0 },
+        size: CGSize {
             width: 0.0,
             height: 0.0,
         },
     };
 
     unsafe {
-        CTFontGetBoundingRectsForGlyphs(
-            ct_font,
-            kCTFontOrientationDefault,
-            &glyph_id,
-            &mut bounds,
+        ct_font.bounding_rects_for_glyphs(
+            CTFontOrientation::Default,
+            NonNull::from(&glyph_id),
+            &mut bounds as *mut CGRect,
             1,
         );
     }
@@ -208,7 +190,6 @@ pub fn get_glyph_bounds(
 }
 
 /// Find tight bounding box of non-zero pixels in buffer.
-/// Returns (min_x, min_y, max_x, max_y). If no pixels found, returns invalid bounds.
 fn find_tight_bounds(buffer: &[u8], width: usize, height: usize) -> (usize, usize, usize, usize) {
     let mut min_x = width;
     let mut min_y = height;

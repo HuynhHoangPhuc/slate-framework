@@ -26,6 +26,7 @@ objc2-foundation = { workspace = true }
 objc2-core-text = { workspace = true }
 objc2-core-graphics = { workspace = true }
 objc2-core-foundation = { workspace = true }
+dirs = { workspace = true }
 
 [dev-dependencies]
 image = { workspace = true }

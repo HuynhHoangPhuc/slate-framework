@@ -2,11 +2,11 @@
 
 #![cfg(target_os = "macos")]
 
-use slate_text::{CoreTextBackend, TEST_FONT, TextBackend};
+use slate_text::{CoreTextBackend, Font, TEST_FONT, TextBackend};
 
 #[test]
 fn shapes_hello_world() {
-    let mut backend = CoreTextBackend::new();
+    let mut backend = CoreTextBackend::new().unwrap();
     let font = backend
         .load_font_from_bytes(TEST_FONT, 16.0, 2.0)
         .expect("failed to load font");
@@ -38,7 +38,7 @@ fn shapes_hello_world() {
 
 #[test]
 fn empty_string_returns_empty_line() {
-    let mut backend = CoreTextBackend::new();
+    let mut backend = CoreTextBackend::new().unwrap();
     let font = backend
         .load_font_from_bytes(TEST_FONT, 16.0, 1.0)
         .expect("failed to load font");
@@ -53,7 +53,7 @@ fn empty_string_returns_empty_line() {
 
 #[test]
 fn missing_glyph_returns_notdef_or_zero() {
-    let mut backend = CoreTextBackend::new();
+    let mut backend = CoreTextBackend::new().unwrap();
     let font = backend
         .load_font_from_bytes(TEST_FONT, 16.0, 1.0)
         .expect("failed to load font");
@@ -74,7 +74,7 @@ fn missing_glyph_returns_notdef_or_zero() {
 
 #[test]
 fn metrics_are_reasonable() {
-    let mut backend = CoreTextBackend::new();
+    let mut backend = CoreTextBackend::new().unwrap();
     let font = backend
         .load_font_from_bytes(TEST_FONT, 16.0, 1.0)
         .expect("failed to load font");

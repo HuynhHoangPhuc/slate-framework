@@ -38,7 +38,7 @@ pub fn compute_dilation(rgb: [f32; 3]) -> u8 {
     {
         let luminance = 0.30 * rgb[0] + 0.59 * rgb[1] + 0.11 * rgb[2];
         let dilation = 4.0 * (0.75 - luminance).max(0.0);
-        (dilation.min(MAX_DILATION as f32).round() as u8)
+        dilation.min(MAX_DILATION as f32).round() as u8
     }
 
     #[cfg(not(target_os = "macos"))]

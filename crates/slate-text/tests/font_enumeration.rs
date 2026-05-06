@@ -63,7 +63,7 @@ use slate_text::TextBackend;
 #[cfg(target_os = "macos")]
 #[test]
 fn enumerate_system_fonts_returns_fonts() {
-    let backend = CoreTextBackend::new();
+    let backend = CoreTextBackend::new().unwrap();
     let fonts = backend
         .enumerate_system_fonts()
         .expect("Failed to enumerate system fonts");
@@ -80,7 +80,7 @@ fn enumerate_system_fonts_returns_fonts() {
 #[cfg(target_os = "macos")]
 #[test]
 fn enumerated_fonts_have_valid_metadata() {
-    let backend = CoreTextBackend::new();
+    let backend = CoreTextBackend::new().unwrap();
     let fonts = backend
         .enumerate_system_fonts()
         .expect("Failed to enumerate system fonts");
