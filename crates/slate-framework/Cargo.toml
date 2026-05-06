@@ -12,5 +12,6 @@ keywords = ["gui", "ui", "gpu", "wgpu", "framework"]
 categories = ["gui", "graphics", "rendering"]
 
 [dependencies]
-slate-platform = { path = "../slate-platform", version = "0.0.2" }
-slate-renderer = { path = "../slate-renderer", version = "0.0.2" }
+slate-platform = { path = "../slate-platform" }
+slate-renderer = { path = "../slate-renderer" }
+slate-text = { path = "../slate-text" }

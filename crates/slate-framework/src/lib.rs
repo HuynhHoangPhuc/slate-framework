@@ -5,3 +5,4 @@
 
 pub use slate_platform;
 pub use slate_renderer;
+pub use slate_text;

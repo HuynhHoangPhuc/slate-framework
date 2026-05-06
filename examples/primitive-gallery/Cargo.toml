@@ -12,6 +12,7 @@ publish = false
 [dependencies]
 slate-platform = { path = "../../crates/slate-platform", version = "0.0.2" }
 slate-renderer = { path = "../../crates/slate-renderer", version = "0.0.2" }
+slate-text = { path = "../../crates/slate-text", version = "0.0.2" }
 log.workspace = true
 env_logger.workspace = true
 pollster.workspace = true

@@ -1,0 +1,35 @@
+# Regenerate visual regression goldens across platforms.
+#
+# Run via GitHub UI: Actions → Regenerate goldens → Run workflow
+# Download the artifacts and commit the PNGs to update baselines.
+#
+# Security: workflow_dispatch only — fork PRs cannot trigger this.
+# The UPDATE_GOLDENS env is plain text (no credentials).
+
+name: Regenerate goldens
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  regen:
+    strategy:
+      matrix:
+        os: [macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Regenerate goldens
+        run: cargo test -p slate-text --all-targets
+        env:
+          UPDATE_GOLDENS: "1"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: goldens-${{ matrix.os }}
+          path: crates/slate-text/tests/goldens/**
+          retention-days: 14

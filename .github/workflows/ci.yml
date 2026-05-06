@@ -22,7 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: [macos-14, windows-latest]
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@1.95.0
@@ -37,7 +37,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: [macos-14, windows-latest]
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@1.95.0
@@ -79,7 +79,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: [macos-14, windows-latest]
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@1.95.0
@@ -93,9 +93,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        # Pin macOS to 14 (Sonoma) to avoid golden drift from rolling releases
+        os: [macos-14, windows-latest]
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --all-targets
+      - name: Upload visual regression diffs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vis-regress-diffs-${{ matrix.os }}
+          path: target/vis-regress-diffs/**
+          if-no-files-found: ignore
+          retention-days: 7

@@ -7,6 +7,9 @@ plans/
 **/*.rs.bk
 *.pdb
 
+# Visual regression diffs
+target/vis-regress-diffs/
+
 # Build artifacts
 coverage/
 *.log

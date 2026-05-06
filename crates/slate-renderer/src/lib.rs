@@ -358,6 +358,14 @@ impl Renderer {
         self.glyph_atlas.upload(&self.queue, alloc_id, pixels);
     }
 
+    /// Access both glyph atlas (mutable) and queue (immutable) together.
+    ///
+    /// This helper resolves the borrow-checker conflict when you need to call
+    /// methods that require `&mut Atlas` and `&Queue` simultaneously.
+    pub fn glyph_atlas_and_queue(&mut self) -> (&mut Atlas, &Queue) {
+        (&mut self.glyph_atlas, &self.queue)
+    }
+
     /// Acquire the next frame, submit a clear-color pass, and present.
     ///
     /// Stub clear-only path — use [`Renderer::render_scene`] for Scene-driven

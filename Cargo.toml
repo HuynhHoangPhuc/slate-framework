@@ -2,6 +2,7 @@
 members = [
     "crates/slate-platform",
     "crates/slate-renderer",
+    "crates/slate-text",
     "crates/slate-framework",
     "examples/hello-rect",
     "examples/primitive-gallery",
@@ -51,6 +52,9 @@ objc2-quartz-core = { version = "0.3", features = [
     "CALayer",
     "CAMetalLayer",
 ] }
+objc2-core-text = "0.3.2"
+objc2-core-graphics = "0.3.2"
+objc2-core-foundation = "0.3.2"
 # Windows-only deps (target.'cfg(target_os = "windows")')
 windows = { version = "0.62", features = [
     "Win32_Foundation",
@@ -60,6 +64,9 @@ windows = { version = "0.62", features = [
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
 ] }
+# Visual regression test dependencies (dev-only)
+image = "0.25"
+image-compare = "0.5"
 
 [profile.release]
 lto = "thin"
