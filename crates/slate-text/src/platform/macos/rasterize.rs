@@ -57,36 +57,50 @@ pub fn rasterize(
         ));
     };
 
-    // Configure antialiasing (greyscale AA, no LCD subpixel)
+    // Antialiasing: greyscale AA only (no LCD subpixel RGB triads).
     CGContext::set_should_antialias(Some(&*ctx), true);
     CGContext::set_should_smooth_fonts(Some(&*ctx), false);
-    CGContext::set_allows_font_subpixel_positioning(Some(&*ctx), false);
-    CGContext::set_should_subpixel_position_fonts(Some(&*ctx), false);
+    // Sub-pixel positioning ENABLED so the per-variant fractional shift in
+    // `position` below produces actually-different AA bitmaps. Quantization
+    // disabled so CG honors the exact requested fractional position instead
+    // of snapping to integer device pixels.
+    CGContext::set_allows_font_subpixel_positioning(Some(&*ctx), true);
+    CGContext::set_should_subpixel_position_fonts(Some(&*ctx), true);
+    CGContext::set_allows_font_subpixel_quantization(Some(&*ctx), false);
     CGContext::set_should_subpixel_quantize_fonts(Some(&*ctx), false);
 
-    // Apply transforms:
-    // 1. Flip Y (CoreGraphics has origin at bottom-left)
-    // 2. Translate for sub-pixel variant
-    // 3. Scale for display density
-    let sub_pixel_offset: CGFloat = (variant as CGFloat) * 0.25;
+    // CG bitmap context: bytes laid out top-down in memory (byte 0 =
+    // top-left pixel) but user space is Y-up (origin bottom-left).
+    // CTFont::draw_glyphs draws glyphs with ascenders extending in +Y user
+    // space. We do NOT apply a Y-flip CTM — flipping user-Y would invert
+    // the glyphs themselves. Drawing in CG-natural orientation produces
+    // glyphs that land in the buffer's memory rows top-to-bottom (ascender
+    // at low row indices, descender at high row indices) which matches the
+    // GPU atlas's top-down sampling convention.
+    //
+    // Sub-pixel offset is passed via draw_glyphs `position` (user-space,
+    // pre-scale), so we divide by `scale` to express it in device-pixel
+    // quarter-units.
+    let sub_pixel_offset_device: CGFloat = (variant as CGFloat) * 0.25;
+    let sub_pixel_offset_user: CGFloat = sub_pixel_offset_device / scale as CGFloat;
 
-    // Position glyph in center of buffer with room for bearings
+    // Position glyph baseline in the buffer (device pixels, pre-scale CTM).
     let baseline_x: CGFloat = (render_w as CGFloat) * 0.25;
     let baseline_y: CGFloat = (render_h as CGFloat) * 0.25;
 
-    // Flip Y coordinate system
-    CGContext::translate_ctm(Some(&*ctx), 0.0, render_h as CGFloat);
-    CGContext::scale_ctm(Some(&*ctx), 1.0, -1.0);
+    // Move to baseline position (user-space; Y-up).
+    CGContext::translate_ctm(Some(&*ctx), baseline_x, baseline_y);
 
-    // Move to baseline position
-    CGContext::translate_ctm(Some(&*ctx), baseline_x + sub_pixel_offset, baseline_y);
-
-    // Apply display scale
+    // Apply display scale.
     CGContext::scale_ctm(Some(&*ctx), scale as CGFloat, scale as CGFloat);
 
-    // Draw the glyph
+    // Draw the glyph at the sub-pixel-shifted position (in post-scale user
+    // space, so multiplying by scale recovers device-pixel offset).
     let glyph = glyph_id;
-    let position = CGPoint { x: 0.0, y: 0.0 };
+    let position = CGPoint {
+        x: sub_pixel_offset_user,
+        y: 0.0,
+    };
 
     unsafe {
         ct_font.draw_glyphs(
