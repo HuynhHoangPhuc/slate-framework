@@ -8,14 +8,14 @@ mod rasterize;
 mod shaping;
 
 use crate::{
-    backend::Font, FontHandle, FontMetrics, GlyphBitmap, ShapedLine, TextBackend, TextError,
+    FontHandle, FontMetrics, GlyphBitmap, ShapedLine, TextBackend, TextError, backend::Font,
 };
 use std::marker::PhantomData;
-use windows::core::Interface;
 use windows::Win32::Graphics::DirectWrite::{
-    DWriteCreateFactory, IDWriteFactory, IDWriteFactory5, IDWriteFontFace,
-    IDWriteInMemoryFontFileLoader, DWRITE_FACTORY_TYPE_SHARED,
+    DWRITE_FACTORY_TYPE_SHARED, DWriteCreateFactory, IDWriteFactory, IDWriteFactory5,
+    IDWriteFontFace, IDWriteInMemoryFontFileLoader,
 };
+use windows::core::Interface;
 
 /// DirectWrite text backend.
 ///
@@ -43,10 +43,10 @@ impl DirectWriteBackend {
             .map_err(|e| TextError::BackendInit(format!("Cast to IDWriteFactory5: {}", e)))?;
 
         // Create the built-in in-memory font file loader
-        let loader: IDWriteInMemoryFontFileLoader =
-            unsafe { factory.CreateInMemoryFontFileLoader() }.map_err(|e| {
-                TextError::BackendInit(format!("CreateInMemoryFontFileLoader: {}", e))
-            })?;
+        let loader: IDWriteInMemoryFontFileLoader = unsafe {
+            factory.CreateInMemoryFontFileLoader()
+        }
+        .map_err(|e| TextError::BackendInit(format!("CreateInMemoryFontFileLoader: {}", e)))?;
 
         // Register the loader with the factory
         unsafe { factory.RegisterFontFileLoader(&loader) }

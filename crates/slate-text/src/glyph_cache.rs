@@ -77,9 +77,11 @@ impl GlyphCache {
                 if self.cache.contains_key(&key) {
                     continue;
                 }
-                if self.pending.iter().any(|p| {
-                    p.font_handle == key.0 && p.glyph_id == key.1 && p.variant == key.2
-                }) {
+                if self
+                    .pending
+                    .iter()
+                    .any(|p| p.font_handle == key.0 && p.glyph_id == key.1 && p.variant == key.2)
+                {
                     continue;
                 }
                 let bitmap = backend.rasterize_glyph(font, g.glyph_id, v)?;

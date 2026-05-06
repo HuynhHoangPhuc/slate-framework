@@ -2,7 +2,7 @@
 
 #![cfg(target_os = "macos")]
 
-use slate_text::{CoreTextBackend, TextBackend, TEST_FONT};
+use slate_text::{CoreTextBackend, TEST_FONT, TextBackend};
 
 #[test]
 fn rasterizes_uppercase_h() {
@@ -27,7 +27,11 @@ fn rasterizes_uppercase_h() {
 
     // Should have at least one high-alpha pixel (the glyph rendered)
     let max_alpha = bitmap.alpha.iter().copied().max().unwrap_or(0);
-    assert!(max_alpha > 200, "should have high-alpha pixels, max was {}", max_alpha);
+    assert!(
+        max_alpha > 200,
+        "should have high-alpha pixels, max was {}",
+        max_alpha
+    );
 
     // Advance should be positive
     assert!(bitmap.advance_x_lpx > 0.0, "advance should be positive");
@@ -102,7 +106,10 @@ fn whitespace_returns_empty_bitmap() {
     assert!(bitmap.alpha.is_empty(), "space alpha should be empty");
 
     // But advance should still be positive
-    assert!(bitmap.advance_x_lpx > 0.0, "space advance should be positive");
+    assert!(
+        bitmap.advance_x_lpx > 0.0,
+        "space advance should be positive"
+    );
 }
 
 #[test]

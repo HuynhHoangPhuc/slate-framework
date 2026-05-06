@@ -2,7 +2,7 @@
 
 #![cfg(target_os = "windows")]
 
-use slate_text::{DirectWriteBackend, TextBackend, TEST_FONT};
+use slate_text::{DirectWriteBackend, TEST_FONT, TextBackend};
 
 #[test]
 fn rasterizes_uppercase_h() {
@@ -82,8 +82,14 @@ fn whitespace_returns_empty_bitmap() {
 
     assert_eq!(bitmap.width, 0, "space glyph should have zero width");
     assert_eq!(bitmap.height, 0, "space glyph should have zero height");
-    assert!(bitmap.alpha.is_empty(), "space glyph should have empty alpha");
-    assert!(bitmap.advance_x_lpx > 0.0, "space should still have advance");
+    assert!(
+        bitmap.alpha.is_empty(),
+        "space glyph should have empty alpha"
+    );
+    assert!(
+        bitmap.advance_x_lpx > 0.0,
+        "space should still have advance"
+    );
 }
 
 #[test]

@@ -140,7 +140,11 @@ fn cache_roundtrip_with_atlas() {
 
     // Flush to atlas
     cache.flush(&mut atlas, &queue).unwrap();
-    assert_eq!(cache.pending_len(), 0, "pending should be empty after flush");
+    assert_eq!(
+        cache.pending_len(),
+        0,
+        "pending should be empty after flush"
+    );
 
     // After flush: cache hit
     let fh = font.handle();
@@ -153,13 +157,20 @@ fn cache_roundtrip_with_atlas() {
             assert_eq!(cached.metrics.width, g.glyph_id.min(16).max(1));
             assert_eq!(cached.metrics.height, v as u32 + 1);
             assert_eq!(cached.metrics.bearing_x_lpx, 1.0);
-            assert_eq!(cached.metrics.advance_x_lpx, (g.glyph_id.min(16).max(1) as f32) + 2.0);
+            assert_eq!(
+                cached.metrics.advance_x_lpx,
+                (g.glyph_id.min(16).max(1) as f32) + 2.0
+            );
         }
     }
 
     // Second materialize should not add pending (all cached)
     cache.materialize(&backend, &font, &shaped).unwrap();
-    assert_eq!(cache.pending_len(), 0, "no new pending after re-materialize");
+    assert_eq!(
+        cache.pending_len(),
+        0,
+        "no new pending after re-materialize"
+    );
 
     // Touch should not panic
     cache.touch(&mut atlas, fh, 1, 0);

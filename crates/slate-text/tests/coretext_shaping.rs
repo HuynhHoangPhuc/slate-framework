@@ -2,7 +2,7 @@
 
 #![cfg(target_os = "macos")]
 
-use slate_text::{CoreTextBackend, TextBackend, TEST_FONT};
+use slate_text::{CoreTextBackend, TEST_FONT, TextBackend};
 
 #[test]
 fn shapes_hello_world() {
@@ -63,7 +63,11 @@ fn missing_glyph_returns_notdef_or_zero() {
         .shape_line(&font, "\u{E000}")
         .expect("failed to shape PUA character");
 
-    assert_eq!(line.glyphs.len(), 1, "PUA character should produce one glyph");
+    assert_eq!(
+        line.glyphs.len(),
+        1,
+        "PUA character should produce one glyph"
+    );
     // .notdef is typically glyph ID 0, but some fonts use other IDs
     // Just verify we got exactly one glyph back
 }
@@ -85,7 +89,11 @@ fn metrics_are_reasonable() {
 
     // Line height should be reasonable (not zero, not huge)
     let line_height = metrics.ascent_lpx - metrics.descent_lpx + metrics.line_gap_lpx;
-    assert!(line_height > 10.0 && line_height < 100.0, "line height should be reasonable: {}", line_height);
+    assert!(
+        line_height > 10.0 && line_height < 100.0,
+        "line height should be reasonable: {}",
+        line_height
+    );
 
     // Units per em should be typical value (1000 or 2048)
     assert!(

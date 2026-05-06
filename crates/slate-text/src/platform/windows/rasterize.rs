@@ -6,10 +6,10 @@
 use crate::{GlyphBitmap, TextError};
 use std::mem::ManuallyDrop;
 use windows::Win32::Graphics::DirectWrite::{
-    IDWriteFactory5, IDWriteFontFace, DWRITE_GLYPH_METRICS, DWRITE_GLYPH_OFFSET, DWRITE_GLYPH_RUN,
-    DWRITE_GRID_FIT_MODE_DEFAULT, DWRITE_MATRIX, DWRITE_MEASURING_MODE_NATURAL,
-    DWRITE_RENDERING_MODE1_NATURAL, DWRITE_TEXT_ANTIALIAS_MODE_GRAYSCALE,
-    DWRITE_TEXTURE_ALIASED_1x1,
+    DWRITE_GLYPH_METRICS, DWRITE_GLYPH_OFFSET, DWRITE_GLYPH_RUN, DWRITE_GRID_FIT_MODE_DEFAULT,
+    DWRITE_MATRIX, DWRITE_MEASURING_MODE_NATURAL, DWRITE_RENDERING_MODE1_NATURAL,
+    DWRITE_TEXT_ANTIALIAS_MODE_GRAYSCALE, DWRITE_TEXTURE_ALIASED_1x1, IDWriteFactory5,
+    IDWriteFontFace,
 };
 
 /// Rasterize a single glyph with sub-pixel variant offset.
@@ -109,12 +109,7 @@ fn get_glyph_advance(
     let mut metrics: [DWRITE_GLYPH_METRICS; 1] = [Default::default()];
 
     unsafe {
-        font_face.GetDesignGlyphMetrics(
-            glyph_indices.as_ptr(),
-            1,
-            metrics.as_mut_ptr(),
-            false,
-        )
+        font_face.GetDesignGlyphMetrics(glyph_indices.as_ptr(), 1, metrics.as_mut_ptr(), false)
     }
     .map_err(|e| TextError::RasterizationFailed(format!("GetDesignGlyphMetrics: {}", e)))?;
 

@@ -9,7 +9,9 @@ use objc2_core_graphics::{
     CGAffineTransform, CGBitmapInfo, CGColorSpace, CGContext, CGFloat, CGPoint,
     kCGBitmapByteOrderDefault, kCGImageAlphaOnly,
 };
-use objc2_core_text::{CTFont, CTFontDrawGlyphs, CTFontGetAdvancesForGlyphs, kCTFontOrientationDefault};
+use objc2_core_text::{
+    CTFont, CTFontDrawGlyphs, CTFontGetAdvancesForGlyphs, kCTFontOrientationDefault,
+};
 
 use super::PT_TO_LPX;
 
@@ -57,9 +59,9 @@ pub fn rasterize(
             buffer.as_mut_ptr().cast(),
             render_w,
             render_h,
-            8,                    // bits per component
-            render_w,             // bytes per row
-            None,                 // colorspace (NULL for alpha-only)
+            8,        // bits per component
+            render_w, // bytes per row
+            None,     // colorspace (NULL for alpha-only)
             kCGImageAlphaOnly.0 | kCGBitmapByteOrderDefault.0,
         )
     };
@@ -110,7 +112,10 @@ pub fn rasterize(
     }
 
     // Get advance width
-    let mut advance = objc2_core_graphics::CGSize { width: 0.0, height: 0.0 };
+    let mut advance = objc2_core_graphics::CGSize {
+        width: 0.0,
+        height: 0.0,
+    };
     unsafe {
         CTFontGetAdvancesForGlyphs(ct_font, kCTFontOrientationDefault, &glyph, &mut advance, 1);
     }

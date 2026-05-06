@@ -4,7 +4,7 @@
 //! Full IDWriteTextAnalyzer support deferred to Phase 2b.
 
 use crate::{FontMetrics, ShapedGlyph, ShapedLine, TextError};
-use windows::Win32::Graphics::DirectWrite::{IDWriteFontFace, DWRITE_GLYPH_METRICS};
+use windows::Win32::Graphics::DirectWrite::{DWRITE_GLYPH_METRICS, IDWriteFontFace};
 
 /// Shape a line of text using direct glyph lookup.
 ///
@@ -32,10 +32,8 @@ pub fn shape_line(
 
     // Get glyph indices for each codepoint
     let mut glyph_indices = vec![0u16; count as usize];
-    unsafe {
-        font_face.GetGlyphIndices(codepoints.as_ptr(), count, glyph_indices.as_mut_ptr())
-    }
-    .map_err(|e| TextError::ShapingFailed(format!("GetGlyphIndices: {}", e)))?;
+    unsafe { font_face.GetGlyphIndices(codepoints.as_ptr(), count, glyph_indices.as_mut_ptr()) }
+        .map_err(|e| TextError::ShapingFailed(format!("GetGlyphIndices: {}", e)))?;
 
     // Get design glyph metrics for advances
     let mut design_metrics: Vec<DWRITE_GLYPH_METRICS> = vec![Default::default(); count as usize];

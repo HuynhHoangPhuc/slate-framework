@@ -4,11 +4,11 @@
 //! System font lookup deferred to Phase 2b.
 
 use crate::{FontHandle, FontMetrics, TextError};
-use windows::core::Interface;
 use windows::Win32::Graphics::DirectWrite::{
-    IDWriteFactory5, IDWriteFontFace, IDWriteFontFile, IDWriteInMemoryFontFileLoader,
-    DWRITE_FONT_FACE_TYPE, DWRITE_FONT_FILE_TYPE, DWRITE_FONT_SIMULATIONS_NONE,
+    DWRITE_FONT_FACE_TYPE, DWRITE_FONT_FILE_TYPE, DWRITE_FONT_SIMULATIONS_NONE, IDWriteFactory5,
+    IDWriteFontFace, IDWriteFontFile, IDWriteInMemoryFontFileLoader,
 };
+use windows::core::Interface;
 
 use super::DirectWriteFont;
 
@@ -53,10 +53,9 @@ pub fn load_font_from_bytes(
 
     // Create font face from the file (index 0)
     let font_files = [Some(font_file)];
-    let font_face: IDWriteFontFace = unsafe {
-        factory.CreateFontFace(face_type, &font_files, 0, DWRITE_FONT_SIMULATIONS_NONE)
-    }
-    .map_err(|e| TextError::FontFileLoad(format!("CreateFontFace: {}", e)))?;
+    let font_face: IDWriteFontFace =
+        unsafe { factory.CreateFontFace(face_type, &font_files, 0, DWRITE_FONT_SIMULATIONS_NONE) }
+            .map_err(|e| TextError::FontFileLoad(format!("CreateFontFace: {}", e)))?;
 
     // Extract metrics
     let metrics = extract_metrics(&font_face, size_lpx);

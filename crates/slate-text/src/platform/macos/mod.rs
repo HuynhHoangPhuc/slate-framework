@@ -8,7 +8,7 @@ mod rasterize;
 mod shaping;
 
 use crate::{
-    backend::Font, FontHandle, FontMetrics, GlyphBitmap, ShapedLine, TextBackend, TextError,
+    FontHandle, FontMetrics, GlyphBitmap, ShapedLine, TextBackend, TextError, backend::Font,
 };
 use objc2_core_foundation::{CFData, CFRetained};
 use objc2_core_text::CTFont;

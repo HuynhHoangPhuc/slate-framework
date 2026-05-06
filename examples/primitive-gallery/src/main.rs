@@ -13,7 +13,7 @@ use slate_text::DirectWriteBackend as TextBackendImpl;
 #[cfg(target_os = "macos")]
 use slate_text::CoreTextBackend as TextBackendImpl;
 
-use slate_text::{GlyphCache, TextBackend, TextRunBuilder, TEST_FONT};
+use slate_text::{GlyphCache, TEST_FONT, TextBackend, TextRunBuilder};
 
 use scene_builder::{IMG_SIZE, build_scene, generate_checkerboard};
 

@@ -2,10 +2,10 @@
 
 use slate_renderer::scene::GlyphInstance;
 
+use crate::TextError;
 use crate::backend::{Font, TextBackend};
 use crate::glyph_cache::GlyphCache;
 use crate::types::ShapedLine;
-use crate::TextError;
 
 /// Builds `GlyphInstance`s from shaped text for GPU rendering.
 ///

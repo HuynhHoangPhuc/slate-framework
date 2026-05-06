@@ -6,8 +6,8 @@ use crate::error::TextError;
 use crate::types::{FontMetrics, ShapedGlyph, ShapedLine};
 use objc2_core_foundation::CFRange;
 use objc2_core_text::{
-    kCTFontAttributeName, CTFont, CTLineCreateWithAttributedString, CTLineGetGlyphRuns,
-    CTRunGetAdvances, CTRunGetGlyphCount, CTRunGetGlyphs, CTRunGetPositions,
+    CTFont, CTLineCreateWithAttributedString, CTLineGetGlyphRuns, CTRunGetAdvances,
+    CTRunGetGlyphCount, CTRunGetGlyphs, CTRunGetPositions, kCTFontAttributeName,
 };
 use objc2_foundation::{NSAttributedString, NSDictionary, NSString};
 
@@ -24,7 +24,11 @@ use super::PT_TO_LPX;
 /// # Returns
 ///
 /// ShapedLine with glyphs in visual order and total width.
-pub fn shape_line(ct_font: &CTFont, text: &str, metrics: &FontMetrics) -> Result<ShapedLine, TextError> {
+pub fn shape_line(
+    ct_font: &CTFont,
+    text: &str,
+    metrics: &FontMetrics,
+) -> Result<ShapedLine, TextError> {
     // Empty string guard
     if text.is_empty() {
         return Ok(ShapedLine {
@@ -40,9 +44,7 @@ pub fn shape_line(ct_font: &CTFont, text: &str, metrics: &FontMetrics) -> Result
 
     // Create attributes dictionary with font
     let font_key = unsafe { kCTFontAttributeName };
-    let attrs = unsafe {
-        NSDictionary::from_retained_objects(&[font_key], &[ct_font.as_ref()])
-    };
+    let attrs = unsafe { NSDictionary::from_retained_objects(&[font_key], &[ct_font.as_ref()]) };
 
     // Create attributed string
     let attr_string = unsafe {
@@ -73,28 +75,41 @@ pub fn shape_line(ct_font: &CTFont, text: &str, metrics: &FontMetrics) -> Result
 
         // Allocate buffers for glyph data
         let mut glyph_ids: Vec<u16> = vec![0; glyph_count];
-        let mut positions: Vec<objc2_core_graphics::CGPoint> = vec![
-            objc2_core_graphics::CGPoint { x: 0.0, y: 0.0 };
-            glyph_count
-        ];
+        let mut positions: Vec<objc2_core_graphics::CGPoint> =
+            vec![objc2_core_graphics::CGPoint { x: 0.0, y: 0.0 }; glyph_count];
         let mut advances: Vec<objc2_core_graphics::CGSize> = vec![
-            objc2_core_graphics::CGSize { width: 0.0, height: 0.0 };
+            objc2_core_graphics::CGSize {
+                width: 0.0,
+                height: 0.0
+            };
             glyph_count
         ];
 
         // Get glyph IDs
         unsafe {
-            CTRunGetGlyphs(run, CFRange::new(0, glyph_count as isize), glyph_ids.as_mut_ptr());
+            CTRunGetGlyphs(
+                run,
+                CFRange::new(0, glyph_count as isize),
+                glyph_ids.as_mut_ptr(),
+            );
         }
 
         // Get positions
         unsafe {
-            CTRunGetPositions(run, CFRange::new(0, glyph_count as isize), positions.as_mut_ptr());
+            CTRunGetPositions(
+                run,
+                CFRange::new(0, glyph_count as isize),
+                positions.as_mut_ptr(),
+            );
         }
 
         // Get advances
         unsafe {
-            CTRunGetAdvances(run, CFRange::new(0, glyph_count as isize), advances.as_mut_ptr());
+            CTRunGetAdvances(
+                run,
+                CFRange::new(0, glyph_count as isize),
+                advances.as_mut_ptr(),
+            );
         }
 
         // Convert to ShapedGlyph

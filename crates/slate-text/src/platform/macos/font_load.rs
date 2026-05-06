@@ -8,8 +8,8 @@ use crate::types::FontMetrics;
 use objc2_core_foundation::{CFData, CFRetained};
 use objc2_core_graphics::CGFloat;
 use objc2_core_text::{
-    CTFont, CTFontCreateWithFontDescriptor, CTFontGetAscent, CTFontGetCapHeight,
-    CTFontGetDescent, CTFontGetLeading, CTFontGetUnitsPerEm, CTFontGetXHeight,
+    CTFont, CTFontCreateWithFontDescriptor, CTFontGetAscent, CTFontGetCapHeight, CTFontGetDescent,
+    CTFontGetLeading, CTFontGetUnitsPerEm, CTFontGetXHeight,
     CTFontManagerCreateFontDescriptorFromData,
 };
 use std::ptr;
@@ -42,21 +42,22 @@ pub fn create_font_from_bytes(
     size_lpx: f32,
 ) -> Result<(CFRetained<CTFont>, CFRetained<CFData>), TextError> {
     // Create CFData wrapping the static bytes (no copy, no deallocation)
-    let data = unsafe {
-        CFData::from_bytes(bytes)
-    };
+    let data = unsafe { CFData::from_bytes(bytes) };
 
     // Create font descriptor from the data
-    let descriptor = unsafe { CTFontManagerCreateFontDescriptorFromData(&data) }
-        .ok_or_else(|| TextError::FontFileLoad("CTFontManagerCreateFontDescriptorFromData returned null".into()))?;
+    let descriptor =
+        unsafe { CTFontManagerCreateFontDescriptorFromData(&data) }.ok_or_else(|| {
+            TextError::FontFileLoad(
+                "CTFontManagerCreateFontDescriptorFromData returned null".into(),
+            )
+        })?;
 
     // Convert logical pixels to CoreText points
     let ct_size_pt = (size_lpx as f64) * LPX_TO_PT;
 
     // Create the font at the specified size
-    let ct_font = unsafe {
-        CTFontCreateWithFontDescriptor(&descriptor, ct_size_pt as CGFloat, ptr::null())
-    };
+    let ct_font =
+        unsafe { CTFontCreateWithFontDescriptor(&descriptor, ct_size_pt as CGFloat, ptr::null()) };
 
     Ok((ct_font, data))
 }

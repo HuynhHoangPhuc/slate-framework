@@ -215,12 +215,7 @@ fn pad_with_gutter_zeros_border() {
     // Row 1: [0, FF, FF, 0]
     // Row 2: [0, FF, FF, 0]
     // Row 3: [0, 0, 0, 0]
-    let expected = vec![
-        0, 0, 0, 0,
-        0, 0xFF, 0xFF, 0,
-        0, 0xFF, 0xFF, 0,
-        0, 0, 0, 0,
-    ];
+    let expected = vec![0, 0, 0, 0, 0, 0xFF, 0xFF, 0, 0, 0xFF, 0xFF, 0, 0, 0, 0, 0];
 
     let padded = slate_text::glyph_cache::pad_with_gutter(&src, w, h);
     assert_eq!(padded, expected);

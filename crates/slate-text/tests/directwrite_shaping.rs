@@ -2,7 +2,7 @@
 
 #![cfg(target_os = "windows")]
 
-use slate_text::{DirectWriteBackend, TextBackend, TEST_FONT};
+use slate_text::{DirectWriteBackend, TEST_FONT, TextBackend};
 
 #[test]
 fn shapes_hello_world() {
@@ -23,10 +23,16 @@ fn shapes_hello_world() {
     // Check positions are monotonically increasing (LTR)
     let mut x = 0.0f32;
     for g in &shaped.glyphs {
-        assert!(g.x_advance_lpx > 0.0, "each glyph should have positive advance");
+        assert!(
+            g.x_advance_lpx > 0.0,
+            "each glyph should have positive advance"
+        );
         x += g.x_advance_lpx;
     }
-    assert!((x - shaped.width_lpx).abs() < 0.001, "width should equal sum of advances");
+    assert!(
+        (x - shaped.width_lpx).abs() < 0.001,
+        "width should equal sum of advances"
+    );
 }
 
 #[test]
@@ -38,7 +44,10 @@ fn empty_string_returns_empty_line() {
 
     let shaped = backend.shape_line(&font, "").expect("shape empty");
 
-    assert!(shaped.glyphs.is_empty(), "empty string should produce no glyphs");
+    assert!(
+        shaped.glyphs.is_empty(),
+        "empty string should produce no glyphs"
+    );
     assert_eq!(shaped.width_lpx, 0.0, "empty line should have zero width");
 }
 
