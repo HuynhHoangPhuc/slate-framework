@@ -243,6 +243,10 @@ impl Renderer {
     pub fn resize(&mut self, new_size: (u32, u32)) {
         let max = self.device.limits().max_texture_dimension_2d;
         let (w, h) = (new_size.0.max(1).min(max), new_size.1.max(1).min(max));
+        // Skip if size unchanged - avoids expensive GPU flush during rapid resize.
+        if self.surface_config.width == w && self.surface_config.height == h {
+            return;
+        }
         self.surface_config.width = w;
         self.surface_config.height = h;
         // Flush in-flight GPU work before reconfiguring the swapchain.

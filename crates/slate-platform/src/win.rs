@@ -40,10 +40,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CREATESTRUCTW, CS_OWNDC, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow,
     DispatchMessageW, GWLP_USERDATA, GetClientRect, GetMessageW, GetWindowLongPtrW, IDC_ARROW,
     LoadCursorW, MSG, PostQuitMessage, RegisterClassExW, SWP_NOACTIVATE, SWP_NOZORDER,
-    SetWindowLongPtrW, SetWindowPos, SetWindowTextW, TranslateMessage, WINDOW_EX_STYLE,
-    WM_CLOSE, WM_DESTROY, WM_DPICHANGED, WM_ENTERSIZEMOVE, WM_ERASEBKGND, WM_EXITSIZEMOVE,
-    WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_SIZE, WNDCLASSEXW, WS_OVERLAPPEDWINDOW,
-    WS_VISIBLE,
+    SetWindowLongPtrW, SetWindowPos, SetWindowTextW, TranslateMessage, WINDOW_EX_STYLE, WM_CLOSE,
+    WM_DESTROY, WM_DPICHANGED, WM_ENTERSIZEMOVE, WM_ERASEBKGND, WM_EXITSIZEMOVE, WM_NCCREATE,
+    WM_NCDESTROY, WM_PAINT, WM_SIZE, WNDCLASSEXW, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
 };
 use windows::core::{PCWSTR, w};
 
@@ -189,10 +188,9 @@ impl WinWindowInner {
                 let lp = lparam.0 as u32;
                 let w = lp & 0xFFFF;
                 let h = (lp >> 16) & 0xFFFF;
-                // During the modal size-move loop, suppress resize events so
-                // the renderer keeps its old surface config. DWM stretches the
-                // last presented frame to fill the new window size — matching
-                // macOS CoreAnimation's layer-stretching behavior.
+                // During modal resize, suppress resize events. WM_PAINT is also
+                // suppressed, so DWM stretches the last frame. WM_EXITSIZEMOVE
+                // dispatches the final resize + redraw.
                 if !IN_SIZE_MOVE.with(|f| f.get()) {
                     dispatch_event(Event::WindowResized {
                         window: self.id,
@@ -209,8 +207,16 @@ impl WinWindowInner {
                 LRESULT(1)
             }
             WM_PAINT => {
+                // Option A: Suppress rendering during modal resize. DWM stretches
+                // the last presented frame to fill the new size. This avoids the
+                // viewport/scene mismatch bug where scene uses new dimensions but
+                // viewport uniform still has old dimensions.
+                if IN_SIZE_MOVE.with(|f| f.get()) {
+                    // Just validate rect — don't render, let DWM stretch.
+                    let _ = unsafe { ValidateRect(Some(hwnd), None) };
+                    return LRESULT(0);
+                }
                 dispatch_event(Event::WindowRedrawRequested { window: self.id });
-                // SAFETY: Some(hwnd) is valid; None means entire client rect.
                 let _ = unsafe { ValidateRect(Some(hwnd), None) };
                 LRESULT(0)
             }
@@ -234,13 +240,9 @@ impl WinWindowInner {
                 LRESULT(0)
             }
             WM_DPICHANGED => {
-                // M1 fix: lParam holds a RECT* with the suggested window position/size.
-                // Resize to it, then dispatch WindowResized so the renderer reconfigures.
-                //
+                // lParam holds a RECT* with the suggested window position/size.
                 // SAFETY: Win32 guarantees lParam is a valid *const RECT for WM_DPICHANGED.
                 let suggested = unsafe { &*(lparam.0 as *const RECT) };
-                let w = (suggested.right - suggested.left) as u32;
-                let h = (suggested.bottom - suggested.top) as u32;
                 // SAFETY: hwnd is valid; None = no insert-after; flags suppress reorder/activate.
                 let _ = unsafe {
                     SetWindowPos(
@@ -253,10 +255,16 @@ impl WinWindowInner {
                         SWP_NOZORDER | SWP_NOACTIVATE,
                     )
                 };
-                dispatch_event(Event::WindowResized {
-                    window: self.id,
-                    size: (w, h),
-                });
+                // During modal resize, let WM_EXITSIZEMOVE handle final resize event.
+                // This avoids viewport/scene mismatch when crossing DPI monitors mid-drag.
+                if !IN_SIZE_MOVE.with(|f| f.get()) {
+                    let w = (suggested.right - suggested.left) as u32;
+                    let h = (suggested.bottom - suggested.top) as u32;
+                    dispatch_event(Event::WindowResized {
+                        window: self.id,
+                        size: (w, h),
+                    });
+                }
                 LRESULT(0)
             }
             _ => {
