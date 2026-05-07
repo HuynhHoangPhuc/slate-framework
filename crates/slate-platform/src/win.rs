@@ -39,10 +39,12 @@ use windows::Win32::UI::HiDpi::{
 use windows::Win32::UI::WindowsAndMessaging::{
     CREATESTRUCTW, CS_OWNDC, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow,
     DispatchMessageW, GWLP_USERDATA, GetClientRect, GetMessageW, GetWindowLongPtrW, IDC_ARROW,
-    LoadCursorW, MSG, PostQuitMessage, RegisterClassExW, SWP_NOACTIVATE, SWP_NOZORDER,
-    SetWindowLongPtrW, SetWindowPos, SetWindowTextW, TranslateMessage, WINDOW_EX_STYLE, WM_CLOSE,
-    WM_DESTROY, WM_DPICHANGED, WM_ENTERSIZEMOVE, WM_ERASEBKGND, WM_EXITSIZEMOVE, WM_NCCREATE,
-    WM_NCDESTROY, WM_PAINT, WM_SIZE, WNDCLASSEXW, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
+    KillTimer, LoadCursorW, MINMAXINFO, MSG, PM_REMOVE, PeekMessageW, PostQuitMessage,
+    RegisterClassExW, SIZE_MINIMIZED, SWP_NOACTIVATE, SWP_NOZORDER, SetTimer, SetWindowLongPtrW,
+    SetWindowPos, SetWindowTextW, TranslateMessage, USER_TIMER_MINIMUM, WM_CLOSE, WM_DESTROY,
+    WM_DPICHANGED, WM_ENTERSIZEMOVE, WM_ERASEBKGND, WM_EXITSIZEMOVE, WM_GETMINMAXINFO, WM_NCCREATE,
+    WM_NCDESTROY, WM_PAINT, WM_SIZE, WM_TIMER, WNDCLASSEXW, WS_EX_NOREDIRECTIONBITMAP,
+    WS_OVERLAPPEDWINDOW, WS_VISIBLE,
 };
 use windows::core::{PCWSTR, w};
 
@@ -59,6 +61,8 @@ thread_local! {
     static IN_SIZE_MOVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static NEXT_WINDOW_ID: Cell<u64> = const { Cell::new(1) };
 }
+
+const SIZE_MOVE_TIMER_ID: usize = 0x5_1A_7E;
 
 fn dispatch_event(event: Event) {
     HANDLER.with(|h| {
@@ -157,6 +161,7 @@ pub struct WinWindowInner {
     hwnd: HWND,
     hinstance: HINSTANCE,
     id: WindowId,
+    min_size: Option<(u32, u32)>,
 }
 
 impl WinWindowInner {
@@ -185,18 +190,42 @@ impl WinWindowInner {
                 LRESULT(0)
             }
             WM_SIZE => {
-                let lp = lparam.0 as u32;
-                let w = lp & 0xFFFF;
-                let h = (lp >> 16) & 0xFFFF;
-                // During modal resize, suppress resize events. WM_PAINT is also
-                // suppressed, so DWM stretches the last frame. WM_EXITSIZEMOVE
-                // dispatches the final resize + redraw.
-                if !IN_SIZE_MOVE.with(|f| f.get()) {
-                    dispatch_event(Event::WindowResized {
-                        window: self.id,
-                        size: (w, h),
-                    });
+                // Ignore minimize: lparam carries (0, 0) which would stage a
+                // zero-dim resize and trigger a swapchain reconfigure to 0×0.
+                if _wparam.0 == SIZE_MINIMIZED as usize {
+                    return LRESULT(0);
                 }
+                let lp = lparam.0 as u32;
+                let w = (lp & 0xFFFF).max(1);
+                let h = ((lp >> 16) & 0xFFFF).max(1);
+                let in_size_move = IN_SIZE_MOVE.with(|f| f.get());
+                log::trace!(target: "slate::win", "WM_SIZE w={w} h={h} in_size_move={in_size_move}");
+                // Resize the renderer eagerly — even during the modal drag loop.
+                dispatch_event(Event::WindowResized {
+                    window: self.id,
+                    size: (w, h),
+                });
+                // During modal drag (WM_ENTERSIZEMOVE..WM_EXITSIZEMOVE), the DComp
+                // visual + DXGI_SCALING_STRETCH keeps the window filled with the
+                // latest back buffer; WM_TIMER (10ms) drives the explicit redraws.
+                // Outside the modal loop (snap layouts, Aero Snap, Win+arrow,
+                // maximize/restore), we MUST redraw here or the window keeps the
+                // stale back-buffer image.
+                if !in_size_move {
+                    dispatch_event(Event::WindowRedrawRequested { window: self.id });
+                }
+                LRESULT(0)
+            }
+            WM_TIMER if _wparam.0 == SIZE_MOVE_TIMER_ID
+                && IN_SIZE_MOVE.with(|f| f.get()) =>
+            {
+                // During the modal drag loop Windows may not flush WM_PAINT
+                // frequently enough on its own. The timer guarantees a redraw
+                // cadence of USER_TIMER_MINIMUM (~10ms / ≤100Hz) so the rendered
+                // content tracks the resizing window in real time. Mirrors
+                // gpui's handle_timer_msg → handle_paint_msg path.
+                dispatch_event(Event::WindowRedrawRequested { window: self.id });
+                let _ = unsafe { ValidateRect(Some(hwnd), None) };
                 LRESULT(0)
             }
             WM_ERASEBKGND => {
@@ -207,35 +236,46 @@ impl WinWindowInner {
                 LRESULT(1)
             }
             WM_PAINT => {
-                // Option A: Suppress rendering during modal resize. DWM stretches
-                // the last presented frame to fill the new size. This avoids the
-                // viewport/scene mismatch bug where scene uses new dimensions but
-                // viewport uniform still has old dimensions.
-                if IN_SIZE_MOVE.with(|f| f.get()) {
-                    // Just validate rect — don't render, let DWM stretch.
-                    let _ = unsafe { ValidateRect(Some(hwnd), None) };
-                    return LRESULT(0);
-                }
+                // Always render. WM_SIZE has already kept the swapchain in sync
+                // with the window size, so the renderer's viewport uniform and
+                // the scene built from window.size() agree. Mirrors gpui's
+                // handle_paint_msg → draw_window — no modal-loop suppression.
                 dispatch_event(Event::WindowRedrawRequested { window: self.id });
                 let _ = unsafe { ValidateRect(Some(hwnd), None) };
                 LRESULT(0)
             }
             WM_ENTERSIZEMOVE => {
                 IN_SIZE_MOVE.with(|f| f.set(true));
+                // SAFETY: hwnd is valid; USER_TIMER_MINIMUM (10ms) is the
+                // supported low-bound interval. Windows clamps anything smaller.
+                let id = unsafe {
+                    SetTimer(Some(hwnd), SIZE_MOVE_TIMER_ID, USER_TIMER_MINIMUM, None)
+                };
+                if id == 0 {
+                    log::error!(
+                        "SetTimer failed for size-move loop; live-resize rendering disabled this drag"
+                    );
+                }
                 LRESULT(0)
             }
             WM_EXITSIZEMOVE => {
                 IN_SIZE_MOVE.with(|f| f.set(false));
-                // Resize ended — reconfigure the surface to the final size
-                // and render one correct frame.
-                let mut rect = RECT::default();
-                let _ = unsafe { GetClientRect(hwnd, &mut rect) };
-                let w = (rect.right - rect.left) as u32;
-                let h = (rect.bottom - rect.top) as u32;
-                dispatch_event(Event::WindowResized {
-                    window: self.id,
-                    size: (w, h),
-                });
+                // SAFETY: hwnd is valid; KillTimer is idempotent.
+                let _ = unsafe { KillTimer(Some(hwnd), SIZE_MOVE_TIMER_ID) };
+
+                // Drain queued WM_TIMER messages — KillTimer does not remove
+                // already-queued ticks. The IN_SIZE_MOVE guard on WM_TIMER also
+                // makes any leak a no-op; draining keeps the queue clean.
+                let mut msg = MSG::default();
+                while unsafe {
+                    PeekMessageW(&mut msg, Some(hwnd), WM_TIMER, WM_TIMER, PM_REMOVE).as_bool()
+                } {
+                    // discard
+                }
+
+                // Final redraw at the released size. WM_SIZE already kept the
+                // swapchain sized; just request one more paint so the released
+                // frame is current.
                 dispatch_event(Event::WindowRedrawRequested { window: self.id });
                 LRESULT(0)
             }
@@ -264,6 +304,15 @@ impl WinWindowInner {
                         window: self.id,
                         size: (w, h),
                     });
+                }
+                LRESULT(0)
+            }
+            WM_GETMINMAXINFO => {
+                if let Some((min_w, min_h)) = self.min_size {
+                    // SAFETY: lParam is a valid *mut MINMAXINFO for WM_GETMINMAXINFO.
+                    let info = unsafe { &mut *(lparam.0 as *mut MINMAXINFO) };
+                    info.ptMinTrackSize.x = min_w as i32;
+                    info.ptMinTrackSize.y = min_h as i32;
                 }
                 LRESULT(0)
             }
@@ -301,6 +350,7 @@ impl WinWindow {
             hwnd: HWND(std::ptr::null_mut()),
             hinstance,
             id,
+            min_size: opts.min_size,
         });
 
         // Pass the raw pointer as lpCreateParams. WM_NCCREATE fires synchronously
@@ -312,7 +362,7 @@ impl WinWindow {
         // duration of CreateWindowExW (the user's Arc lives on the stack here).
         let hwnd = unsafe {
             CreateWindowExW(
-                WINDOW_EX_STYLE::default(),
+                WS_EX_NOREDIRECTIONBITMAP,
                 CLASS_NAME,
                 PCWSTR(title_w.as_ptr()),
                 WS_OVERLAPPEDWINDOW | WS_VISIBLE,

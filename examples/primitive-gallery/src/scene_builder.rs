@@ -61,21 +61,32 @@ pub fn build_scene(
         _pad: [0.0; 3],
     });
 
-    let cols = 10usize;
-    let size = 48.0 * scale;
-    let stride = size + 12.0 * scale;
-    let ox = 30.0 * scale;
+    // Adaptive color grid: columns based on available width
+    let w_lpx = w / scale;
+    let inset = 30.0;
+    let cell = 48.0;
+    let gap = 12.0;
+    let stride_lpx = cell + gap;
+    let cols = ((w_lpx - 2.0 * inset) / stride_lpx).floor().max(1.0) as usize;
+
+    let size = cell * scale;
+    let stride = stride_lpx * scale;
+    let ox = inset * scale;
     let oy = 40.0 * scale;
 
-    // Dark rectangle for light-on-dark text demo (positioned in right column)
+    // Dark rectangle for light-on-dark text demo (right-anchored)
+    let dark_w = 200.0;
+    let dark_x = (w_lpx - dark_w - 20.0).max(20.0);
     scene.push_rect(RectInstance {
-        rect: [650.0 * scale, 175.0 * scale, 200.0 * scale, 40.0 * scale],
+        rect: [dark_x * scale, 175.0 * scale, dark_w * scale, 40.0 * scale],
         color: srgb_u8_to_linear_premul([0x1E, 0x1E, 0x2E, 0xFF]),
         corner_radius: 6.0 * scale,
         _pad: [0.0; 3],
     });
 
-    for i in 0..30 {
+    // Cap shadow count to fit adaptive grid (30 shadows, but limit to visible rows)
+    let shadow_count = 30.min(cols * 5);
+    for i in 0..shadow_count {
         scene.push_shadow(ShadowInstance {
             rect: [
                 ox + (i % cols) as f32 * stride + 4.0 * scale,
@@ -90,7 +101,9 @@ pub fn build_scene(
         });
     }
 
-    for i in 0..50 {
+    // Cap rect count to available grid space
+    let rect_count = 50.min(cols * 6);
+    for i in 0..rect_count {
         let hue = i as f32 / 50.0 * 360.0;
         let (r, g, b) = hsv_to_srgb(hue, 0.7, 0.9);
         scene.push_rect(RectInstance {
@@ -108,19 +121,27 @@ pub fn build_scene(
 
     // Layer 1: images + text glyphs
     scene.push_layer();
-    push_images(scene, image_uv, scale, h);
+    push_images(scene, image_uv, scale, w, h);
 
     for g in text_glyphs {
         scene.push_glyph(*g);
     }
 }
 
-fn push_images(scene: &mut Scene, image_uv: [f32; 4], scale: f32, h: f32) {
-    let cols = 5usize;
-    let size = 64.0 * scale;
-    let stride = size + 20.0 * scale;
-    let ox = 40.0 * scale;
+fn push_images(scene: &mut Scene, image_uv: [f32; 4], scale: f32, w: f32, h: f32) {
+    // Adaptive image grid: columns based on available width
+    let w_lpx = w / scale;
+    let inset = 40.0;
+    let img_cell = 64.0;
+    let img_gap = 20.0;
+    let img_stride_lpx = img_cell + img_gap;
+    let cols = ((w_lpx - 2.0 * inset) / img_stride_lpx).floor().max(1.0) as usize;
+
+    let size = img_cell * scale;
+    let stride = img_stride_lpx * scale;
+    let ox = inset * scale;
     let oy = h * 0.55;
+
     for i in 0..20 {
         let hue = i as f32 / 20.0 * 360.0;
         let (r, g, b) = hsv_to_srgb(hue, 0.3, 1.0);
