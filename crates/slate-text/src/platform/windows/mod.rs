@@ -15,7 +15,7 @@ use crate::{
 use std::marker::PhantomData;
 use windows::Win32::Graphics::DirectWrite::{
     DWRITE_FACTORY_TYPE_SHARED, DWriteCreateFactory, IDWriteFactory, IDWriteFactory5,
-    IDWriteFontFace, IDWriteInMemoryFontFileLoader,
+    IDWriteFontFace, IDWriteInMemoryFontFileLoader, IDWriteTextFormat,
 };
 use windows::core::Interface;
 
@@ -78,6 +78,7 @@ pub struct DirectWriteFont {
     pub(crate) size_lpx: f32,
     pub(crate) scale: f32,
     pub(crate) metrics: FontMetrics,
+    pub(crate) text_format: IDWriteTextFormat,
     pub(crate) handle: FontHandle,
 }
 
@@ -124,7 +125,7 @@ impl TextBackend for DirectWriteBackend {
     }
 
     fn shape_line(&self, font: &Self::Font, text: &str) -> Result<ShapedLine, TextError> {
-        shaping::shape_line(&font.font_face, font.em_size_dip, text, &font.metrics)
+        shaping::shape_line(&self.factory, &font.text_format, text, &font.metrics)
     }
 
     fn rasterize_glyph(

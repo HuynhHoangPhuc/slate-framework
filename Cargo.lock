@@ -1849,6 +1849,7 @@ dependencies = [
  "ttf-parser",
  "wgpu",
  "windows",
+ "windows-core",
 ]
 
 [[package]]

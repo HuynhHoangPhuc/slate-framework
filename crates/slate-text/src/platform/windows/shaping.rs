@@ -1,23 +1,156 @@
-//! Text shaping for DirectWrite backend.
+//! Text shaping via IDWriteTextLayout with custom IDWriteTextRenderer.
 //!
-//! Phase 2a uses GetGlyphIndices directly for simple LTR ASCII text.
-//! Full IDWriteTextAnalyzer support deferred to Phase 2b.
+//! Uses the full DirectWrite shaping pipeline for kerned, GPOS-adjusted glyph advances.
 
 use crate::types::FontId;
 use crate::{FontMetrics, ShapedGlyph, ShapedLine, TextError};
-use windows::Win32::Graphics::DirectWrite::{DWRITE_GLYPH_METRICS, IDWriteFontFace};
+use std::cell::RefCell;
+use std::sync::Arc;
+use windows::core::{implement, IUnknown, Ref, Result, BOOL};
+use windows::Win32::Graphics::DirectWrite::{
+    DWRITE_GLYPH_RUN, DWRITE_GLYPH_RUN_DESCRIPTION, DWRITE_MATRIX, DWRITE_MEASURING_MODE,
+    DWRITE_STRIKETHROUGH, DWRITE_UNDERLINE, IDWriteFactory5, IDWriteInlineObject,
+    IDWritePixelSnapping_Impl, IDWriteTextFormat, IDWriteTextRenderer,
+    IDWriteTextRenderer_Impl,
+};
 
-/// Shape a line of text using direct glyph lookup.
-///
-/// Phase 2a: Simple approach using GetGlyphIndices for ASCII/LTR text.
-/// Does not handle complex scripts, BiDi, or ligatures.
+/// Shared glyph storage for renderer callback.
+type GlyphStore = Arc<RefCell<Vec<ShapedGlyph>>>;
+
+/// Custom text renderer that collects shaped glyphs from DrawGlyphRun callbacks.
+#[implement(IDWriteTextRenderer)]
+pub(crate) struct ShapingRenderer {
+    glyphs: GlyphStore,
+}
+
+impl ShapingRenderer {
+    /// Create a new renderer with shared glyph storage.
+    pub(crate) fn new(glyphs: GlyphStore) -> Self {
+        Self { glyphs }
+    }
+}
+
+#[allow(non_snake_case)]
+impl IDWritePixelSnapping_Impl for ShapingRenderer_Impl {
+    fn IsPixelSnappingDisabled(
+        &self,
+        _clientdrawingcontext: *const core::ffi::c_void,
+    ) -> Result<BOOL> {
+        Ok(BOOL(0)) // false - pixel snapping enabled
+    }
+
+    fn GetCurrentTransform(
+        &self,
+        _clientdrawingcontext: *const core::ffi::c_void,
+        transform: *mut DWRITE_MATRIX,
+    ) -> Result<()> {
+        unsafe {
+            *transform = DWRITE_MATRIX {
+                m11: 1.0,
+                m12: 0.0,
+                m21: 0.0,
+                m22: 1.0,
+                dx: 0.0,
+                dy: 0.0,
+            };
+        }
+        Ok(())
+    }
+
+    fn GetPixelsPerDip(
+        &self,
+        _clientdrawingcontext: *const core::ffi::c_void,
+    ) -> Result<f32> {
+        Ok(1.0)
+    }
+}
+
+#[allow(non_snake_case)]
+impl IDWriteTextRenderer_Impl for ShapingRenderer_Impl {
+    fn DrawGlyphRun(
+        &self,
+        _clientdrawingcontext: *const core::ffi::c_void,
+        _baselineoriginx: f32,
+        _baselineoriginy: f32,
+        _measuringmode: DWRITE_MEASURING_MODE,
+        glyphrun: *const DWRITE_GLYPH_RUN,
+        _glyphrundescription: *const DWRITE_GLYPH_RUN_DESCRIPTION,
+        _clientdrawingeffect: Ref<'_, IUnknown>,
+    ) -> Result<()> {
+        let run = unsafe { &*glyphrun };
+        let count = run.glyphCount as usize;
+
+        if count == 0 {
+            return Ok(());
+        }
+
+        let indices = unsafe { std::slice::from_raw_parts(run.glyphIndices, count) };
+        let advances = unsafe { std::slice::from_raw_parts(run.glyphAdvances, count) };
+        let offsets = if run.glyphOffsets.is_null() {
+            None
+        } else {
+            Some(unsafe { std::slice::from_raw_parts(run.glyphOffsets, count) })
+        };
+
+        let mut glyphs = self.glyphs.borrow_mut();
+        glyphs.reserve(count);
+
+        for i in 0..count {
+            glyphs.push(ShapedGlyph {
+                glyph_id: indices[i] as u32,
+                font_id: FontId::PRIMARY,
+                x_advance_lpx: advances[i],
+                x_offset_lpx: offsets.map_or(0.0, |o| o[i].advanceOffset),
+                y_offset_lpx: offsets.map_or(0.0, |o| o[i].ascenderOffset),
+            });
+        }
+
+        Ok(())
+    }
+
+    fn DrawUnderline(
+        &self,
+        _clientdrawingcontext: *const core::ffi::c_void,
+        _baselineoriginx: f32,
+        _baselineoriginy: f32,
+        _underline: *const DWRITE_UNDERLINE,
+        _clientdrawingeffect: Ref<'_, IUnknown>,
+    ) -> Result<()> {
+        Ok(()) // no-op
+    }
+
+    fn DrawStrikethrough(
+        &self,
+        _clientdrawingcontext: *const core::ffi::c_void,
+        _baselineoriginx: f32,
+        _baselineoriginy: f32,
+        _strikethrough: *const DWRITE_STRIKETHROUGH,
+        _clientdrawingeffect: Ref<'_, IUnknown>,
+    ) -> Result<()> {
+        Ok(()) // no-op
+    }
+
+    fn DrawInlineObject(
+        &self,
+        _clientdrawingcontext: *const core::ffi::c_void,
+        _originx: f32,
+        _originy: f32,
+        _inlineobject: Ref<'_, IDWriteInlineObject>,
+        _issideways: BOOL,
+        _isrighttoleft: BOOL,
+        _clientdrawingeffect: Ref<'_, IUnknown>,
+    ) -> Result<()> {
+        Ok(()) // no-op
+    }
+}
+
+/// Shape a line of text using the full DirectWrite shaping pipeline.
 pub fn shape_line(
-    font_face: &IDWriteFontFace,
-    em_size_dip: f32,
+    factory: &IDWriteFactory5,
+    text_format: &IDWriteTextFormat,
     text: &str,
     metrics: &FontMetrics,
-) -> Result<ShapedLine, TextError> {
-    // Empty string guard
+) -> std::result::Result<ShapedLine, TextError> {
     if text.is_empty() {
         return Ok(ShapedLine {
             glyphs: vec![],
@@ -28,49 +161,26 @@ pub fn shape_line(
         });
     }
 
-    // Convert UTF-8 to UTF-32 codepoints for GetGlyphIndices
-    let codepoints: Vec<u32> = text.chars().map(|c| c as u32).collect();
-    let count = codepoints.len() as u32;
+    // UTF-8 → UTF-16
+    let wide: Vec<u16> = text.encode_utf16().collect();
 
-    // Get glyph indices for each codepoint
-    let mut glyph_indices = vec![0u16; count as usize];
-    unsafe { font_face.GetGlyphIndices(codepoints.as_ptr(), count, glyph_indices.as_mut_ptr()) }
-        .map_err(|e| TextError::ShapingFailed(format!("GetGlyphIndices: {}", e)))?;
-
-    // Get design glyph metrics for advances
-    let mut design_metrics: Vec<DWRITE_GLYPH_METRICS> = vec![Default::default(); count as usize];
-    unsafe {
-        font_face.GetDesignGlyphMetrics(
-            glyph_indices.as_ptr(),
-            count,
-            design_metrics.as_mut_ptr(),
-            false,
-        )
+    // CreateTextLayout takes &[u16]
+    let layout = unsafe {
+        factory.CreateTextLayout(&wide, text_format, f32::MAX, f32::MAX)
     }
-    .map_err(|e| TextError::ShapingFailed(format!("GetDesignGlyphMetrics: {}", e)))?;
+    .map_err(|e| TextError::ShapingFailed(format!("CreateTextLayout: {e}")))?;
 
-    // Get font metrics for unit conversion
-    let mut font_metrics = Default::default();
-    unsafe { font_face.GetMetrics(&mut font_metrics) };
+    // Arc<RefCell> shared state for glyph accumulation
+    let glyphs_store: GlyphStore = Arc::new(RefCell::new(Vec::new()));
+    let renderer = ShapingRenderer::new(Arc::clone(&glyphs_store));
+    let renderer_iface: IDWriteTextRenderer = renderer.into();
 
-    let units_to_lpx = em_size_dip / font_metrics.designUnitsPerEm as f32;
+    // Draw() invokes DrawGlyphRun callback(s)
+    unsafe { layout.Draw(None, &renderer_iface, 0.0, 0.0) }
+        .map_err(|e| TextError::ShapingFailed(format!("IDWriteTextLayout::Draw: {e}")))?;
 
-    // Build ShapedGlyph vec
-    let mut glyphs = Vec::with_capacity(count as usize);
-    let mut width_lpx = 0.0f32;
-
-    for i in 0..count as usize {
-        let advance = design_metrics[i].advanceWidth as f32 * units_to_lpx;
-        let glyph = ShapedGlyph {
-            glyph_id: glyph_indices[i] as u32,
-            font_id: FontId::PRIMARY,
-            x_advance_lpx: advance,
-            x_offset_lpx: 0.0,
-            y_offset_lpx: 0.0,
-        };
-        width_lpx += advance;
-        glyphs.push(glyph);
-    }
+    let glyphs: Vec<ShapedGlyph> = glyphs_store.borrow_mut().drain(..).collect();
+    let width_lpx = glyphs.iter().map(|g| g.x_advance_lpx).sum();
 
     Ok(ShapedLine {
         glyphs,

@@ -4,13 +4,32 @@
 //! System font lookup deferred to Phase 2b.
 
 use crate::{FontHandle, FontMetrics, TextError};
+use log::debug;
 use windows::Win32::Graphics::DirectWrite::{
-    DWRITE_FONT_FACE_TYPE, DWRITE_FONT_FILE_TYPE, DWRITE_FONT_SIMULATIONS_NONE, IDWriteFactory5,
-    IDWriteFontFace, IDWriteFontFile, IDWriteInMemoryFontFileLoader,
+    DWRITE_FONT_FACE_TYPE, DWRITE_FONT_FILE_TYPE, DWRITE_FONT_SIMULATIONS_NONE,
+    DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_WEIGHT_REGULAR,
+    IDWriteFactory5, IDWriteFontFace, IDWriteFontFile, IDWriteFontCollection1,
+    IDWriteInMemoryFontFileLoader, IDWriteTextFormat,
 };
-use windows::core::Interface;
+use windows::core::{Interface, HSTRING};
 
 use super::DirectWriteFont;
+
+/// Extract font family name from raw font bytes using ttf-parser.
+fn extract_family_name(bytes: &[u8]) -> Result<String, TextError> {
+    let face = ttf_parser::Face::parse(bytes, 0)
+        .map_err(|e| TextError::FontFileLoad(format!("ttf-parser: {e}")))?;
+    for name in face.names() {
+        if name.name_id == ttf_parser::name_id::TYPOGRAPHIC_FAMILY
+            || name.name_id == ttf_parser::name_id::FAMILY
+        {
+            if let Some(family) = name.to_string() {
+                return Ok(family);
+            }
+        }
+    }
+    Err(TextError::FontFileLoad("No family name in font".into()))
+}
 
 /// Load a font from raw TTF/OTF bytes using IDWriteInMemoryFontFileLoader.
 pub fn load_font_from_bytes(
@@ -60,6 +79,58 @@ pub fn load_font_from_bytes(
     // Extract metrics
     let metrics = extract_metrics(&font_face, size_lpx);
 
+    debug!(
+        "DirectWrite font metrics (size={size_lpx}): ascent={:.2} descent={:.2} line_gap={:.2} x_height={:.2} cap_height={:.2} upem={}",
+        metrics.ascent_lpx,
+        metrics.descent_lpx,
+        metrics.line_gap_lpx,
+        metrics.x_height_lpx,
+        metrics.cap_height_lpx,
+        metrics.units_per_em,
+    );
+
+    // Extract real family name (empty name falls back to system default)
+    let family_name = extract_family_name(bytes)?;
+
+    // Build font set from the in-memory font file for IDWriteTextFormat
+    let font_set_builder = unsafe { factory.CreateFontSetBuilder() }
+        .map_err(|e| TextError::FontFileLoad(format!("CreateFontSetBuilder: {e}")))?;
+
+    // Re-create font file ref for the builder (font_file was consumed by CreateFontFace)
+    let font_file_for_set: IDWriteFontFile = unsafe {
+        loader.CreateInMemoryFontFileReference(
+            factory,
+            bytes.as_ptr() as *const _,
+            bytes.len() as u32,
+            None,
+        )
+    }
+    .map_err(|e| TextError::FontFileLoad(format!("CreateInMemoryFontFileReference (set): {e}")))?;
+
+    unsafe { font_set_builder.AddFontFile(&font_file_for_set) }
+        .map_err(|e| TextError::FontFileLoad(format!("AddFontFile: {e}")))?;
+
+    let font_set = unsafe { font_set_builder.CreateFontSet() }
+        .map_err(|e| TextError::FontFileLoad(format!("CreateFontSet: {e}")))?;
+
+    let font_collection: IDWriteFontCollection1 =
+        unsafe { factory.CreateFontCollectionFromFontSet(&font_set) }
+            .map_err(|e| TextError::FontFileLoad(format!("CreateFontCollectionFromFontSet: {e}")))?;
+
+    // Create IDWriteTextFormat with our custom collection + real family name
+    let text_format: IDWriteTextFormat = unsafe {
+        factory.CreateTextFormat(
+            &HSTRING::from(&family_name),
+            &font_collection,
+            DWRITE_FONT_WEIGHT_REGULAR,
+            DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL,
+            size_lpx,
+            &HSTRING::from("en-US"),
+        )
+    }
+    .map_err(|e| TextError::FontFileLoad(format!("CreateTextFormat: {e}")))?;
+
     // Build font handle from COM pointer + size + scale
     let ptr = font_face.as_raw() as *const u8;
     let handle = FontHandle::from_ptr_size_scale(ptr, size_lpx, scale);
@@ -71,6 +142,7 @@ pub fn load_font_from_bytes(
         size_lpx,
         scale,
         metrics,
+        text_format,
         handle,
     })
 }
