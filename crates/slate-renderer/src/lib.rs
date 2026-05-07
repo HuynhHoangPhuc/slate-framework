@@ -30,6 +30,12 @@ pub mod instanced_rect_pipeline;
 pub mod pipeline_shared;
 pub mod scene;
 pub mod shadow_pipeline;
+pub mod surface_target;
+
+#[cfg(target_os = "macos")]
+mod mac_surface;
+#[cfg(target_os = "windows")]
+mod win_compose;
 pub use color::{
     linear_to_srgb_channel, linear_to_srgb_u8, srgb_channel_to_linear, srgb_to_linear,
     srgb_u8_to_linear, srgb_u8_to_linear_premul,
@@ -44,16 +50,16 @@ pub use shadow_pipeline::ShadowPipeline;
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
-use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use slate_platform::Window;
 use wgpu::{
     Adapter, Backends, BindGroup, BindGroupDescriptor, BindGroupEntry, BindingResource, Buffer,
-    BufferDescriptor, BufferUsages, Color, CommandEncoderDescriptor, CurrentSurfaceTexture, Device,
+    BufferDescriptor, BufferUsages, Color, CommandEncoderDescriptor, Device,
     DeviceDescriptor, ExperimentalFeatures, Features, Instance, InstanceDescriptor, Limits, LoadOp,
-    MemoryHints, Operations, PresentMode, Queue, RenderPassColorAttachment, RenderPassDescriptor,
-    RequestAdapterOptions, RequestDeviceError, StoreOp, Surface, SurfaceConfiguration,
-    SurfaceTargetUnsafe, TextureFormat, TextureUsages, TextureViewDescriptor, Trace,
+    MemoryHints, Operations, Queue, RenderPassColorAttachment, RenderPassDescriptor,
+    RequestAdapterOptions, RequestDeviceError, StoreOp, TextureFormat, Trace,
 };
+
+use crate::surface_target::{CompositionTarget, FrameAcquireError};
 
 use crate::atlas::{AllocId, Atlas, Format};
 
@@ -67,8 +73,7 @@ pub struct Renderer {
     _adapter: Adapter,
     device: Device,
     queue: Queue,
-    surface: Surface<'static>,
-    surface_config: SurfaceConfiguration,
+    target: Box<dyn CompositionTarget>,
     _window: Arc<dyn Window>,
 
     // Shared GPU resources (Phase 7).
@@ -98,40 +103,28 @@ impl Renderer {
     /// Returns [`RendererError`] if no compatible GPU adapter is found, if the wgpu surface
     /// cannot be created, or if the device request fails.
     pub async fn new(window: Arc<dyn Window>) -> Result<Self, RendererError> {
+        // Use platform-specific backends:
+        // - macOS: Metal
+        // - Windows: DX12 (required for DirectComposition swap chain)
+        #[cfg(target_os = "macos")]
+        let backends = Backends::METAL;
+        #[cfg(target_os = "windows")]
+        let backends = Backends::DX12;
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        let backends = Backends::PRIMARY;
+
         let instance = Instance::new(InstanceDescriptor {
-            backends: Backends::PRIMARY, // Metal on macOS, DX12 on Windows
+            backends,
             flags: wgpu::InstanceFlags::default(),
             memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
             backend_options: Default::default(),
             display: None,
         });
 
-        // Extract raw handles from the Arc<dyn Window>. We store the Arc in Self,
-        // ensuring the window — and thus these handles — outlive the Surface<'static>.
-        //
-        // SAFETY: `window` is held in `Self` for the full lifetime of `surface`.
-        // `Surface<'static>` is valid because we guarantee the backing window is
-        // kept alive by the `_window` field in the same struct.
-        let surface_target = {
-            let raw_window = window
-                .window_handle()
-                .map_err(|e| RendererError::RawHandle(e.to_string()))?
-                .as_raw();
-            let raw_display = window
-                .display_handle()
-                .map_err(|e| RendererError::RawHandle(e.to_string()))?
-                .as_raw();
-            SurfaceTargetUnsafe::RawHandle {
-                raw_window_handle: raw_window,
-                raw_display_handle: Some(raw_display),
-            }
-        };
-        let surface: Surface<'static> = unsafe { instance.create_surface_unsafe(surface_target)? };
-
         let adapter = instance
             .request_adapter(&RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: Some(&surface),
+                compatible_surface: None,
                 force_fallback_adapter: false,
             })
             .await
@@ -155,32 +148,10 @@ impl Renderer {
             })
             .await?;
 
-        let caps = surface.get_capabilities(&adapter);
-
-        // Prefer `Bgra8UnormSrgb` so blending happens in linear space and the
-        // GPU encodes to sRGB on store. Callers MUST hand the renderer LINEAR
-        // color values; convert at the boundary via [`crate::color`] helpers if
-        // your inputs come from sRGB sources (CSS hex, design tokens, ...).
-        let format = caps
-            .formats
-            .iter()
-            .copied()
-            .find(|f| *f == TextureFormat::Bgra8UnormSrgb)
-            .unwrap_or(caps.formats[0]);
-
-        // `Window::size()` returns physical pixels already — no scale_factor multiply.
         let (w, h) = window.size();
-        let surface_config = SurfaceConfiguration {
-            usage: TextureUsages::RENDER_ATTACHMENT,
-            format,
-            width: w.max(1),
-            height: h.max(1),
-            present_mode: PresentMode::AutoVsync,
-            alpha_mode: caps.alpha_modes[0],
-            view_formats: vec![],
-            desired_maximum_frame_latency: 2,
-        };
-        surface.configure(&device, &surface_config);
+        let mut target = build_target(&instance, &adapter, &device, Arc::clone(&window))?;
+        target.configure(&device, w.max(1), h.max(1));
+        let format = target.format();
 
         // --- Shared resources (Phase 7) ---
         let viewport_bgl = pipeline_shared::viewport_bind_group_layout(&device);
@@ -190,11 +161,12 @@ impl Renderer {
             usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let (target_w, target_h) = target.size();
         queue.write_buffer(
             &viewport_buf,
             0,
             bytemuck::bytes_of(&ViewportUniform {
-                size: [surface_config.width as f32, surface_config.height as f32],
+                size: [target_w as f32, target_h as f32],
                 _pad: [0.0; 2],
             }),
         );
@@ -223,8 +195,7 @@ impl Renderer {
             _adapter: adapter,
             device,
             queue,
-            surface,
-            surface_config,
+            target,
             _window: window,
             viewport_buf,
             viewport_bg,
@@ -243,16 +214,10 @@ impl Renderer {
     pub fn resize(&mut self, new_size: (u32, u32)) {
         let max = self.device.limits().max_texture_dimension_2d;
         let (w, h) = (new_size.0.max(1).min(max), new_size.1.max(1).min(max));
-        // Skip if size unchanged - avoids expensive GPU flush during rapid resize.
-        if self.surface_config.width == w && self.surface_config.height == h {
+        if self.target.size() == (w, h) {
             return;
         }
-        self.surface_config.width = w;
-        self.surface_config.height = h;
-        // Flush in-flight GPU work before reconfiguring the swapchain.
-        // Without this, DWM may composite a stale buffer during resize.
-        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
-        self.surface.configure(&self.device, &self.surface_config);
+        self.target.configure(&self.device, w, h);
         self.queue.write_buffer(
             &self.viewport_buf,
             0,
@@ -261,6 +226,12 @@ impl Renderer {
                 _pad: [0.0; 2],
             }),
         );
+    }
+
+    /// Tell the composition target whether the window is minimized.
+    /// When minimized, present becomes a no-op.
+    pub fn set_minimized(&mut self, minimized: bool) {
+        self.target.set_minimized(minimized);
     }
 
     /// Render a scene: all layers in push order, fixed primitive order within
@@ -284,8 +255,22 @@ impl Renderer {
             .prepare(&self.device, &self.queue, &scene.glyphs);
 
         // Phase B: RECORD — immutable iteration into a single pass.
-        let frame = self.acquire_frame()?;
-        let view = frame.texture.create_view(&TextureViewDescriptor::default());
+        let frame = match self.target.acquire_frame() {
+            Ok(f) => f,
+            Err(FrameAcquireError::Outdated) => {
+                let (w, h) = self._window.size();
+                self.target.configure(&self.device, w.max(1), h.max(1));
+                return Ok(());
+            }
+            Err(FrameAcquireError::Occluded | FrameAcquireError::Minimized | FrameAcquireError::Timeout) => {
+                return Ok(());
+            }
+            Err(FrameAcquireError::DeviceLost(reason)) => {
+                return Err(RenderError::DeviceLost(reason));
+            }
+            Err(other) => return Err(RenderError::AcquireFailed(other.to_string())),
+        };
+        let view = &frame.view;
         let mut encoder = self
             .device
             .create_command_encoder(&CommandEncoderDescriptor {
@@ -338,7 +323,7 @@ impl Renderer {
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
-        frame.present();
+        self.target.present(frame);
         Ok(())
     }
 
@@ -378,9 +363,23 @@ impl Renderer {
     /// Stub clear-only path — use [`Renderer::render_scene`] for Scene-driven
     /// rendering.
     pub fn render(&mut self) -> Result<(), RenderError> {
-        let frame = self.acquire_frame()?;
-        self.draw_clear_pass(&frame);
-        frame.present();
+        let frame = match self.target.acquire_frame() {
+            Ok(f) => f,
+            Err(FrameAcquireError::Outdated) => {
+                let (w, h) = self._window.size();
+                self.target.configure(&self.device, w.max(1), h.max(1));
+                return Ok(());
+            }
+            Err(FrameAcquireError::Occluded | FrameAcquireError::Minimized | FrameAcquireError::Timeout) => {
+                return Ok(());
+            }
+            Err(FrameAcquireError::DeviceLost(reason)) => {
+                return Err(RenderError::DeviceLost(reason));
+            }
+            Err(other) => return Err(RenderError::AcquireFailed(other.to_string())),
+        };
+        self.draw_clear_pass(&frame.view);
+        self.target.present(frame);
         Ok(())
     }
 
@@ -398,44 +397,13 @@ impl Renderer {
 
     /// The texture format the surface is configured with.
     pub fn surface_format(&self) -> TextureFormat {
-        self.surface_config.format
+        self.target.format()
     }
 
     // ----- Private helpers -----
 
-    /// Acquire the next surface texture, reconfiguring on `Outdated`/`Lost` and
-    /// retrying once.
-    fn acquire_frame(&mut self) -> Result<wgpu::SurfaceTexture, RenderError> {
-        match self.surface.get_current_texture() {
-            CurrentSurfaceTexture::Success(frame) => Ok(frame),
-            CurrentSurfaceTexture::Suboptimal(frame) => {
-                // Suboptimal is still usable — reconfigure happens on the next resize event.
-                Ok(frame)
-            }
-            CurrentSurfaceTexture::Outdated
-            | CurrentSurfaceTexture::Lost
-            | CurrentSurfaceTexture::Occluded => {
-                // Reconfigure and retry once. On macOS the first frame after
-                // window creation may return Occluded (CAMetalLayer has no
-                // drawables yet); a reconfigure + retry resolves it.
-                self.surface.configure(&self.device, &self.surface_config);
-                match self.surface.get_current_texture() {
-                    CurrentSurfaceTexture::Success(frame)
-                    | CurrentSurfaceTexture::Suboptimal(frame) => Ok(frame),
-                    CurrentSurfaceTexture::Occluded => Err(RenderError::Occluded),
-                    other => Err(RenderError::AcquireFailed(format!("{other:?}"))),
-                }
-            }
-            CurrentSurfaceTexture::Timeout => Err(RenderError::Timeout),
-            CurrentSurfaceTexture::Validation => {
-                Err(RenderError::AcquireFailed("validation error".to_owned()))
-            }
-        }
-    }
-
     /// Encode and submit a clear-color render pass (dark gray).
-    fn draw_clear_pass(&self, frame: &wgpu::SurfaceTexture) {
-        let view = frame.texture.create_view(&TextureViewDescriptor::default());
+    fn draw_clear_pass(&self, view: &wgpu::TextureView) {
         let mut encoder = self
             .device
             .create_command_encoder(&CommandEncoderDescriptor {
@@ -445,7 +413,7 @@ impl Renderer {
             let _pass = encoder.begin_render_pass(&RenderPassDescriptor {
                 label: Some("slate-clear-pass"),
                 color_attachments: &[Some(RenderPassColorAttachment {
-                    view: &view,
+                    view,
                     depth_slice: None,
                     resolve_target: None,
                     ops: Operations {
@@ -463,7 +431,6 @@ impl Renderer {
                 timestamp_writes: None,
                 multiview_mask: None::<NonZeroU32>,
             });
-            // No-op pass: clear-only. For scene-driven draws use `render_scene`.
         }
         self.queue.submit(std::iter::once(encoder.finish()));
     }
@@ -497,4 +464,29 @@ pub enum RenderError {
     /// Surface acquire failed even after reconfiguration.
     #[error("failed to acquire surface texture: {0}")]
     AcquireFailed(String),
+    /// Device lost (GPU reset, driver crash, sleep/wake). Caller must rebuild Renderer.
+    #[error("device lost: {0}")]
+    DeviceLost(String),
+}
+
+// ----- Platform-specific target construction -----
+
+#[cfg(target_os = "macos")]
+fn build_target(
+    instance: &Instance,
+    adapter: &Adapter,
+    _device: &Device,
+    window: Arc<dyn Window>,
+) -> Result<Box<dyn CompositionTarget>, RendererError> {
+    Ok(Box::new(mac_surface::MacSurface::new(instance, adapter, window)?))
+}
+
+#[cfg(target_os = "windows")]
+fn build_target(
+    _instance: &Instance,
+    _adapter: &Adapter,
+    device: &Device,
+    window: Arc<dyn Window>,
+) -> Result<Box<dyn CompositionTarget>, RendererError> {
+    Ok(Box::new(win_compose::WinCompose::new(device, window)?))
 }

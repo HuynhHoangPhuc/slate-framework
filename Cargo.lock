@@ -1825,6 +1825,7 @@ dependencies = [
  "slate-platform",
  "thiserror",
  "wgpu",
+ "windows",
 ]
 
 [[package]]
@@ -2253,6 +2254,16 @@ dependencies = [
  "log",
  "raw-window-handle",
  "web-sys",
+]
+
+[[package]]
+name = "win-dcomp-spike"
+version = "0.0.2"
+dependencies = [
+ "pollster",
+ "wgpu",
+ "windows",
+ "windows-core",
 ]
 
 [[package]]

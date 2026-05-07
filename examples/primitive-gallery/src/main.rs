@@ -205,11 +205,14 @@ fn build_text_glyphs(
         glyphs.extend(instances);
     }
 
-    // Multi-line paragraph demo with word wrap
+    // Multi-line paragraph demo with word wrap. Keep position responsive: stick
+    // to the right side of the window with a sane minimum so the paragraph
+    // tracks shrink/grow instead of clipping at hardcoded x=650.
     let paragraph_text = "This is a multi-line paragraph with automatic word wrapping. \
         The greedy algorithm breaks text at spaces to fit within the maximum width.";
     let max_width = 280.0;
-    let paragraph_x = 650.0;
+    let w_lpx = w / scale;
+    let paragraph_x = (w_lpx - max_width - 20.0).max(20.0);
     let paragraph_y = 50.0;
 
     if let Ok(paragraph_lines) = backend.shape_paragraph(font, paragraph_text, max_width) {
