@@ -18,7 +18,7 @@ jobs:
   regen:
     strategy:
       matrix:
-        os: [macos-14, windows-latest]
+        os: [macos-26, windows-2025-vs2026]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
@@ -28,7 +28,7 @@ jobs:
         run: cargo test -p slate-text --all-targets
         env:
           UPDATE_GOLDENS: "1"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: goldens-${{ matrix.os }}
           path: crates/slate-text/tests/goldens/**

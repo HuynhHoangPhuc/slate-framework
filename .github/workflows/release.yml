@@ -23,10 +23,10 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: macos-latest
+          - os: macos-26
             target: aarch64-apple-darwin
             artifact: primitive-gallery
-          - os: windows-latest
+          - os: windows-2025-vs2026
             target: x86_64-pc-windows-msvc
             artifact: primitive-gallery.exe
     steps:
