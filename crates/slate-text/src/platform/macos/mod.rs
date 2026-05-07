@@ -126,9 +126,11 @@ impl TextBackend for CoreTextBackend {
         glyph_id: u32,
         variant: u8,
     ) -> Result<GlyphBitmap, TextError> {
+        let glyph_id_u16 = u16::try_from(glyph_id)
+            .map_err(|_| TextError::GlyphNotFound { glyph_id })?;
         rasterize::rasterize(
             &font.ct_font,
-            glyph_id as u16,
+            glyph_id_u16,
             font.size_lpx,
             font.scale,
             variant,
@@ -140,7 +142,9 @@ impl TextBackend for CoreTextBackend {
         font: &Self::Font,
         glyph_id: u32,
     ) -> Result<GlyphBounds, TextError> {
-        rasterize::get_glyph_bounds(&font.ct_font, glyph_id as u16, font.scale)
+        let glyph_id_u16 = u16::try_from(glyph_id)
+            .map_err(|_| TextError::GlyphNotFound { glyph_id })?;
+        rasterize::get_glyph_bounds(&font.ct_font, glyph_id_u16, font.scale)
     }
 
     fn enumerate_system_fonts(&self) -> Result<Vec<FontDescriptor>, TextError> {

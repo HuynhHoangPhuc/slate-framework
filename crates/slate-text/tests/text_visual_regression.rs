@@ -5,50 +5,22 @@
 
 mod common;
 
+use common::mock::MockFont;
 use slate_renderer::atlas::{Atlas, Format};
 use slate_renderer::srgb_u8_to_linear_premul;
-use slate_text::backend::{Font, TextBackend};
 use slate_text::error::TextError;
 use slate_text::font_handle::FontHandle;
 use slate_text::glyph_cache::GlyphCache;
 use slate_text::run_builder::TextRunBuilder;
 use slate_text::types::{
-    FontDescriptor, FontId, FontMetrics, GlyphBitmap, GlyphBounds, ShapedGlyph, ShapedLine,
+    FontDescriptor, FontId, GlyphBitmap, GlyphBounds, ShapedGlyph, ShapedLine,
 };
+use slate_text::TextBackend;
 
-/// Mock font for controlled testing.
-struct MockFont {
-    handle: FontHandle,
-    size_lpx: f32,
-    scale: f32,
-}
-
-impl Font for MockFont {
-    fn handle(&self) -> FontHandle {
-        self.handle
-    }
-
-    fn metrics(&self) -> FontMetrics {
-        FontMetrics {
-            ascent_lpx: 12.0,
-            descent_lpx: -3.0,
-            line_gap_lpx: 1.0,
-            x_height_lpx: 8.0,
-            cap_height_lpx: 10.0,
-            units_per_em: 2048,
-        }
-    }
-
-    fn size_lpx(&self) -> f32 {
-        self.size_lpx
-    }
-
-    fn scale(&self) -> f32 {
-        self.scale
-    }
-}
-
-/// Mock backend producing predictable bitmaps.
+/// Backend producing 8×12 glyphs with a vertical-bar pattern per glyph_id.
+///
+/// Uses 8 lpx advance — distinct from the default 10 lpx MockBackend — so the
+/// visual regression tests exercise a different layout density.
 struct MockBackend;
 
 impl TextBackend for MockBackend {
@@ -109,17 +81,15 @@ impl TextBackend for MockBackend {
         glyph_id: u32,
         variant: u8,
     ) -> Result<GlyphBitmap, TextError> {
-        // 8x12 glyph with a simple pattern
+        // 8×12 glyph: vertical bar column determined by glyph_id
         let w = 8u32;
         let h = 12u32;
         let mut alpha = vec![0u8; (w * h) as usize];
-        // Draw a simple vertical bar based on glyph_id
         let bar_x = (glyph_id % w) as usize;
         for y in 0..h as usize {
             alpha[y * w as usize + bar_x] = 0xFF;
         }
-        // Variant affects horizontal offset slightly (sub-pixel)
-        let _ = variant;
+        let _ = variant; // sub-pixel offset handled by caller
         Ok(GlyphBitmap {
             width: w,
             height: h,

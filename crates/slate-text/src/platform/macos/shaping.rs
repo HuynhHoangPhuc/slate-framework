@@ -39,9 +39,46 @@ unsafe extern "C" {
     fn CTRunGetPositions(run: *const c_void, range: CFRange, buffer: *mut CGPoint);
     fn CTRunGetAdvances(run: *const c_void, range: CFRange, buffer: *mut CGSize);
     fn CFRelease(cf: *const c_void);
+
+    /// Canonical CF retain-release callbacks for dictionary keys.
+    /// Using these (vs null) ensures CF applies proper memory management
+    /// for CF-type keys (retain on insert, release on remove).
+    static kCFTypeDictionaryKeyCallBacks: c_void;
+
+    /// Canonical CF retain-release callbacks for dictionary values.
+    static kCFTypeDictionaryValueCallBacks: c_void;
 }
 
 const K_CF_STRING_ENCODING_UTF8: u32 = 0x08000100;
+
+/// RAII guard for an owned CoreFoundation object.
+///
+/// On drop, calls `CFRelease` on the wrapped pointer unless it is null.
+/// Does **not** wrap borrowed refs returned by functions like
+/// `CTLineGetGlyphRuns` / `CFArrayGetValueAtIndex` — those must not be released.
+struct ScopedCf(*const c_void);
+
+impl ScopedCf {
+    /// Return the inner pointer (may be null).
+    fn ptr(&self) -> *const c_void {
+        self.0
+    }
+
+    /// Return true when the wrapped pointer is null (creation failed).
+    fn is_null(&self) -> bool {
+        self.0.is_null()
+    }
+}
+
+impl Drop for ScopedCf {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            // Safety: pointer was obtained from a CF Create/Copy function and
+            // ownership was transferred to this guard at construction time.
+            unsafe { CFRelease(self.0) };
+        }
+    }
+}
 
 /// Shape a line of text into positioned glyphs.
 pub fn shape_line(
@@ -65,57 +102,73 @@ pub fn shape_line(
         TextError::ShapingFailed("Text contains null bytes".into())
     })?;
 
+    // Safety: all CF/CT calls follow Create/Copy ownership rules; owned objects
+    // are wrapped in ScopedCf for deterministic release.
     unsafe {
         // Create CFString from text
-        let cf_string = CFStringCreateWithCString(
+        let cf_string = ScopedCf(CFStringCreateWithCString(
             std::ptr::null(),
             c_str.as_ptr(),
             K_CF_STRING_ENCODING_UTF8,
-        );
+        ));
         if cf_string.is_null() {
             return Err(TextError::ShapingFailed("Failed to create CFString".into()));
         }
 
-        // Create attributes dictionary with font
+        // Create attributes dictionary with font.
+        // Use kCFTypeDictionaryKeyCallBacks / kCFTypeDictionaryValueCallBacks so
+        // CF correctly retains/releases the CF-type key and value on its own.
         let font_key = kCTFontAttributeName as *const _ as *const c_void;
         let font_value = ct_font as *const CTFont as *const c_void;
         let keys = [font_key];
         let values = [font_value];
 
-        let attrs = CFDictionaryCreate(
+        let attrs = ScopedCf(CFDictionaryCreate(
             std::ptr::null(),
             keys.as_ptr(),
             values.as_ptr(),
             1,
-            std::ptr::null(), // kCFTypeDictionaryKeyCallBacks
-            std::ptr::null(), // kCFTypeDictionaryValueCallBacks
-        );
+            &kCFTypeDictionaryKeyCallBacks as *const c_void,
+            &kCFTypeDictionaryValueCallBacks as *const c_void,
+        ));
+        // attrs null-check: CFDictionaryCreate only fails under extreme OOM;
+        // proceed anyway — CFAttributedStringCreate handles a null attrs gracefully
+        // by producing an empty attributes dictionary, which is safe here.
 
-        // Create attributed string
-        let attr_string = CFAttributedStringCreate(std::ptr::null(), cf_string, attrs);
-        CFRelease(cf_string);
-        if !attrs.is_null() {
-            CFRelease(attrs);
-        }
+        // Create attributed string; cf_string and attrs are still alive here.
+        let attr_string = ScopedCf(CFAttributedStringCreate(
+            std::ptr::null(),
+            cf_string.ptr(),
+            attrs.ptr(),
+        ));
+        // cf_string and attrs are released when they go out of scope (ScopedCf Drop).
+        // Drop them explicitly now so lifetime is obvious.
+        drop(attrs);
+        drop(cf_string);
+
         if attr_string.is_null() {
             return Err(TextError::ShapingFailed("Failed to create CFAttributedString".into()));
         }
 
         // Create CTLine
-        let line = CTLineCreateWithAttributedString(attr_string);
-        CFRelease(attr_string);
+        let line = ScopedCf(CTLineCreateWithAttributedString(attr_string.ptr()));
+        drop(attr_string);
+
         if line.is_null() {
             return Err(TextError::ShapingFailed("Failed to create CTLine".into()));
         }
 
-        // Get glyph runs
-        let runs = CTLineGetGlyphRuns(line);
+        // Get glyph runs.
+        // CTLineGetGlyphRuns returns a *borrowed* reference owned by `line`;
+        // do NOT wrap it in ScopedCf or release it.
+        let runs = CTLineGetGlyphRuns(line.ptr());
         let run_count = CFArrayGetCount(runs);
 
         let mut glyphs = Vec::new();
         let mut total_width_pt: f64 = 0.0;
 
         for i in 0..run_count {
+            // CFArrayGetValueAtIndex also returns a borrowed reference.
             let run = CFArrayGetValueAtIndex(runs, i);
             if run.is_null() {
                 continue;
@@ -168,7 +221,7 @@ pub fn shape_line(
             }
         }
 
-        CFRelease(line);
+        // `line` goes out of scope here and calls CFRelease via ScopedCf::drop.
 
         Ok(ShapedLine {
             glyphs,

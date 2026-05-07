@@ -4,7 +4,6 @@
 //! On Windows this wraps a DXGI composition swap chain bound to an
 //! IDCompositionVisual (no DWM redirection bitmap).
 
-use std::sync::Arc;
 use wgpu::{Device, TextureFormat, TextureView};
 
 /// A handle to one acquired frame.
@@ -28,7 +27,7 @@ pub(crate) enum AcquiredFrameInner {
     },
 }
 
-pub trait CompositionTarget: Send {
+pub trait CompositionTarget {
     /// Configure (or reconfigure on resize). Width/height are physical pixels.
     /// Implementations MUST drop any cached views/textures before calling
     /// `ResizeBuffers`/`surface.configure` and rebuild them after.

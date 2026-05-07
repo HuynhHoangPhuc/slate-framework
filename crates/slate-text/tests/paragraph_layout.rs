@@ -1,6 +1,6 @@
 //! Tests for multi-line paragraph layout.
 
-use slate_text::backend::{Font, TextBackend};
+use slate_text::{Font, TextBackend};
 use slate_text::error::TextError;
 use slate_text::font_handle::FontHandle;
 use slate_text::types::{

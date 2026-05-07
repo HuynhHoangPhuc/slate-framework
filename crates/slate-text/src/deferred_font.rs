@@ -145,8 +145,23 @@ impl DeferredFont {
     }
 }
 
+/// Maximum font file size (50 MB) before we refuse eager load.
+///
+/// Stopgap guard against OOM from pathologically large font files (e.g. massive CJK collections).
+/// When mmap support is added this limit can be relaxed.
+const MAX_FONT_FILE_BYTES: u64 = 50_000_000;
+
 /// Extract character set from a font file's cmap table.
 fn extract_charset(path: &Path) -> Result<CharacterSet, TextError> {
+    // Size guard: refuse to read files larger than MAX_FONT_FILE_BYTES.
+    let metadata = std::fs::metadata(path)
+        .map_err(|e| TextError::FontFileLoad(format!("{}: {}", path.display(), e)))?;
+    if metadata.len() > MAX_FONT_FILE_BYTES {
+        return Err(TextError::FontFileLoad(
+            "font file too large for eager load".into(),
+        ));
+    }
+
     let data = std::fs::read(path)
         .map_err(|e| TextError::FontFileLoad(format!("{}: {}", path.display(), e)))?;
 

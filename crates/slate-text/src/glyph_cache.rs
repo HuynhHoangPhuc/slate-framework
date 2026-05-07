@@ -13,6 +13,9 @@ use crate::error::TextError;
 use crate::font_handle::FontHandle;
 use crate::types::{CachedGlyph, GlyphBitmap, GlyphMetrics};
 
+/// Default maximum number of entries in the glyph cache before eviction.
+const DEFAULT_MAX_ENTRIES: usize = 8192;
+
 /// Cache of rasterized glyphs backed by a GPU atlas.
 ///
 /// # Usage
@@ -26,15 +29,32 @@ use crate::types::{CachedGlyph, GlyphBitmap, GlyphMetrics};
 /// - `FontHandle` encodes font pointer, size, and scale
 /// - `glyph_id` is the glyph index in the font
 /// - `variant` is the sub-pixel X offset (0-3)
+///
+/// # Eviction
+///
+/// When the cache exceeds `max_entries`, all entries are cleared (simple
+/// capacity + clear strategy). Glyphs are cheap to re-rasterize relative
+/// to stalling GPU frames, so a full clear on overflow is acceptable.
 pub struct GlyphCache {
     cache: HashMap<(FontHandle, u32, u8), CachedGlyph>,
+    /// Maximum number of entries before the cache is cleared on overflow.
+    max_entries: usize,
 }
 
 impl GlyphCache {
-    /// Creates a new empty glyph cache.
+    /// Creates a new empty glyph cache with the default capacity limit.
     pub fn new() -> Self {
         Self {
             cache: HashMap::new(),
+            max_entries: DEFAULT_MAX_ENTRIES,
+        }
+    }
+
+    /// Creates a new glyph cache with a custom maximum entry count.
+    pub fn with_max_entries(max_entries: usize) -> Self {
+        Self {
+            cache: HashMap::new(),
+            max_entries,
         }
     }
 
@@ -61,6 +81,16 @@ impl GlyphCache {
 
         if self.cache.contains_key(&key) {
             return Ok(false);
+        }
+
+        // Evict all entries when at capacity. Simple clear strategy: bounds
+        // are cheap to recompute and a full clear avoids stale atlas IDs.
+        if self.cache.len() >= self.max_entries {
+            log::warn!(
+                "GlyphCache at capacity ({} entries); clearing cache to free memory",
+                self.max_entries
+            );
+            self.cache.clear();
         }
 
         let bitmap = backend.rasterize_glyph(font, glyph_id, variant)?;
@@ -105,6 +135,45 @@ impl GlyphCache {
     /// Useful for testing and debugging.
     pub fn cache_len(&self) -> usize {
         self.cache.len()
+    }
+
+    /// Returns the configured maximum number of entries before eviction.
+    pub fn max_entries(&self) -> usize {
+        self.max_entries
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_max_entries_is_set() {
+        let cache = GlyphCache::new();
+        assert_eq!(cache.max_entries(), DEFAULT_MAX_ENTRIES);
+        assert_eq!(cache.cache_len(), 0);
+    }
+
+    #[test]
+    fn with_max_entries_configures_limit() {
+        let cache = GlyphCache::with_max_entries(64);
+        assert_eq!(cache.max_entries(), 64);
+    }
+
+    #[test]
+    fn pad_with_gutter_dimensions() {
+        // 2×2 source produces 4×4 padded output with zero border
+        let src = vec![1u8, 2, 3, 4];
+        let result = pad_with_gutter(&src, 2, 2);
+        assert_eq!(result.len(), 4 * 4);
+        // top row must be all zeros
+        assert_eq!(&result[0..4], &[0u8, 0, 0, 0]);
+        // inner row 1: [0, 1, 2, 0]
+        assert_eq!(&result[4..8], &[0u8, 1, 2, 0]);
+        // inner row 2: [0, 3, 4, 0]
+        assert_eq!(&result[8..12], &[0u8, 3, 4, 0]);
+        // bottom row must be all zeros
+        assert_eq!(&result[12..16], &[0u8, 0, 0, 0]);
     }
 }
 

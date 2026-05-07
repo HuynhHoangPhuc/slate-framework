@@ -12,6 +12,13 @@ use std::ptr::NonNull;
 
 use super::PT_TO_LPX;
 
+/// Maximum rasterization buffer dimension in pixels.
+///
+/// Prevents unbounded memory allocation for extremely large font sizes.
+/// Glyphs requiring more than this many pixels per side are clamped,
+/// which only affects fonts at ~256pt+ at 2x scale.
+const MAX_RENDER_PX: usize = 512;
+
 /// Rasterize a glyph to an alpha bitmap.
 pub fn rasterize(
     ct_font: &CTFont,
@@ -26,11 +33,24 @@ pub fn rasterize(
         ));
     }
 
-    // Compute render buffer size (2x em-square for safety with descenders/accents)
-    let render_size = (size_lpx * scale * 2.0).ceil() as usize;
-    if render_size == 0 {
+    // Compute render buffer size (2x em-square for safety with descenders/accents).
+    // Capped at MAX_RENDER_PX to bound memory allocation for extreme font sizes.
+    let uncapped = (size_lpx * scale * 2.0).ceil() as usize;
+    if uncapped == 0 {
         return Err(TextError::RasterizationFailed("render size is zero".into()));
     }
+    let render_size = if uncapped > MAX_RENDER_PX {
+        log::warn!(
+            "rasterize: render size {} exceeds MAX_RENDER_PX {}; clamping (font size {:.1}px, scale {:.2})",
+            uncapped,
+            MAX_RENDER_PX,
+            size_lpx,
+            scale,
+        );
+        MAX_RENDER_PX
+    } else {
+        uncapped
+    };
 
     let render_w = render_size;
     let render_h = render_size;
@@ -103,12 +123,7 @@ pub fn rasterize(
     };
 
     unsafe {
-        ct_font.draw_glyphs(
-            NonNull::from(&glyph),
-            NonNull::from(&position),
-            1,
-            &ctx,
-        );
+        ct_font.draw_glyphs(NonNull::from(&glyph), NonNull::from(&position), 1, &ctx);
     }
 
     // Get advance width
@@ -155,6 +170,7 @@ pub fn rasterize(
     // bearing_x: distance from pen position to left edge of glyph
     // bearing_y: distance from baseline to top edge (positive up)
     let bearing_x_px = min_x as f32 - (baseline_x as f32);
+    // CG bitmap is top-down (row 0 = top), glyph origin at baseline_y from bottom
     let bearing_y_px = (render_h as f32) - baseline_y as f32 - (min_y as f32);
 
     let bearing_x_lpx = bearing_x_px / scale;
@@ -204,20 +220,61 @@ pub fn get_glyph_bounds(
 }
 
 /// Find tight bounding box of non-zero pixels in buffer.
+///
+/// Uses edge-inward scanning for early termination:
+/// 1. Scan top→down to find `min_y` (stop on first non-zero row).
+/// 2. Scan bottom→up to find `max_y`.
+/// 3. Scan columns only within `min_y..=max_y` to find `min_x` / `max_x`.
+///
+/// This skips the outer zero-fill margin surrounding typical glyphs,
+/// terminating far earlier than a full O(w×h) scan for normal glyph sizes.
 fn find_tight_bounds(buffer: &[u8], width: usize, height: usize) -> (usize, usize, usize, usize) {
-    let mut min_x = width;
-    let mut min_y = height;
-    let mut max_x = 0;
-    let mut max_y = 0;
-
-    for y in 0..height {
+    // --- Step 1: min_y — scan rows top→down, stop on first hit ---
+    let mut min_y = height; // sentinel: height means "not found"
+    'top: for y in 0..height {
         for x in 0..width {
-            let idx = y * width + x;
-            if buffer[idx] >= 1 {
-                min_x = min_x.min(x);
-                min_y = min_y.min(y);
-                max_x = max_x.max(x);
-                max_y = max_y.max(y);
+            if buffer[y * width + x] >= 1 {
+                min_y = y;
+                break 'top;
+            }
+        }
+    }
+
+    // Empty buffer — no non-zero pixels; return sentinels satisfying min > max
+    if min_y == height {
+        return (width, height, 0, 0);
+    }
+
+    // --- Step 2: max_y — scan rows bottom→up, stop on first hit ---
+    let mut max_y = min_y;
+    'bottom: for y in (min_y..height).rev() {
+        for x in 0..width {
+            if buffer[y * width + x] >= 1 {
+                max_y = y;
+                break 'bottom;
+            }
+        }
+    }
+
+    // --- Step 3: min_x / max_x — scan only within vertical bounds ---
+    let mut min_x = width; // sentinel
+    let mut max_x = 0usize;
+    for y in min_y..=max_y {
+        let row = &buffer[y * width..(y + 1) * width];
+        // Narrow left bound: only scan left of current min_x
+        for x in 0..min_x {
+            if row[x] >= 1 {
+                min_x = x;
+                break;
+            }
+        }
+        // Widen right bound: scan right→left, stop at first hit
+        for x in (max_x..width).rev() {
+            if row[x] >= 1 {
+                if x > max_x {
+                    max_x = x;
+                }
+                break;
             }
         }
     }

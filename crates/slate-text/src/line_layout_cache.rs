@@ -123,7 +123,11 @@ impl LineLayoutCache {
         None
     }
 
-    /// Finish the current frame.
+    /// Advance to the next frame, clearing the upcoming frame's cache.
+    ///
+    /// Must not be called concurrently with `get_or_shape` on the same instance.
+    /// The `TextBackend` is `!Send`, so in practice both are called from
+    /// the same thread (the render thread).
     ///
     /// Swaps current/previous frames and clears the new current frame.
     /// Call at the end of each render frame.

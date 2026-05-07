@@ -5,6 +5,7 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::marker::PhantomData;
 
 use crate::deferred_font::DeferredFont;
 use crate::error::TextError;
@@ -14,6 +15,9 @@ use crate::types::{FontDescriptor, FontId, FontStyle, ShapedGlyph, ShapedLine};
 ///
 /// Holds a primary font and an ordered list of fallback fonts. When shaping
 /// text, missing glyphs (glyph_id=0) are re-shaped with fallback fonts.
+///
+/// This type is `!Sync` because `resolution_cache` uses `RefCell` (interior
+/// mutability without synchronization). Use from a single thread only.
 pub struct FontFallbackSystem {
     /// Primary font (always FontId(0)).
     primary: DeferredFont,
@@ -23,6 +27,9 @@ pub struct FontFallbackSystem {
     font_ids: HashMap<String, FontId>,
     /// Caches fallback resolutions: (primary_font_id, codepoint) -> fallback_font_id.
     resolution_cache: RefCell<HashMap<(FontId, u32), FontId>>,
+    /// Opt-out of `Sync`; `RefCell` already makes this `!Sync`, but this
+    /// documents the intent explicitly and is robust against future refactors.
+    _not_sync: PhantomData<*const ()>,
 }
 
 impl FontFallbackSystem {
@@ -72,6 +79,7 @@ impl FontFallbackSystem {
             fallbacks,
             font_ids,
             resolution_cache: RefCell::new(HashMap::new()),
+            _not_sync: PhantomData,
         })
     }
 
@@ -173,6 +181,11 @@ where
     F: FnMut(&DeferredFont, char) -> Option<ShapedGlyph>,
 {
     let chars: Vec<char> = text.chars().collect();
+    debug_assert_eq!(
+        chars.len(),
+        line.glyphs.len(),
+        "fix_missing_glyphs requires 1:1 glyph-to-char mapping (LTR ASCII only)"
+    );
     let mut fixed = 0;
 
     for (i, glyph) in line.glyphs.iter_mut().enumerate() {

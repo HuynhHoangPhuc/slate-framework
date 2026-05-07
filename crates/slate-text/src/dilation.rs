@@ -16,7 +16,7 @@ pub const MAX_DILATION: u8 = 4;
 /// Light text on dark backgrounds appears thinner due to macOS font smoothing.
 /// Dilation compensates by thickening the rasterized glyph.
 ///
-/// Uses REC.601 luminance weights: R=0.30, G=0.59, B=0.11
+/// Uses BT.709 (sRGB) luminance weights: R=0.2126, G=0.7152, B=0.0722
 ///
 /// # Arguments
 ///
@@ -36,7 +36,7 @@ pub const MAX_DILATION: u8 = 4;
 pub fn compute_dilation(rgb: [f32; 3]) -> u8 {
     #[cfg(target_os = "macos")]
     {
-        let luminance = 0.30 * rgb[0] + 0.59 * rgb[1] + 0.11 * rgb[2];
+        let luminance = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
         let dilation = 4.0 * (0.75 - luminance).max(0.0);
         dilation.min(MAX_DILATION as f32).round() as u8
     }

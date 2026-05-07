@@ -3,13 +3,13 @@
 //! This crate provides platform-native text rendering via CoreText (macOS) and
 //! DirectWrite (Windows), feeding glyphs into slate-renderer's GlyphPipeline.
 //!
-//! # Phase 2a Scope
+//! # Phase 2b Capabilities
 //!
-//! - Single-line LTR text
-//! - Single font (bundled DejaVu Sans)
+//! - Single-line and multi-line text with greedy word wrap
+//! - Font fallback chains with system font enumeration
 //! - 4 sub-pixel X variants for glyph positioning
-//!
-//! Multi-line, wrap, BiDi, font fallback, and themed colors are deferred to Phase 2b.
+//! - Font smoothing dilation (macOS) using BT.709 luminance weights
+//! - Line-layout cache with two-frame rolling eviction
 //!
 //! # Unit Convention
 //!

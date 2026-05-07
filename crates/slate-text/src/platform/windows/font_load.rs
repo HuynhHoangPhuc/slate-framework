@@ -39,12 +39,16 @@ pub fn load_font_from_bytes(
     size_lpx: f32,
     scale: f32,
 ) -> Result<DirectWriteFont, TextError> {
+    // Validate byte slice length fits in u32 before passing to DirectWrite FFI.
+    let bytes_len_u32 = u32::try_from(bytes.len())
+        .map_err(|_| TextError::FontFileLoad("Font byte slice exceeds 4 GiB limit".into()))?;
+
     // Create font file from memory using the in-memory loader
     let font_file: IDWriteFontFile = unsafe {
         loader.CreateInMemoryFontFileReference(
             factory,
             bytes.as_ptr() as *const _,
-            bytes.len() as u32,
+            bytes_len_u32,
             None, // no owner object
         )
     }
@@ -96,12 +100,13 @@ pub fn load_font_from_bytes(
     let font_set_builder = unsafe { factory.CreateFontSetBuilder() }
         .map_err(|e| TextError::FontFileLoad(format!("CreateFontSetBuilder: {e}")))?;
 
-    // Re-create font file ref for the builder (font_file was consumed by CreateFontFace)
+    // Re-create font file ref for the builder (font_file was consumed by CreateFontFace).
+    // bytes_len_u32 was validated above; reuse it here.
     let font_file_for_set: IDWriteFontFile = unsafe {
         loader.CreateInMemoryFontFileReference(
             factory,
             bytes.as_ptr() as *const _,
-            bytes.len() as u32,
+            bytes_len_u32,
             None,
         )
     }

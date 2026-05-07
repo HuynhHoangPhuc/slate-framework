@@ -64,7 +64,9 @@ impl DirectWriteBackend {
 
 impl Drop for DirectWriteBackend {
     fn drop(&mut self) {
-        let _ = unsafe { self.factory.UnregisterFontFileLoader(&self.loader) };
+        if let Err(e) = unsafe { self.factory.UnregisterFontFileLoader(&self.loader) } {
+            log::warn!("DirectWrite font loader unregister failed: {e}");
+        }
     }
 }
 
@@ -134,12 +136,14 @@ impl TextBackend for DirectWriteBackend {
         glyph_id: u32,
         variant: u8,
     ) -> Result<GlyphBitmap, TextError> {
+        let glyph_id_u16 = u16::try_from(glyph_id)
+            .map_err(|_| TextError::GlyphNotFound { glyph_id })?;
         rasterize::rasterize(
             &self.factory,
             &font.font_face,
             font.em_size_dip,
             font.pixels_per_dip,
-            glyph_id as u16,
+            glyph_id_u16,
             variant,
         )
     }
@@ -149,11 +153,13 @@ impl TextBackend for DirectWriteBackend {
         font: &Self::Font,
         glyph_id: u32,
     ) -> Result<GlyphBounds, TextError> {
+        let glyph_id_u16 = u16::try_from(glyph_id)
+            .map_err(|_| TextError::GlyphNotFound { glyph_id })?;
         rasterize::get_glyph_bounds(
             &self.factory,
             &font.font_face,
             font.em_size_dip,
-            glyph_id as u16,
+            glyph_id_u16,
         )
     }
 

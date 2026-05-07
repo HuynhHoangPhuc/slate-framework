@@ -6,7 +6,7 @@
 
 use crate::backend::{Font, TextBackend};
 use crate::error::TextError;
-use crate::types::{ShapedLine, TextAlignment};
+use crate::types::{ShapedGlyph, ShapedLine, TextAlignment};
 
 /// Wrap text into multiple lines using greedy first-fit algorithm.
 ///
@@ -20,6 +20,14 @@ use crate::types::{ShapedLine, TextAlignment};
 ///   character-level breaking (may overflow visually).
 /// - Consecutive spaces and newlines are collapsed (`split_whitespace`).
 /// - Empty input returns an empty `Vec`.
+///
+/// # Performance
+///
+/// Each word is shaped exactly once. Accumulated glyphs are joined with a
+/// space-advance offset rather than re-shaping the full line string. As a
+/// result cross-word kerning pairs that span the space boundary are not
+/// captured — this is an acceptable tradeoff for O(W) vs O(W+L) shaping
+/// calls (W = words, L = lines).
 ///
 /// # Arguments
 ///
@@ -41,58 +49,110 @@ pub fn greedy_wrap<B: TextBackend>(
     let metrics = font.metrics();
     let line_height = metrics.ascent_lpx - metrics.descent_lpx + metrics.line_gap_lpx;
 
-    // Shape a space to get space width
+    // Shape a space to get space width (one call, reused every word boundary)
     let space_width = backend
         .shape_line(font, " ")
         .map(|s| s.width_lpx)
         .unwrap_or(0.0);
 
-    let mut lines = Vec::new();
-    let mut current_words: Vec<&str> = Vec::new();
+    let mut lines: Vec<ShapedLine> = Vec::new();
+    // Accumulated glyphs for the current in-progress line
+    let mut current_glyphs: Vec<ShapedGlyph> = Vec::new();
     let mut current_width = 0.0f32;
+    // Metrics from the first word on the current line (used for ascent/descent)
+    let mut current_ascent = metrics.ascent_lpx;
+    let mut current_descent = metrics.descent_lpx;
     let mut y_offset = 0.0f32;
 
     for word in text.split_whitespace() {
+        // Shape each word exactly once
         let shaped_word = backend.shape_line(font, word)?;
         let word_width = shaped_word.width_lpx;
 
         // Check if adding this word would exceed max_width
-        let width_with_word = if current_words.is_empty() {
+        let width_with_word = if current_glyphs.is_empty() {
             word_width
         } else {
             current_width + space_width + word_width
         };
 
-        if width_with_word > max_width_lpx && !current_words.is_empty() {
-            // Wrap: finalize current line
-            let line_text = current_words.join(" ");
-            let mut line = backend.shape_line(font, &line_text)?;
-            line.y_offset_lpx = y_offset;
+        if width_with_word > max_width_lpx && !current_glyphs.is_empty() {
+            // Wrap: finalize current line from accumulated glyphs
+            let line = build_line_from_glyphs(
+                current_glyphs,
+                current_width,
+                current_ascent,
+                current_descent,
+                y_offset,
+            );
             lines.push(line);
 
             y_offset += line_height;
-            current_words.clear();
+            current_glyphs = Vec::new();
             current_width = 0.0;
         }
 
-        // Add word to current line
-        if current_words.is_empty() {
+        // Append word glyphs to current line, adjusting x offsets
+        let pen_x = if current_glyphs.is_empty() {
+            0.0
+        } else {
+            current_width + space_width
+        };
+
+        // First word on a fresh line: capture its metrics for ascent/descent
+        if pen_x == 0.0 {
+            current_ascent = shaped_word.ascent_lpx;
+            current_descent = shaped_word.descent_lpx;
+        }
+
+        for g in &shaped_word.glyphs {
+            let mut adjusted = *g;
+            adjusted.x_offset_lpx += pen_x;
+            current_glyphs.push(adjusted);
+        }
+
+        // Advance pen
+        if pen_x == 0.0 {
             current_width = word_width;
         } else {
             current_width += space_width + word_width;
         }
-        current_words.push(word);
     }
 
     // Finalize last line if not empty
-    if !current_words.is_empty() {
-        let line_text = current_words.join(" ");
-        let mut line = backend.shape_line(font, &line_text)?;
-        line.y_offset_lpx = y_offset;
+    if !current_glyphs.is_empty() {
+        let line = build_line_from_glyphs(
+            current_glyphs,
+            current_width,
+            current_ascent,
+            current_descent,
+            y_offset,
+        );
         lines.push(line);
     }
 
     Ok(lines)
+}
+
+/// Build a `ShapedLine` from pre-accumulated glyphs.
+///
+/// Glyphs must already have their `x_offset_lpx` adjusted to their pen
+/// positions within the line. `width_lpx` should be the total advance width
+/// (sum of per-glyph advances including inter-word space advances).
+fn build_line_from_glyphs(
+    glyphs: Vec<ShapedGlyph>,
+    width_lpx: f32,
+    ascent_lpx: f32,
+    descent_lpx: f32,
+    y_offset_lpx: f32,
+) -> ShapedLine {
+    ShapedLine {
+        glyphs,
+        width_lpx,
+        ascent_lpx,
+        descent_lpx,
+        y_offset_lpx,
+    }
 }
 
 /// Compute horizontal offset for text alignment.
@@ -113,8 +173,11 @@ pub fn compute_alignment_offset(
 
 /// Truncate a shaped line with ellipsis if it exceeds max width.
 ///
-/// Uses binary search to find the optimal cut point, then appends "..."
-/// glyphs. Returns the original line unchanged if it fits.
+/// Uses cumulative advance to find the optimal cut point, then appends "..."
+/// glyphs. Ellipsis glyphs are appended with their original x_offset_lpx
+/// values unchanged — they are treated as a contiguous run that follows the
+/// truncated text in the glyph stream. Returns the original line unchanged
+/// if it fits.
 pub fn truncate_with_ellipsis<B: TextBackend>(
     backend: &B,
     font: &B::Font,
@@ -153,14 +216,15 @@ pub fn truncate_with_ellipsis<B: TextBackend>(
     }
 
     // Build truncated glyphs + ellipsis
+    // Ellipsis glyphs are appended as-is: their own x_offset_lpx values are
+    // relative to the pen, which naturally follows the last truncated glyph's
+    // advance. We do NOT shift them by truncated_width — that would double-
+    // count the offset for renderers that sum pen + x_offset_lpx.
     let mut truncated_glyphs = shaped.glyphs[..cut_idx].to_vec();
     let truncated_width = cumulative;
 
-    // Adjust ellipsis glyph positions (they start at 0, shift by truncated width)
     for eg in &ellipsis.glyphs {
-        let mut adjusted = *eg;
-        adjusted.x_offset_lpx += truncated_width;
-        truncated_glyphs.push(adjusted);
+        truncated_glyphs.push(*eg);
     }
 
     Ok(ShapedLine {
