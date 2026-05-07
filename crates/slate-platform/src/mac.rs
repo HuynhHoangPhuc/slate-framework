@@ -150,6 +150,12 @@ define_class!(
         #[unsafe(method_id(makeBackingLayer))]
         fn make_backing_layer(&self) -> Retained<objc2_quartz_core::CALayer> {
             let metal_layer = CAMetalLayer::new();
+            // Sync Metal present with AppKit compositor — eliminates resize tearing.
+            metal_layer.setPresentsWithTransaction(true);
+            // Redraw when bounds change during live resize.
+            metal_layer.setNeedsDisplayOnBoundsChange(true);
+            // Never block waiting for drawable — prevents UI stalls during resize.
+            metal_layer.setAllowsNextDrawableTimeout(false);
             Retained::into_super(metal_layer)
         }
 
