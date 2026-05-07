@@ -51,7 +51,8 @@ pub fn create_font_from_bytes(
     let ct_size_pt = (size_lpx as f64) * LPX_TO_PT;
 
     // Create the font at the specified size
-    let ct_font = unsafe { CTFont::with_font_descriptor(&descriptor, ct_size_pt as CGFloat, ptr::null()) };
+    let ct_font =
+        unsafe { CTFont::with_font_descriptor(&descriptor, ct_size_pt as CGFloat, ptr::null()) };
 
     Ok((ct_font, data))
 }

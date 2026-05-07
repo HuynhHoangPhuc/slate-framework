@@ -283,6 +283,29 @@ impl Scene {
     #[allow(dead_code)]
     pub(crate) fn finish(&mut self) {
         self.cur_layer_open = false;
+
+        #[cfg(debug_assertions)]
+        {
+            let r = self.rects.len() as u32;
+            let s = self.shadows.len() as u32;
+            let i = self.images.len() as u32;
+            let g = self.glyphs.len() as u32;
+            let mut prev = (0u32, 0u32, 0u32, 0u32);
+            for (n, l) in self.layers.iter().enumerate() {
+                debug_assert!(
+                    l.rects.start >= prev.0
+                        && l.rects.end <= r
+                        && l.shadows.start >= prev.1
+                        && l.shadows.end <= s
+                        && l.images.start >= prev.2
+                        && l.images.end <= i
+                        && l.glyphs.start >= prev.3
+                        && l.glyphs.end <= g,
+                    "Layer {n} range out of bounds: {l:?} (vec lens rects={r} shadows={s} images={i} glyphs={g})"
+                );
+                prev = (l.rects.end, l.shadows.end, l.images.end, l.glyphs.end);
+            }
+        }
     }
 
     fn ensure_open_layer(&mut self) {

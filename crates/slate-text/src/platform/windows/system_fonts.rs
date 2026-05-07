@@ -105,7 +105,9 @@ pub fn enumerate_system_fonts(factory: &IDWriteFactory5) -> Result<Vec<FontDescr
 /// 4. Get reference key from the file and call GetFilePathFromKey.
 ///
 /// Returns None for remote/cloud fonts that use a non-local file loader.
-fn extract_font_path(font: &windows::Win32::Graphics::DirectWrite::IDWriteFont) -> windows::core::Result<Option<PathBuf>> {
+fn extract_font_path(
+    font: &windows::Win32::Graphics::DirectWrite::IDWriteFont,
+) -> windows::core::Result<Option<PathBuf>> {
     // Step 1: Create font face
     let face: IDWriteFontFace = unsafe { font.CreateFontFace()? };
 
@@ -142,9 +144,7 @@ fn extract_font_path(font: &windows::Win32::Graphics::DirectWrite::IDWriteFont) 
     unsafe { font_file.GetReferenceKey(&mut key_ptr, &mut key_size)? };
 
     // GetFilePathLengthFromKey returns char count (without null terminator)
-    let path_len = unsafe {
-        local_loader.GetFilePathLengthFromKey(key_ptr as *const _, key_size)?
-    };
+    let path_len = unsafe { local_loader.GetFilePathLengthFromKey(key_ptr as *const _, key_size)? };
 
     // Allocate buffer with room for null terminator
     let mut path_buf = vec![0u16; path_len as usize + 1];
@@ -153,12 +153,12 @@ fn extract_font_path(font: &windows::Win32::Graphics::DirectWrite::IDWriteFont) 
     }
 
     // Trim null terminator and convert to PathBuf
-    let end = path_buf.iter().position(|&c| c == 0).unwrap_or(path_buf.len());
+    let end = path_buf
+        .iter()
+        .position(|&c| c == 0)
+        .unwrap_or(path_buf.len());
     let path_str = String::from_utf16(&path_buf[..end]).map_err(|_| {
-        windows::core::Error::new(
-            windows::core::HRESULT(-1i32),
-            "Invalid UTF-16 in font path",
-        )
+        windows::core::Error::new(windows::core::HRESULT(-1i32), "Invalid UTF-16 in font path")
     })?;
 
     Ok(Some(PathBuf::from(path_str)))

@@ -13,9 +13,8 @@ use std::ffi::c_void;
 pub fn enumerate_system_fonts() -> Result<Vec<FontDescriptor>, TextError> {
     let collection = unsafe { CTFontCollection::from_available_fonts(None) };
 
-    let descriptors = unsafe { collection.matching_font_descriptors() }.ok_or_else(|| {
-        TextError::SystemFontEnumeration("Failed to get font descriptors".into())
-    })?;
+    let descriptors = unsafe { collection.matching_font_descriptors() }
+        .ok_or_else(|| TextError::SystemFontEnumeration("Failed to get font descriptors".into()))?;
 
     let mut result = Vec::new();
     let count = descriptors.len();

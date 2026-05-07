@@ -126,8 +126,8 @@ impl TextBackend for CoreTextBackend {
         glyph_id: u32,
         variant: u8,
     ) -> Result<GlyphBitmap, TextError> {
-        let glyph_id_u16 = u16::try_from(glyph_id)
-            .map_err(|_| TextError::GlyphNotFound { glyph_id })?;
+        let glyph_id_u16 =
+            u16::try_from(glyph_id).map_err(|_| TextError::GlyphNotFound { glyph_id })?;
         rasterize::rasterize(
             &font.ct_font,
             glyph_id_u16,
@@ -142,8 +142,8 @@ impl TextBackend for CoreTextBackend {
         font: &Self::Font,
         glyph_id: u32,
     ) -> Result<GlyphBounds, TextError> {
-        let glyph_id_u16 = u16::try_from(glyph_id)
-            .map_err(|_| TextError::GlyphNotFound { glyph_id })?;
+        let glyph_id_u16 =
+            u16::try_from(glyph_id).map_err(|_| TextError::GlyphNotFound { glyph_id })?;
         rasterize::get_glyph_bounds(&font.ct_font, glyph_id_u16, font.scale)
     }
 

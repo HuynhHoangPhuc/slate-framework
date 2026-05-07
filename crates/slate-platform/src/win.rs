@@ -216,9 +216,7 @@ impl WinWindowInner {
                 }
                 LRESULT(0)
             }
-            WM_TIMER if _wparam.0 == SIZE_MOVE_TIMER_ID
-                && IN_SIZE_MOVE.with(|f| f.get()) =>
-            {
+            WM_TIMER if _wparam.0 == SIZE_MOVE_TIMER_ID && IN_SIZE_MOVE.with(|f| f.get()) => {
                 // During the modal drag loop Windows may not flush WM_PAINT
                 // frequently enough on its own. The timer guarantees a redraw
                 // cadence of USER_TIMER_MINIMUM (~10ms / ≤100Hz) so the rendered
@@ -248,9 +246,8 @@ impl WinWindowInner {
                 IN_SIZE_MOVE.with(|f| f.set(true));
                 // SAFETY: hwnd is valid; USER_TIMER_MINIMUM (10ms) is the
                 // supported low-bound interval. Windows clamps anything smaller.
-                let id = unsafe {
-                    SetTimer(Some(hwnd), SIZE_MOVE_TIMER_ID, USER_TIMER_MINIMUM, None)
-                };
+                let id =
+                    unsafe { SetTimer(Some(hwnd), SIZE_MOVE_TIMER_ID, USER_TIMER_MINIMUM, None) };
                 if id == 0 {
                     log::error!(
                         "SetTimer failed for size-move loop; live-resize rendering disabled this drag"
@@ -360,6 +357,10 @@ impl WinWindow {
         // SAFETY: All arguments are valid Win32 values; CLASS_NAME was registered
         // in WinPlatform::new. The lpCreateParams raw pointer is valid for the
         // duration of CreateWindowExW (the user's Arc lives on the stack here).
+        //
+        // WS_EX_NOREDIRECTIONBITMAP: DComp visual owns presentation directly, bypassing
+        // DWM's redirection bitmap for smooth drag-resize. Q4 vestigiality test pending
+        // on Windows hardware to confirm if still load-bearing post-DComp integration.
         let hwnd = unsafe {
             CreateWindowExW(
                 WS_EX_NOREDIRECTIONBITMAP,

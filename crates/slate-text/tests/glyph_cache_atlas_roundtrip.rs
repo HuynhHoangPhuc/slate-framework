@@ -38,12 +38,12 @@ fn cache_roundtrip_with_atlas() {
             let cached = cache
                 .get(fh, g.glyph_id, v)
                 .expect("glyph should be cached after immediate upload");
-            assert_eq!(cached.metrics.width, g.glyph_id.min(16).max(1));
+            assert_eq!(cached.metrics.width, g.glyph_id.clamp(1, 16));
             assert_eq!(cached.metrics.height, v as u32 + 1);
             assert_eq!(cached.metrics.bearing_x_lpx, 1.0);
             assert_eq!(
                 cached.metrics.advance_x_lpx,
-                (g.glyph_id.min(16).max(1) as f32) + 2.0
+                (g.glyph_id.clamp(1, 16) as f32) + 2.0
             );
         }
     }

@@ -1,6 +1,7 @@
 //! Shared test harness for slate-text visual regression testing.
 
 #![allow(dead_code)]
+#![allow(unused_imports)]
 
 pub mod golden;
 pub mod headless;

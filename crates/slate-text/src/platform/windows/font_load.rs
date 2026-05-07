@@ -8,10 +8,10 @@ use log::debug;
 use windows::Win32::Graphics::DirectWrite::{
     DWRITE_FONT_FACE_TYPE, DWRITE_FONT_FILE_TYPE, DWRITE_FONT_SIMULATIONS_NONE,
     DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_WEIGHT_REGULAR,
-    IDWriteFactory5, IDWriteFontFace, IDWriteFontFile, IDWriteFontCollection1,
+    IDWriteFactory5, IDWriteFontCollection1, IDWriteFontFace, IDWriteFontFile,
     IDWriteInMemoryFontFileLoader, IDWriteTextFormat,
 };
-use windows::core::{Interface, HSTRING};
+use windows::core::{HSTRING, Interface};
 
 use super::DirectWriteFont;
 
@@ -118,9 +118,10 @@ pub fn load_font_from_bytes(
     let font_set = unsafe { font_set_builder.CreateFontSet() }
         .map_err(|e| TextError::FontFileLoad(format!("CreateFontSet: {e}")))?;
 
-    let font_collection: IDWriteFontCollection1 =
-        unsafe { factory.CreateFontCollectionFromFontSet(&font_set) }
-            .map_err(|e| TextError::FontFileLoad(format!("CreateFontCollectionFromFontSet: {e}")))?;
+    let font_collection: IDWriteFontCollection1 = unsafe {
+        factory.CreateFontCollectionFromFontSet(&font_set)
+    }
+    .map_err(|e| TextError::FontFileLoad(format!("CreateFontCollectionFromFontSet: {e}")))?;
 
     // Create IDWriteTextFormat with our custom collection + real family name
     let text_format: IDWriteTextFormat = unsafe {

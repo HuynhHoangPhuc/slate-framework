@@ -245,20 +245,26 @@ mod tests {
     #[test]
     fn whitespace_detection() {
         assert!(GlyphBounds::ZERO.is_whitespace());
-        assert!(GlyphBounds {
-            width: 0,
-            height: 10
-        }
-        .is_whitespace());
-        assert!(GlyphBounds {
-            width: 10,
-            height: 0
-        }
-        .is_whitespace());
-        assert!(!GlyphBounds {
-            width: 10,
-            height: 10
-        }
-        .is_whitespace());
+        assert!(
+            GlyphBounds {
+                width: 0,
+                height: 10
+            }
+            .is_whitespace()
+        );
+        assert!(
+            GlyphBounds {
+                width: 10,
+                height: 0
+            }
+            .is_whitespace()
+        );
+        assert!(
+            !GlyphBounds {
+                width: 10,
+                height: 10
+            }
+            .is_whitespace()
+        );
     }
 }

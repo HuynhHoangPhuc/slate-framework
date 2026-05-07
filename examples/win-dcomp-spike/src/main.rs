@@ -1,6 +1,6 @@
 #[cfg(not(target_os = "windows"))]
 fn main() {
-    compile_error!("win-dcomp-spike is Windows-only");
+    eprintln!("win-dcomp-spike is Windows-only; this build target produced an empty stub.");
 }
 
 #[cfg(target_os = "windows")]
@@ -23,18 +23,18 @@ mod d3d12_spike {
     use std::cell::RefCell;
     use std::mem::{size_of, zeroed};
 
-    use windows::core::{w, Interface, PCWSTR};
     use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
     use windows::Win32::Graphics::Direct3D::D3D_FEATURE_LEVEL_11_0;
     use windows::Win32::Graphics::Direct3D12::{
-        D3D12CreateDevice, ID3D12CommandAllocator, ID3D12CommandQueue, ID3D12DescriptorHeap,
-        ID3D12Device, ID3D12Fence, ID3D12GraphicsCommandList, ID3D12Resource,
         D3D12_COMMAND_LIST_TYPE_DIRECT, D3D12_COMMAND_QUEUE_DESC, D3D12_CPU_DESCRIPTOR_HANDLE,
         D3D12_DESCRIPTOR_HEAP_DESC, D3D12_DESCRIPTOR_HEAP_TYPE_RTV, D3D12_FENCE_FLAG_NONE,
         D3D12_RESOURCE_BARRIER, D3D12_RESOURCE_BARRIER_0, D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
         D3D12_RESOURCE_BARRIER_FLAG_NONE, D3D12_RESOURCE_BARRIER_TYPE_TRANSITION,
-        D3D12_RESOURCE_STATES, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_PRESENT,
-        D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_TRANSITION_BARRIER,
+        D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_PRESENT,
+        D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATES,
+        D3D12_RESOURCE_TRANSITION_BARRIER, D3D12CreateDevice, ID3D12CommandAllocator,
+        ID3D12CommandQueue, ID3D12DescriptorHeap, ID3D12Device, ID3D12Fence,
+        ID3D12GraphicsCommandList, ID3D12Resource,
     };
     use windows::Win32::Graphics::DirectComposition::{
         DCompositionCreateDevice, IDCompositionDevice, IDCompositionTarget, IDCompositionVisual,
@@ -43,24 +43,25 @@ mod d3d12_spike {
         DXGI_ALPHA_MODE_PREMULTIPLIED, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC,
     };
     use windows::Win32::Graphics::Dxgi::{
-        CreateDXGIFactory2, IDXGIFactory6, IDXGISwapChain1, IDXGISwapChain3,
-        DXGI_CREATE_FACTORY_FLAGS, DXGI_PRESENT, DXGI_SCALING_STRETCH, DXGI_SWAP_CHAIN_DESC1,
-        DXGI_SWAP_CHAIN_FLAG, DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL, DXGI_USAGE_RENDER_TARGET_OUTPUT,
+        CreateDXGIFactory2, DXGI_CREATE_FACTORY_FLAGS, DXGI_PRESENT, DXGI_SCALING_STRETCH,
+        DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_CHAIN_FLAG, DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
+        DXGI_USAGE_RENDER_TARGET_OUTPUT, IDXGIFactory6, IDXGISwapChain1, IDXGISwapChain3,
     };
-    use windows::Win32::Graphics::Gdi::{ValidateRect, HBRUSH};
+    use windows::Win32::Graphics::Gdi::{HBRUSH, ValidateRect};
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-    use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject, INFINITE};
+    use windows::Win32::System::Threading::{CreateEventW, INFINITE, WaitForSingleObject};
     use windows::Win32::UI::HiDpi::{
         DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DispatchMessageW,
         GetClientRect, GetMessageW, HCURSOR, HICON, IDC_ARROW, KillTimer, LoadCursorW, MSG,
-        PostQuitMessage, RegisterClassExW, SIZE_MINIMIZED, SWP_NOCOPYBITS,
-        SetTimer, TranslateMessage, USER_TIMER_MINIMUM, WINDOWPOS, WM_DESTROY, WM_ENTERSIZEMOVE,
+        PostQuitMessage, RegisterClassExW, SIZE_MINIMIZED, SWP_NOCOPYBITS, SetTimer,
+        TranslateMessage, USER_TIMER_MINIMUM, WINDOWPOS, WM_DESTROY, WM_ENTERSIZEMOVE,
         WM_ERASEBKGND, WM_EXITSIZEMOVE, WM_PAINT, WM_SIZE, WM_TIMER, WM_WINDOWPOSCHANGING,
         WNDCLASSEXW, WS_EX_NOREDIRECTIONBITMAP, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
     };
+    use windows::core::{Interface, PCWSTR, w};
 
     const BUFFER_COUNT: u32 = 3;
     const SIZE_MOVE_TIMER_ID: usize = 1;
@@ -117,8 +118,8 @@ mod d3d12_spike {
                 list
             };
 
-            let factory: IDXGIFactory6 =
-                CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0)).expect("CreateDXGIFactory2 failed");
+            let factory: IDXGIFactory6 = CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0))
+                .expect("CreateDXGIFactory2 failed");
 
             let swap_chain_desc = DXGI_SWAP_CHAIN_DESC1 {
                 Width: width,
@@ -206,7 +207,8 @@ mod d3d12_spike {
         unsafe fn acquire_back_buffers(&mut self) {
             let rtv_start = self.rtv_heap.GetCPUDescriptorHandleForHeapStart();
             for i in 0..BUFFER_COUNT {
-                let buffer: ID3D12Resource = self.swap_chain.GetBuffer(i).expect("GetBuffer failed");
+                let buffer: ID3D12Resource =
+                    self.swap_chain.GetBuffer(i).expect("GetBuffer failed");
                 let rtv_handle = D3D12_CPU_DESCRIPTOR_HANDLE {
                     ptr: rtv_start.ptr + (i * self.rtv_descriptor_size) as usize,
                 };
@@ -282,8 +284,11 @@ mod d3d12_spike {
             };
             self.is_first_use[back_buffer_idx] = false;
 
-            let barrier_to_rt =
-                transition_barrier(back_buffer, before_state, D3D12_RESOURCE_STATE_RENDER_TARGET);
+            let barrier_to_rt = transition_barrier(
+                back_buffer,
+                before_state,
+                D3D12_RESOURCE_STATE_RENDER_TARGET,
+            );
             self.command_list.ResourceBarrier(&[barrier_to_rt]);
 
             let rtv_start = self.rtv_heap.GetCPUDescriptorHandleForHeapStart();
@@ -300,7 +305,9 @@ mod d3d12_spike {
             );
             self.command_list.ResourceBarrier(&[barrier_to_present]);
 
-            self.command_list.Close().expect("Close command list failed");
+            self.command_list
+                .Close()
+                .expect("Close command list failed");
 
             let command_lists = [Some(self.command_list.cast().unwrap())];
             self.command_queue.ExecuteCommandLists(&command_lists);
@@ -390,8 +397,9 @@ mod d3d12_spike {
         unsafe {
             let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
-            let hinstance: HINSTANCE =
-                GetModuleHandleW(None).expect("GetModuleHandleW failed").into();
+            let hinstance: HINSTANCE = GetModuleHandleW(None)
+                .expect("GetModuleHandleW failed")
+                .into();
             let class_name = w!("WinDCompSpikeClass");
 
             let wc = WNDCLASSEXW {
@@ -466,15 +474,15 @@ mod wgpu_spike {
     use std::mem::{size_of, zeroed};
 
     use wgpu::hal::api::Dx12;
-    use windows::core::{w, Interface, PCWSTR};
     use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
     use windows::Win32::Graphics::Direct3D12::{
-        ID3D12CommandAllocator, ID3D12CommandQueue, ID3D12Fence, ID3D12GraphicsCommandList,
-        ID3D12Resource, D3D12_COMMAND_LIST_TYPE_DIRECT, D3D12_FENCE_FLAG_NONE,
-        D3D12_RESOURCE_BARRIER, D3D12_RESOURCE_BARRIER_0, D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
+        D3D12_COMMAND_LIST_TYPE_DIRECT, D3D12_FENCE_FLAG_NONE, D3D12_RESOURCE_BARRIER,
+        D3D12_RESOURCE_BARRIER_0, D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
         D3D12_RESOURCE_BARRIER_FLAG_NONE, D3D12_RESOURCE_BARRIER_TYPE_TRANSITION,
-        D3D12_RESOURCE_STATES, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_PRESENT,
-        D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_TRANSITION_BARRIER,
+        D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_PRESENT,
+        D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATES,
+        D3D12_RESOURCE_TRANSITION_BARRIER, ID3D12CommandAllocator, ID3D12CommandQueue, ID3D12Fence,
+        ID3D12GraphicsCommandList, ID3D12Resource,
     };
     use windows::Win32::Graphics::DirectComposition::{
         DCompositionCreateDevice, IDCompositionDevice, IDCompositionTarget, IDCompositionVisual,
@@ -483,24 +491,25 @@ mod wgpu_spike {
         DXGI_ALPHA_MODE_PREMULTIPLIED, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC,
     };
     use windows::Win32::Graphics::Dxgi::{
-        CreateDXGIFactory2, IDXGIFactory2, IDXGISwapChain1, IDXGISwapChain3,
-        DXGI_CREATE_FACTORY_FLAGS, DXGI_PRESENT, DXGI_SCALING_STRETCH, DXGI_SWAP_CHAIN_DESC1,
-        DXGI_SWAP_CHAIN_FLAG, DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL, DXGI_USAGE_RENDER_TARGET_OUTPUT,
+        CreateDXGIFactory2, DXGI_CREATE_FACTORY_FLAGS, DXGI_PRESENT, DXGI_SCALING_STRETCH,
+        DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_CHAIN_FLAG, DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
+        DXGI_USAGE_RENDER_TARGET_OUTPUT, IDXGIFactory2, IDXGISwapChain1, IDXGISwapChain3,
     };
-    use windows::Win32::Graphics::Gdi::{ValidateRect, HBRUSH};
+    use windows::Win32::Graphics::Gdi::{HBRUSH, ValidateRect};
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-    use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject, INFINITE};
+    use windows::Win32::System::Threading::{CreateEventW, INFINITE, WaitForSingleObject};
     use windows::Win32::UI::HiDpi::{
         DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DispatchMessageW,
         GetClientRect, GetMessageW, HCURSOR, HICON, IDC_ARROW, KillTimer, LoadCursorW, MSG,
-        PostQuitMessage, RegisterClassExW, SIZE_MINIMIZED, SWP_NOCOPYBITS,
-        SetTimer, TranslateMessage, USER_TIMER_MINIMUM, WINDOWPOS, WM_DESTROY, WM_ENTERSIZEMOVE,
+        PostQuitMessage, RegisterClassExW, SIZE_MINIMIZED, SWP_NOCOPYBITS, SetTimer,
+        TranslateMessage, USER_TIMER_MINIMUM, WINDOWPOS, WM_DESTROY, WM_ENTERSIZEMOVE,
         WM_ERASEBKGND, WM_EXITSIZEMOVE, WM_PAINT, WM_SIZE, WM_TIMER, WM_WINDOWPOSCHANGING,
         WNDCLASSEXW, WS_EX_NOREDIRECTIONBITMAP, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
     };
+    use windows::core::{Interface, PCWSTR, w};
 
     const BUFFER_COUNT: u32 = 3;
     const SIZE_MOVE_TIMER_ID: usize = 1;
@@ -545,10 +554,9 @@ mod wgpu_spike {
                 }))
                 .expect("No adapter found");
 
-            let (wgpu_device, wgpu_queue) = pollster::block_on(adapter.request_device(
-                &wgpu::DeviceDescriptor::default(),
-            ))
-            .expect("Failed to create device");
+            let (wgpu_device, wgpu_queue) =
+                pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
+                    .expect("Failed to create device");
 
             let (raw_device, raw_queue) = unsafe {
                 let hal_device_guard = wgpu_device.as_hal::<Dx12>().expect("dx12 device");
@@ -557,8 +565,9 @@ mod wgpu_spike {
                 (raw_device, raw_queue)
             };
 
-            let raw_factory: IDXGIFactory2 =
-                unsafe { CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0)).expect("CreateDXGIFactory2 failed") };
+            let raw_factory: IDXGIFactory2 = unsafe {
+                CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0)).expect("CreateDXGIFactory2 failed")
+            };
 
             let barrier_allocator: ID3D12CommandAllocator = unsafe {
                 raw_device
@@ -568,12 +577,7 @@ mod wgpu_spike {
 
             let barrier_list: ID3D12GraphicsCommandList = unsafe {
                 let list: ID3D12GraphicsCommandList = raw_device
-                    .CreateCommandList(
-                        0,
-                        D3D12_COMMAND_LIST_TYPE_DIRECT,
-                        &barrier_allocator,
-                        None,
-                    )
+                    .CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, &barrier_allocator, None)
                     .expect("CreateCommandList failed");
                 list.Close().expect("Close command list failed");
                 list
@@ -687,8 +691,10 @@ mod wgpu_spike {
                     view_formats: &[],
                 };
 
-                let wgpu_tex =
-                    unsafe { self.wgpu_device.create_texture_from_hal::<Dx12>(hal_tex, &desc) };
+                let wgpu_tex = unsafe {
+                    self.wgpu_device
+                        .create_texture_from_hal::<Dx12>(hal_tex, &desc)
+                };
 
                 self.back_buffers[i as usize] = Some(buffer);
                 self.wgpu_textures[i as usize] = Some(wgpu_tex);
@@ -819,11 +825,11 @@ mod wgpu_spike {
                 .expect("wgpu texture missing");
             let view = wgpu_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
-            let mut encoder = self
-                .wgpu_device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("render-encoder"),
-                });
+            let mut encoder =
+                self.wgpu_device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("render-encoder"),
+                    });
 
             {
                 let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -953,8 +959,9 @@ mod wgpu_spike {
         unsafe {
             let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
-            let hinstance: HINSTANCE =
-                GetModuleHandleW(None).expect("GetModuleHandleW failed").into();
+            let hinstance: HINSTANCE = GetModuleHandleW(None)
+                .expect("GetModuleHandleW failed")
+                .into();
             let class_name = w!("WinDCompWgpuSpikeClass");
 
             let wc = WNDCLASSEXW {

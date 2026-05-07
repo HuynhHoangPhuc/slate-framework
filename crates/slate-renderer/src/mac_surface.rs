@@ -11,8 +11,10 @@ use wgpu::{
     TextureFormat, TextureUsages, TextureViewDescriptor,
 };
 
-use crate::surface_target::{AcquiredFrame, AcquiredFrameInner, CompositionTarget, FrameAcquireError};
 use crate::RendererError;
+use crate::surface_target::{
+    AcquiredFrame, AcquiredFrameInner, CompositionTarget, FrameAcquireError,
+};
 
 pub(crate) struct MacSurface {
     surface: Surface<'static>,

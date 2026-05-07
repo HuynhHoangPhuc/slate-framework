@@ -98,9 +98,8 @@ pub fn shape_line(
     }
 
     // Create C string from text
-    let c_str = std::ffi::CString::new(text).map_err(|_| {
-        TextError::ShapingFailed("Text contains null bytes".into())
-    })?;
+    let c_str = std::ffi::CString::new(text)
+        .map_err(|_| TextError::ShapingFailed("Text contains null bytes".into()))?;
 
     // Safety: all CF/CT calls follow Create/Copy ownership rules; owned objects
     // are wrapped in ScopedCf for deterministic release.
@@ -147,7 +146,9 @@ pub fn shape_line(
         drop(cf_string);
 
         if attr_string.is_null() {
-            return Err(TextError::ShapingFailed("Failed to create CFAttributedString".into()));
+            return Err(TextError::ShapingFailed(
+                "Failed to create CFAttributedString".into(),
+            ));
         }
 
         // Create CTLine

@@ -11,16 +11,14 @@ use raw_window_handle::RawWindowHandle;
 use slate_platform::Window;
 use wgpu::hal::api::Dx12;
 use wgpu::{Device, TextureFormat, TextureViewDescriptor};
-use windows::core::Interface;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Direct3D12::{
-    ID3D12CommandAllocator, ID3D12CommandQueue, ID3D12Device, ID3D12Fence,
-    ID3D12GraphicsCommandList, ID3D12Resource, D3D12_COMMAND_LIST_TYPE_DIRECT,
-    D3D12_FENCE_FLAG_NONE, D3D12_RESOURCE_BARRIER, D3D12_RESOURCE_BARRIER_0,
-    D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, D3D12_RESOURCE_BARRIER_FLAG_NONE,
-    D3D12_RESOURCE_BARRIER_TYPE_TRANSITION, D3D12_RESOURCE_STATES, D3D12_RESOURCE_STATE_COMMON,
-    D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET,
-    D3D12_RESOURCE_TRANSITION_BARRIER,
+    D3D12_COMMAND_LIST_TYPE_DIRECT, D3D12_FENCE_FLAG_NONE, D3D12_RESOURCE_BARRIER,
+    D3D12_RESOURCE_BARRIER_0, D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
+    D3D12_RESOURCE_BARRIER_FLAG_NONE, D3D12_RESOURCE_BARRIER_TYPE_TRANSITION,
+    D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET,
+    D3D12_RESOURCE_STATES, D3D12_RESOURCE_TRANSITION_BARRIER, ID3D12CommandAllocator,
+    ID3D12CommandQueue, ID3D12Device, ID3D12Fence, ID3D12GraphicsCommandList, ID3D12Resource,
 };
 use windows::Win32::Graphics::DirectComposition::{
     DCompositionCreateDevice, IDCompositionDevice, IDCompositionTarget, IDCompositionVisual,
@@ -29,14 +27,17 @@ use windows::Win32::Graphics::Dxgi::Common::{
     DXGI_ALPHA_MODE_PREMULTIPLIED, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC,
 };
 use windows::Win32::Graphics::Dxgi::{
-    CreateDXGIFactory2, IDXGIFactory2, IDXGISwapChain1, IDXGISwapChain3,
-    DXGI_CREATE_FACTORY_FLAGS, DXGI_PRESENT, DXGI_SCALING_STRETCH, DXGI_SWAP_CHAIN_DESC1,
-    DXGI_SWAP_CHAIN_FLAG, DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL, DXGI_USAGE_RENDER_TARGET_OUTPUT,
+    CreateDXGIFactory2, DXGI_CREATE_FACTORY_FLAGS, DXGI_PRESENT, DXGI_SCALING_STRETCH,
+    DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_CHAIN_FLAG, DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
+    DXGI_USAGE_RENDER_TARGET_OUTPUT, IDXGIFactory2, IDXGISwapChain1, IDXGISwapChain3,
 };
-use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject, INFINITE};
+use windows::Win32::System::Threading::{CreateEventW, INFINITE, WaitForSingleObject};
+use windows::core::Interface;
 
-use crate::surface_target::{AcquiredFrame, AcquiredFrameInner, CompositionTarget, FrameAcquireError};
 use crate::RendererError;
+use crate::surface_target::{
+    AcquiredFrame, AcquiredFrameInner, CompositionTarget, FrameAcquireError,
+};
 
 const BUFFER_COUNT: u32 = 3;
 
@@ -46,7 +47,11 @@ pub(crate) struct WinCompose {
     format: TextureFormat,
     is_minimized: bool,
     is_first_use: [bool; BUFFER_COUNT as usize],
-    fence_value: u64,
+    /// Per-back-buffer fence checkpoint. `fence_values[idx]` is the fence value
+    /// Signal'd after the present that consumed that buffer.
+    fence_values: [u64; BUFFER_COUNT as usize],
+    /// Next fence value to assign on Signal — monotonic, never reset.
+    next_fence_value: u64,
     back_buffer_textures: [Option<Arc<wgpu::Texture>>; BUFFER_COUNT as usize],
     back_buffer_resources: [Option<ID3D12Resource>; BUFFER_COUNT as usize],
     barrier_cmd_list: ID3D12GraphicsCommandList,
@@ -54,15 +59,17 @@ pub(crate) struct WinCompose {
     fence: ID3D12Fence,
     fence_event: windows::Win32::Foundation::HANDLE,
     swap_chain: IDXGISwapChain3,
+    #[allow(dead_code)] // kept alive for COM ownership
     comp_visual: IDCompositionVisual,
+    #[allow(dead_code)] // kept alive for COM ownership
     comp_target: IDCompositionTarget,
+    #[allow(dead_code)] // kept alive for COM ownership
     comp_device: IDCompositionDevice,
     raw_queue: ID3D12CommandQueue,
+    #[allow(dead_code)] // kept alive for COM ownership
     raw_device: ID3D12Device,
     _window: Arc<dyn Window>,
 }
-
-unsafe impl Send for WinCompose {}
 
 impl WinCompose {
     pub fn new(device: &Device, window: Arc<dyn Window>) -> Result<Self, RendererError> {
@@ -103,7 +110,10 @@ impl WinCompose {
             Height: h.max(1),
             Format: DXGI_FORMAT_B8G8R8A8_UNORM,
             Stereo: false.into(),
-            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            SampleDesc: DXGI_SAMPLE_DESC {
+                Count: 1,
+                Quality: 0,
+            },
             BufferUsage: DXGI_USAGE_RENDER_TARGET_OUTPUT,
             BufferCount: BUFFER_COUNT,
             Scaling: DXGI_SCALING_STRETCH,
@@ -115,7 +125,9 @@ impl WinCompose {
         let swap_chain: IDXGISwapChain3 = unsafe {
             let swap_chain1: IDXGISwapChain1 = raw_factory
                 .CreateSwapChainForComposition(&raw_queue, &swap_chain_desc, None)
-                .map_err(|e| RendererError::RawHandle(format!("CreateSwapChainForComposition: {e}")))?;
+                .map_err(|e| {
+                    RendererError::RawHandle(format!("CreateSwapChainForComposition: {e}"))
+                })?;
             swap_chain1
                 .cast()
                 .map_err(|e| RendererError::RawHandle(format!("cast to IDXGISwapChain3: {e}")))?
@@ -158,7 +170,8 @@ impl WinCompose {
             format: TextureFormat::Bgra8UnormSrgb,
             is_minimized: false,
             is_first_use: [true; BUFFER_COUNT as usize],
-            fence_value: 0,
+            fence_values: [0; BUFFER_COUNT as usize],
+            next_fence_value: 0,
             back_buffer_textures: [None, None, None],
             back_buffer_resources: [None, None, None],
             barrier_cmd_list,
@@ -226,17 +239,35 @@ impl WinCompose {
         }
     }
 
-    fn wait_for_gpu(&mut self) {
-        self.fence_value += 1;
+    /// Wait until the GPU has reached `target` on `self.fence`.
+    fn wait_for_fence_value(&mut self, target: u64) {
+        if target == 0 {
+            return;
+        }
         unsafe {
-            self.raw_queue.Signal(&self.fence, self.fence_value).ok();
-            if self.fence.GetCompletedValue() < self.fence_value {
+            if self.fence.GetCompletedValue() < target {
                 self.fence
-                    .SetEventOnCompletion(self.fence_value, self.fence_event)
+                    .SetEventOnCompletion(target, self.fence_event)
                     .ok();
                 WaitForSingleObject(self.fence_event, INFINITE);
             }
         }
+    }
+
+    /// Signal a fresh fence value on the queue, return the value used.
+    fn signal_next(&mut self) -> u64 {
+        self.next_fence_value += 1;
+        let v = self.next_fence_value;
+        unsafe {
+            self.raw_queue.Signal(&self.fence, v).ok();
+        }
+        v
+    }
+
+    /// Full flush — used on resize + Drop. Equivalent to old wait_for_gpu.
+    fn flush(&mut self) {
+        let v = self.signal_next();
+        self.wait_for_fence_value(v);
     }
 }
 
@@ -252,7 +283,7 @@ impl CompositionTarget for WinCompose {
             submission_index: None,
             timeout: None,
         });
-        self.wait_for_gpu();
+        self.flush();
         self.release_back_buffers();
         let _ = device.poll(wgpu::PollType::Wait {
             submission_index: None,
@@ -274,10 +305,16 @@ impl CompositionTarget for WinCompose {
                 submission_index: None,
                 timeout: None,
             });
-            self.wait_for_gpu();
+            self.flush();
             unsafe {
                 self.swap_chain
-                    .ResizeBuffers(BUFFER_COUNT, w, h, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SWAP_CHAIN_FLAG(0))
+                    .ResizeBuffers(
+                        BUFFER_COUNT,
+                        w,
+                        h,
+                        DXGI_FORMAT_B8G8R8A8_UNORM,
+                        DXGI_SWAP_CHAIN_FLAG(0),
+                    )
                     .expect("ResizeBuffers failed on retry");
             }
         }
@@ -285,6 +322,7 @@ impl CompositionTarget for WinCompose {
         self.width = w;
         self.height = h;
         self.acquire_back_buffers(device);
+        self.fence_values = [0; BUFFER_COUNT as usize];
     }
 
     fn acquire_frame(&mut self) -> Result<AcquiredFrame, FrameAcquireError> {
@@ -293,9 +331,13 @@ impl CompositionTarget for WinCompose {
         }
 
         let idx = unsafe { self.swap_chain.GetCurrentBackBufferIndex() as usize };
-        let back_buffer = self.back_buffer_resources[idx]
-            .as_ref()
-            .ok_or_else(|| FrameAcquireError::Failed("back buffer not acquired".to_owned()))?;
+
+        // Early check that buffer exists
+        if self.back_buffer_resources[idx].is_none() {
+            return Err(FrameAcquireError::Failed(
+                "back buffer not acquired".to_owned(),
+            ));
+        }
 
         let before_state = if self.is_first_use[idx] {
             D3D12_RESOURCE_STATE_COMMON
@@ -304,16 +346,29 @@ impl CompositionTarget for WinCompose {
         };
         self.is_first_use[idx] = false;
 
+        // Wait for this specific buffer to be GPU-idle before reusing
+        self.wait_for_fence_value(self.fence_values[idx]);
+
+        // Now borrow back_buffer after the mutable borrow of self is done
+        let back_buffer = self.back_buffer_resources[idx].as_ref().unwrap();
+
         unsafe {
             self.barrier_cmd_alloc.Reset().ok();
-            self.barrier_cmd_list.Reset(&self.barrier_cmd_alloc, None).ok();
-            let barrier = transition_barrier(back_buffer, before_state, D3D12_RESOURCE_STATE_RENDER_TARGET);
-            self.barrier_cmd_list.ResourceBarrier(&[barrier]);
+            self.barrier_cmd_list
+                .Reset(&self.barrier_cmd_alloc, None)
+                .ok();
+            let mut barrier = transition_barrier(
+                back_buffer,
+                before_state,
+                D3D12_RESOURCE_STATE_RENDER_TARGET,
+            );
+            self.barrier_cmd_list
+                .ResourceBarrier(std::slice::from_ref(&barrier));
             self.barrier_cmd_list.Close().ok();
             let command_lists = [Some(self.barrier_cmd_list.cast().unwrap())];
             self.raw_queue.ExecuteCommandLists(&command_lists);
+            std::mem::ManuallyDrop::drop(&mut barrier.Anonymous.Transition);
         }
-        self.wait_for_gpu();
 
         let texture = self.back_buffer_textures[idx]
             .as_ref()
@@ -337,7 +392,9 @@ impl CompositionTarget for WinCompose {
         let idx = match frame.inner {
             #[cfg(target_os = "macos")]
             AcquiredFrameInner::Mac(_) => unreachable!(),
-            AcquiredFrameInner::Win { back_buffer_index, .. } => back_buffer_index as usize,
+            AcquiredFrameInner::Win {
+                back_buffer_index, ..
+            } => back_buffer_index as usize,
         };
 
         let back_buffer = match self.back_buffer_resources[idx].as_ref() {
@@ -347,15 +404,24 @@ impl CompositionTarget for WinCompose {
 
         unsafe {
             self.barrier_cmd_alloc.Reset().ok();
-            self.barrier_cmd_list.Reset(&self.barrier_cmd_alloc, None).ok();
-            let barrier = transition_barrier(back_buffer, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
-            self.barrier_cmd_list.ResourceBarrier(&[barrier]);
+            self.barrier_cmd_list
+                .Reset(&self.barrier_cmd_alloc, None)
+                .ok();
+            let mut barrier = transition_barrier(
+                back_buffer,
+                D3D12_RESOURCE_STATE_RENDER_TARGET,
+                D3D12_RESOURCE_STATE_PRESENT,
+            );
+            self.barrier_cmd_list
+                .ResourceBarrier(std::slice::from_ref(&barrier));
             self.barrier_cmd_list.Close().ok();
             let command_lists = [Some(self.barrier_cmd_list.cast().unwrap())];
             self.raw_queue.ExecuteCommandLists(&command_lists);
             let _ = self.swap_chain.Present(1, DXGI_PRESENT(0));
+            std::mem::ManuallyDrop::drop(&mut barrier.Anonymous.Transition);
         }
-        self.wait_for_gpu();
+        // Signal fence for this buffer so next acquire knows when it's idle
+        self.fence_values[idx] = self.signal_next();
     }
 
     fn format(&self) -> TextureFormat {
@@ -373,7 +439,7 @@ impl CompositionTarget for WinCompose {
 
 impl Drop for WinCompose {
     fn drop(&mut self) {
-        self.wait_for_gpu();
+        self.flush();
         unsafe {
             windows::Win32::Foundation::CloseHandle(self.fence_event).ok();
         }
@@ -386,7 +452,9 @@ fn extract_hwnd(window: &dyn Window) -> Result<HWND, RendererError> {
         .map_err(|e| RendererError::RawHandle(e.to_string()))?;
     match handle.as_raw() {
         RawWindowHandle::Win32(h) => Ok(HWND(h.hwnd.get() as *mut _)),
-        _ => Err(RendererError::RawHandle("expected Win32 window handle".to_owned())),
+        _ => Err(RendererError::RawHandle(
+            "expected Win32 window handle".to_owned(),
+        )),
     }
 }
 
@@ -400,7 +468,7 @@ fn transition_barrier(
         Flags: D3D12_RESOURCE_BARRIER_FLAG_NONE,
         Anonymous: D3D12_RESOURCE_BARRIER_0 {
             Transition: std::mem::ManuallyDrop::new(D3D12_RESOURCE_TRANSITION_BARRIER {
-                pResource: unsafe { std::mem::transmute_copy(resource) },
+                pResource: std::mem::ManuallyDrop::new(Some(resource.clone())),
                 Subresource: D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
                 StateBefore: before,
                 StateAfter: after,

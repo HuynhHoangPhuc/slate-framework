@@ -262,6 +262,7 @@ fn find_tight_bounds(buffer: &[u8], width: usize, height: usize) -> (usize, usiz
     for y in min_y..=max_y {
         let row = &buffer[y * width..(y + 1) * width];
         // Narrow left bound: only scan left of current min_x
+        #[allow(clippy::needless_range_loop)] // perf-sensitive: early break matters
         for x in 0..min_x {
             if row[x] >= 1 {
                 min_x = x;

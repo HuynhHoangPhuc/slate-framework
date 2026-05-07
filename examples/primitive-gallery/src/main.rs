@@ -142,6 +142,7 @@ fn main() {
 
 use slate_renderer::GlyphInstance;
 
+#[allow(clippy::too_many_arguments)]
 fn build_text_glyphs(
     backend_cell: &RefCell<Option<TextBackendImpl>>,
     font_cell: &RefCell<Option<<TextBackendImpl as TextBackend>::Font>>,
@@ -190,7 +191,7 @@ fn build_text_glyphs(
         baseline_lpx: [w / scale - hello_shaped.width_lpx - 20.0, 60.0],
         color: srgb_u8_to_linear_premul([0xFF, 0xFF, 0xFF, 0xFF]),
     };
-    if let Ok(instances) = hello_builder.build(&hello_shaped, &mut *glyph_cache, atlas, queue) {
+    if let Ok(instances) = hello_builder.build(&hello_shaped, &mut glyph_cache, atlas, queue) {
         glyphs.extend(instances);
     }
 
@@ -201,7 +202,7 @@ fn build_text_glyphs(
         baseline_lpx: [w / scale - fps_shaped.width_lpx - 10.0, 25.0],
         color: srgb_u8_to_linear_premul([0xFF, 0xFF, 0x00, 0xFF]),
     };
-    if let Ok(instances) = fps_builder.build(&fps_shaped, &mut *glyph_cache, atlas, queue) {
+    if let Ok(instances) = fps_builder.build(&fps_shaped, &mut glyph_cache, atlas, queue) {
         glyphs.extend(instances);
     }
 
@@ -224,7 +225,7 @@ fn build_text_glyphs(
                 baseline_lpx: [paragraph_x + x_offset, paragraph_y + line.y_offset_lpx],
                 color: srgb_u8_to_linear_premul([0xCC, 0xCC, 0xCC, 0xFF]),
             };
-            if let Ok(instances) = builder.build(line, &mut *glyph_cache, atlas, queue) {
+            if let Ok(instances) = builder.build(line, &mut glyph_cache, atlas, queue) {
                 glyphs.extend(instances);
             }
         }
@@ -241,7 +242,8 @@ fn build_text_glyphs(
         baseline_lpx: [paragraph_x, paragraph_y + 90.0],
         color: srgb_u8_to_linear_premul([0x88, 0xCC, 0xFF, 0xFF]),
     };
-    if let Ok(instances) = extended_builder.build(&extended_shaped, &mut *glyph_cache, atlas, queue) {
+    if let Ok(instances) = extended_builder.build(&extended_shaped, &mut glyph_cache, atlas, queue)
+    {
         glyphs.extend(instances);
     }
 
@@ -257,7 +259,7 @@ fn build_text_glyphs(
         baseline_lpx: [paragraph_x + 10.0, paragraph_y + 140.0],
         color: srgb_u8_to_linear_premul([0xFF, 0xFF, 0xFF, 0xFF]),
     };
-    if let Ok(instances) = light_builder.build(&light_shaped, &mut *glyph_cache, atlas, queue) {
+    if let Ok(instances) = light_builder.build(&light_shaped, &mut glyph_cache, atlas, queue) {
         glyphs.extend(instances);
     }
 

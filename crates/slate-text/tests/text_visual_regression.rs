@@ -8,6 +8,7 @@ mod common;
 use common::mock::MockFont;
 use slate_renderer::atlas::{Atlas, Format};
 use slate_renderer::srgb_u8_to_linear_premul;
+use slate_text::TextBackend;
 use slate_text::error::TextError;
 use slate_text::font_handle::FontHandle;
 use slate_text::glyph_cache::GlyphCache;
@@ -15,7 +16,6 @@ use slate_text::run_builder::TextRunBuilder;
 use slate_text::types::{
     FontDescriptor, FontId, GlyphBitmap, GlyphBounds, ShapedGlyph, ShapedLine,
 };
-use slate_text::TextBackend;
 
 /// Backend producing 8×12 glyphs with a vertical-bar pattern per glyph_id.
 ///
@@ -138,7 +138,9 @@ fn text_pipeline_builds_glyph_instances() {
         baseline_lpx: [10.0, 50.0],
         color: srgb_u8_to_linear_premul([0xFF, 0xFF, 0xFF, 0xFF]),
     };
-    let instances = builder.build(&shaped, &mut cache, &mut atlas, &queue).unwrap();
+    let instances = builder
+        .build(&shaped, &mut cache, &mut atlas, &queue)
+        .unwrap();
 
     // Should have 5 glyph instances for "Hello"
     assert_eq!(instances.len(), 5);
@@ -172,7 +174,9 @@ fn glyph_instances_positions_advance_correctly() {
         baseline_lpx: [0.0, 20.0],
         color: [1.0; 4],
     };
-    let instances = builder.build(&shaped, &mut cache, &mut atlas, &queue).unwrap();
+    let instances = builder
+        .build(&shaped, &mut cache, &mut atlas, &queue)
+        .unwrap();
 
     assert_eq!(instances.len(), 2);
     // Second glyph should be positioned after the first

@@ -1,11 +1,11 @@
 //! Tests for multi-line paragraph layout.
 
-use slate_text::{Font, TextBackend};
 use slate_text::error::TextError;
 use slate_text::font_handle::FontHandle;
 use slate_text::types::{
     FontDescriptor, FontId, FontMetrics, GlyphBitmap, GlyphBounds, ShapedGlyph, ShapedLine,
 };
+use slate_text::{Font, TextBackend};
 use slate_text::{TextAlignment, compute_alignment_offset, greedy_wrap, truncate_with_ellipsis};
 
 /// Mock font for testing.
@@ -165,14 +165,14 @@ fn y_offsets_use_line_height() {
 
     // Line height = ascent - descent + line_gap = 12 - (-4) + 2 = 18
     let expected_line_height = 18.0;
-    for i in 1..lines.len() {
+    for (i, line) in lines.iter().enumerate().skip(1) {
         let expected_y = expected_line_height * i as f32;
         assert!(
-            (lines[i].y_offset_lpx - expected_y).abs() < 0.01,
+            (line.y_offset_lpx - expected_y).abs() < 0.01,
             "line {} y_offset should be {}, got {}",
             i,
             expected_y,
-            lines[i].y_offset_lpx
+            line.y_offset_lpx
         );
     }
 }

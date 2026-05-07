@@ -83,14 +83,16 @@ impl GlyphCache {
             return Ok(false);
         }
 
-        // Evict all entries when at capacity. Simple clear strategy: bounds
-        // are cheap to recompute and a full clear avoids stale atlas IDs.
+        // Evict all entries when at capacity. Deallocate each atlas slot
+        // before dropping to prevent slot leaks.
         if self.cache.len() >= self.max_entries {
             log::warn!(
                 "GlyphCache at capacity ({} entries); clearing cache to free memory",
                 self.max_entries
             );
-            self.cache.clear();
+            for (_, cg) in self.cache.drain() {
+                atlas.deallocate(cg.alloc.alloc_id);
+            }
         }
 
         let bitmap = backend.rasterize_glyph(font, glyph_id, variant)?;
@@ -125,9 +127,11 @@ impl GlyphCache {
         }
     }
 
-    /// Clears all cached glyphs.
-    pub fn clear(&mut self) {
-        self.cache.clear();
+    /// Clears all cached glyphs, returning their atlas slots.
+    pub fn clear(&mut self, atlas: &mut Atlas) {
+        for (_, cg) in self.cache.drain() {
+            atlas.deallocate(cg.alloc.alloc_id);
+        }
     }
 
     /// Returns the number of cached glyphs.
@@ -140,40 +144,6 @@ impl GlyphCache {
     /// Returns the configured maximum number of entries before eviction.
     pub fn max_entries(&self) -> usize {
         self.max_entries
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn default_max_entries_is_set() {
-        let cache = GlyphCache::new();
-        assert_eq!(cache.max_entries(), DEFAULT_MAX_ENTRIES);
-        assert_eq!(cache.cache_len(), 0);
-    }
-
-    #[test]
-    fn with_max_entries_configures_limit() {
-        let cache = GlyphCache::with_max_entries(64);
-        assert_eq!(cache.max_entries(), 64);
-    }
-
-    #[test]
-    fn pad_with_gutter_dimensions() {
-        // 2×2 source produces 4×4 padded output with zero border
-        let src = vec![1u8, 2, 3, 4];
-        let result = pad_with_gutter(&src, 2, 2);
-        assert_eq!(result.len(), 4 * 4);
-        // top row must be all zeros
-        assert_eq!(&result[0..4], &[0u8, 0, 0, 0]);
-        // inner row 1: [0, 1, 2, 0]
-        assert_eq!(&result[4..8], &[0u8, 1, 2, 0]);
-        // inner row 2: [0, 3, 4, 0]
-        assert_eq!(&result[8..12], &[0u8, 3, 4, 0]);
-        // bottom row must be all zeros
-        assert_eq!(&result[12..16], &[0u8, 0, 0, 0]);
     }
 }
 
@@ -209,5 +179,39 @@ impl GlyphMetrics {
             bearing_y_lpx: bitmap.bearing_y_lpx,
             advance_x_lpx: bitmap.advance_x_lpx,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_max_entries_is_set() {
+        let cache = GlyphCache::new();
+        assert_eq!(cache.max_entries(), DEFAULT_MAX_ENTRIES);
+        assert_eq!(cache.cache_len(), 0);
+    }
+
+    #[test]
+    fn with_max_entries_configures_limit() {
+        let cache = GlyphCache::with_max_entries(64);
+        assert_eq!(cache.max_entries(), 64);
+    }
+
+    #[test]
+    fn pad_with_gutter_dimensions() {
+        // 2×2 source produces 4×4 padded output with zero border
+        let src = vec![1u8, 2, 3, 4];
+        let result = pad_with_gutter(&src, 2, 2);
+        assert_eq!(result.len(), 4 * 4);
+        // top row must be all zeros
+        assert_eq!(&result[0..4], &[0u8, 0, 0, 0]);
+        // inner row 1: [0, 1, 2, 0]
+        assert_eq!(&result[4..8], &[0u8, 1, 2, 0]);
+        // inner row 2: [0, 3, 4, 0]
+        assert_eq!(&result[8..12], &[0u8, 3, 4, 0]);
+        // bottom row must be all zeros
+        assert_eq!(&result[12..16], &[0u8, 0, 0, 0]);
     }
 }

@@ -53,10 +53,10 @@ use std::sync::Arc;
 use slate_platform::Window;
 use wgpu::{
     Adapter, Backends, BindGroup, BindGroupDescriptor, BindGroupEntry, BindingResource, Buffer,
-    BufferDescriptor, BufferUsages, Color, CommandEncoderDescriptor, Device,
-    DeviceDescriptor, ExperimentalFeatures, Features, Instance, InstanceDescriptor, Limits, LoadOp,
-    MemoryHints, Operations, Queue, RenderPassColorAttachment, RenderPassDescriptor,
-    RequestAdapterOptions, RequestDeviceError, StoreOp, TextureFormat, Trace,
+    BufferDescriptor, BufferUsages, Color, CommandEncoderDescriptor, Device, DeviceDescriptor,
+    ExperimentalFeatures, Features, Instance, InstanceDescriptor, Limits, LoadOp, MemoryHints,
+    Operations, Queue, RenderPassColorAttachment, RenderPassDescriptor, RequestAdapterOptions,
+    RequestDeviceError, StoreOp, TextureFormat, Trace,
 };
 
 use crate::surface_target::{CompositionTarget, FrameAcquireError};
@@ -262,7 +262,11 @@ impl Renderer {
                 self.target.configure(&self.device, w.max(1), h.max(1));
                 return Ok(());
             }
-            Err(FrameAcquireError::Occluded | FrameAcquireError::Minimized | FrameAcquireError::Timeout) => {
+            Err(
+                FrameAcquireError::Occluded
+                | FrameAcquireError::Minimized
+                | FrameAcquireError::Timeout,
+            ) => {
                 return Ok(());
             }
             Err(FrameAcquireError::DeviceLost(reason)) => {
@@ -280,7 +284,7 @@ impl Renderer {
             let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
                 label: Some("slate-frame"),
                 color_attachments: &[Some(RenderPassColorAttachment {
-                    view: &view,
+                    view,
                     depth_slice: None,
                     resolve_target: None,
                     ops: Operations {
@@ -370,7 +374,11 @@ impl Renderer {
                 self.target.configure(&self.device, w.max(1), h.max(1));
                 return Ok(());
             }
-            Err(FrameAcquireError::Occluded | FrameAcquireError::Minimized | FrameAcquireError::Timeout) => {
+            Err(
+                FrameAcquireError::Occluded
+                | FrameAcquireError::Minimized
+                | FrameAcquireError::Timeout,
+            ) => {
                 return Ok(());
             }
             Err(FrameAcquireError::DeviceLost(reason)) => {
@@ -478,7 +486,9 @@ fn build_target(
     _device: &Device,
     window: Arc<dyn Window>,
 ) -> Result<Box<dyn CompositionTarget>, RendererError> {
-    Ok(Box::new(mac_surface::MacSurface::new(instance, adapter, window)?))
+    Ok(Box::new(mac_surface::MacSurface::new(
+        instance, adapter, window,
+    )?))
 }
 
 #[cfg(target_os = "windows")]

@@ -56,6 +56,17 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all -- --check
 
+  cross-check:
+    name: cross-compile (macOS host → Windows target)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --workspace --target x86_64-pc-windows-msvc
+
   deny:
     name: cargo-deny (licenses + advisories + bans)
     runs-on: ubuntu-latest

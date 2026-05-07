@@ -7,12 +7,12 @@
 #![allow(dead_code)]
 
 use slate_text::Font;
+use slate_text::TextBackend;
 use slate_text::error::TextError;
 use slate_text::font_handle::FontHandle;
 use slate_text::types::{
     FontDescriptor, FontId, FontMetrics, GlyphBitmap, GlyphBounds, ShapedGlyph, ShapedLine,
 };
-use slate_text::TextBackend;
 
 // ── MockFont ─────────────────────────────────────────────────────────────────
 
@@ -55,7 +55,7 @@ impl Font for MockFont {
 /// A predictable `TextBackend` that produces size-based bitmaps.
 ///
 /// - `shape_line`: each character advances `x_advance_lpx` logical pixels.
-/// - `rasterize_glyph`: `width = glyph_id.min(16).max(1)`, `height = variant + 1`.
+/// - `rasterize_glyph`: `width = glyph_id.clamp(1, 16)`, `height = variant + 1`.
 ///
 /// Tests that require different shaping or rasterization logic should define a
 /// local `MockBackend` rather than using this one.
@@ -132,7 +132,7 @@ impl TextBackend for MockBackend {
         variant: u8,
     ) -> Result<GlyphBitmap, TextError> {
         // Predictable bitmap: width = glyph_id clamped to [1,16], height = variant+1
-        let w = glyph_id.min(16).max(1);
+        let w = glyph_id.clamp(1, 16);
         let h = (variant as u32 + 1).min(16);
         let alpha = vec![0xFF; (w * h) as usize];
         Ok(GlyphBitmap {
@@ -150,7 +150,7 @@ impl TextBackend for MockBackend {
         _font: &Self::Font,
         glyph_id: u32,
     ) -> Result<GlyphBounds, TextError> {
-        let w = glyph_id.min(16).max(1);
+        let w = glyph_id.clamp(1, 16);
         Ok(GlyphBounds {
             width: w,
             height: 4,

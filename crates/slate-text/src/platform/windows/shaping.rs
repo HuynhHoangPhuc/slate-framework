@@ -6,13 +6,12 @@ use crate::types::FontId;
 use crate::{FontMetrics, ShapedGlyph, ShapedLine, TextError};
 use std::cell::RefCell;
 use std::sync::Arc;
-use windows::core::{implement, IUnknown, Ref, Result, BOOL};
 use windows::Win32::Graphics::DirectWrite::{
     DWRITE_GLYPH_RUN, DWRITE_GLYPH_RUN_DESCRIPTION, DWRITE_MATRIX, DWRITE_MEASURING_MODE,
     DWRITE_STRIKETHROUGH, DWRITE_UNDERLINE, IDWriteFactory5, IDWriteInlineObject,
-    IDWritePixelSnapping_Impl, IDWriteTextFormat, IDWriteTextRenderer,
-    IDWriteTextRenderer_Impl,
+    IDWritePixelSnapping_Impl, IDWriteTextFormat, IDWriteTextRenderer, IDWriteTextRenderer_Impl,
 };
+use windows::core::{BOOL, IUnknown, Ref, Result, implement};
 
 /// Shared glyph storage for renderer callback.
 type GlyphStore = Arc<RefCell<Vec<ShapedGlyph>>>;
@@ -57,10 +56,7 @@ impl IDWritePixelSnapping_Impl for ShapingRenderer_Impl {
         Ok(())
     }
 
-    fn GetPixelsPerDip(
-        &self,
-        _clientdrawingcontext: *const core::ffi::c_void,
-    ) -> Result<f32> {
+    fn GetPixelsPerDip(&self, _clientdrawingcontext: *const core::ffi::c_void) -> Result<f32> {
         Ok(1.0)
     }
 }
@@ -165,10 +161,8 @@ pub fn shape_line(
     let wide: Vec<u16> = text.encode_utf16().collect();
 
     // CreateTextLayout takes &[u16]
-    let layout = unsafe {
-        factory.CreateTextLayout(&wide, text_format, f32::MAX, f32::MAX)
-    }
-    .map_err(|e| TextError::ShapingFailed(format!("CreateTextLayout: {e}")))?;
+    let layout = unsafe { factory.CreateTextLayout(&wide, text_format, f32::MAX, f32::MAX) }
+        .map_err(|e| TextError::ShapingFailed(format!("CreateTextLayout: {e}")))?;
 
     // Arc<RefCell> shared state for glyph accumulation
     let glyphs_store: GlyphStore = Arc::new(RefCell::new(Vec::new()));

@@ -145,27 +145,20 @@ impl DeferredFont {
     }
 }
 
-/// Maximum font file size (50 MB) before we refuse eager load.
-///
-/// Stopgap guard against OOM from pathologically large font files (e.g. massive CJK collections).
-/// When mmap support is added this limit can be relaxed.
-const MAX_FONT_FILE_BYTES: u64 = 50_000_000;
-
 /// Extract character set from a font file's cmap table.
 fn extract_charset(path: &Path) -> Result<CharacterSet, TextError> {
-    // Size guard: refuse to read files larger than MAX_FONT_FILE_BYTES.
-    let metadata = std::fs::metadata(path)
-        .map_err(|e| TextError::FontFileLoad(format!("{}: {}", path.display(), e)))?;
-    if metadata.len() > MAX_FONT_FILE_BYTES {
-        return Err(TextError::FontFileLoad(
-            "font file too large for eager load".into(),
-        ));
-    }
+    use std::fs::File;
 
-    let data = std::fs::read(path)
+    let file = File::open(path)
         .map_err(|e| TextError::FontFileLoad(format!("{}: {}", path.display(), e)))?;
 
-    let face = ttf_parser::Face::parse(&data, 0)
+    // SAFETY: System/app-bundled fonts are not modified during program execution.
+    // mmap is unsafe in Rust because external mutation would invalidate the &[u8]
+    // view, but this is acceptable for read-only font files from OS install paths.
+    let mmap = unsafe { memmap2::Mmap::map(&file) }
+        .map_err(|e| TextError::FontFileLoad(format!("mmap {}: {}", path.display(), e)))?;
+
+    let face = ttf_parser::Face::parse(&mmap, 0)
         .map_err(|e| TextError::FontFileLoad(format!("parse {}: {}", path.display(), e)))?;
 
     let mut charset = CharacterSet::new();
@@ -232,10 +225,10 @@ fn resolve_font_path(desc: &FontDescriptor) -> Result<PathBuf, TextError> {
 #[cfg(target_os = "macos")]
 fn resolve_font_path(desc: &FontDescriptor) -> Result<PathBuf, TextError> {
     // If descriptor has a path, use it
-    if let Some(ref path) = desc.path {
-        if path.exists() {
-            return Ok(path.clone());
-        }
+    if let Some(ref path) = desc.path
+        && path.exists()
+    {
+        return Ok(path.clone());
     }
 
     // Search common macOS font directories
@@ -273,10 +266,10 @@ fn resolve_font_path(desc: &FontDescriptor) -> Result<PathBuf, TextError> {
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
 fn resolve_font_path(desc: &FontDescriptor) -> Result<PathBuf, TextError> {
     // If descriptor has a path, use it
-    if let Some(ref path) = desc.path {
-        if path.exists() {
-            return Ok(path.clone());
-        }
+    if let Some(ref path) = desc.path
+        && path.exists()
+    {
+        return Ok(path.clone());
     }
     Err(TextError::FontNotFound {
         family: desc.family.clone(),
