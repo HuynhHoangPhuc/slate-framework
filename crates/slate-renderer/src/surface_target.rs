@@ -4,7 +4,6 @@
 //! On Windows this wraps a DXGI composition swap chain bound to an
 //! IDCompositionVisual (no DWM redirection bitmap).
 
-#[cfg(target_os = "windows")]
 use wgpu::{Device, TextureFormat, TextureView};
 
 /// A handle to one acquired frame.
