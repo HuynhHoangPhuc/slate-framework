@@ -15,6 +15,7 @@ use crate::context::{LayoutCtx, PaintCtx, PrepaintCtx};
 use crate::executor::{Executor, RedrawRequester};
 use crate::hit_test::HitTestList;
 use crate::layout::{compute_layout, resolve_bounds, LayoutTree};
+use crate::reactive_state::StateRegistry;
 use crate::text_system::TextSystem;
 use crate::types::{AccessibilityNode, Size};
 use crate::view::View;
@@ -105,6 +106,9 @@ impl App {
         let hit_test_list: RefCell<HitTestList> = RefCell::new(HitTestList::new());
         let a11y_nodes: RefCell<Vec<AccessibilityNode>> = RefCell::new(Vec::new());
         let scene: RefCell<Scene> = RefCell::new(Scene::new());
+        // Phase 4: StateRegistry for element-level reactive state (borrow slot 8)
+        let state_registry: RefCell<StateRegistry> =
+            RefCell::new(StateRegistry::new(slate_reactive::Runtime::new()));
 
         let platform_ref = &platform;
         let window_ref = window.clone();
@@ -214,13 +218,14 @@ impl App {
                     return;
                 };
 
-                // 4. Prepaint pass
+                // 4. Prepaint pass (borrow slot 8: state_registry)
                 {
                     let tree = layout_tree.borrow();
                     let mut hit = hit_test_list.borrow_mut();
                     let mut a11y = a11y_nodes.borrow_mut();
                     let mut ts = text_system.borrow_mut();
                     let ts = ts.as_mut().expect("text system not initialized");
+                    let mut sr = state_registry.borrow_mut();
 
                     hit.clear();
                     a11y.clear();
@@ -232,6 +237,7 @@ impl App {
                         ts,
                         &executor_ref.foreground,
                         scale_factor,
+                        &mut sr,
                     );
 
                     // Initialize tree-position keying for stable ElementIds
@@ -290,6 +296,14 @@ impl App {
 
                 // 7. Poll async executor
                 executor_ref.foreground.poll();
+
+                // 8. Phase 4: Advance frame counter and GC stale state slots
+                // Slots not accessed for 2+ consecutive frames are dropped.
+                {
+                    let mut sr = state_registry.borrow_mut();
+                    sr.advance_frame();
+                    sr.gc();
+                }
             }
 
             Event::WindowCloseRequested { .. } => {

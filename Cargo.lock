@@ -2189,6 +2189,7 @@ dependencies = [
  "log",
  "pollster",
  "slate-platform",
+ "slate-reactive",
  "slate-renderer",
  "slate-text",
  "smallvec",
@@ -2212,6 +2213,15 @@ dependencies = [
  "raw-window-handle",
  "thiserror",
  "windows",
+]
+
+[[package]]
+name = "slate-reactive"
+version = "0.0.2"
+dependencies = [
+ "log",
+ "parking_lot",
+ "trybuild",
 ]
 
 [[package]]

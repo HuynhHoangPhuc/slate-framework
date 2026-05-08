@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/slate-platform",
+    "crates/slate-reactive",
     "crates/slate-renderer",
     "crates/slate-text",
     "crates/slate-framework",
@@ -21,6 +22,8 @@ repository = "https://github.com/HuynhHoangPhuc/slate-framework"
 authors = ["Phuc Huynh <huynhhoangphuc@proton.me>"]
 
 [workspace.dependencies]
+# Workspace internal crates
+slate-reactive = { path = "crates/slate-reactive" }
 # All deps pinned to latest stable as of 2026-05-04.
 # Bump deliberately; record reason in commit message.
 # wgpu pinned to exact patch (Phase 1 prereq, red-team P0-5): wgpu pre-1.0
@@ -34,6 +37,7 @@ log = "0.4"
 env_logger = "0.11"
 thiserror = "2"
 pollster = "0.4"
+parking_lot = "0.12"
 # macOS-only deps (target.'cfg(target_os = "macos")')
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = [

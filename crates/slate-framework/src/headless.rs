@@ -38,6 +38,7 @@ use crate::element::AnyElement;
 use crate::executor::{Executor, RedrawRequester};
 use crate::hit_test::HitTestList;
 use crate::layout::{compute_layout, resolve_bounds, LayoutTree};
+use crate::reactive_state::StateRegistry;
 use crate::text_system::TextSystem;
 use crate::types::{AccessibilityNode, Size};
 
@@ -79,6 +80,8 @@ pub struct HeadlessApp {
     a11y_nodes: Vec<AccessibilityNode>,
     scene: Scene,
     executor: Executor,
+    // Phase 4: StateRegistry for element-level reactive state
+    state_registry: StateRegistry,
 }
 
 /// Error creating or rendering with HeadlessApp.
@@ -217,6 +220,8 @@ impl HeadlessApp {
         let scene = Scene::new();
         let redraw_requester = RedrawRequester::new(|| {}); // No-op for headless
         let executor = Executor::new(redraw_requester);
+        // Phase 4: StateRegistry uses dummy runtime for headless (no redraw wiring)
+        let state_registry = StateRegistry::dummy();
 
         Ok(Self {
             device,
@@ -242,6 +247,7 @@ impl HeadlessApp {
             a11y_nodes,
             scene,
             executor,
+            state_registry,
         })
     }
 
@@ -293,6 +299,7 @@ impl HeadlessApp {
                 &mut self.text_system,
                 &self.executor.foreground,
                 self.scale_factor,
+                &mut self.state_registry,
             );
 
             // Initialize tree-position keying for stable ElementIds
@@ -312,6 +319,10 @@ impl HeadlessApp {
                 cx.a11y_stack.len()
             );
         }
+
+        // Phase 4: Advance frame counter and GC stale state slots
+        self.state_registry.advance_frame();
+        self.state_registry.gc();
 
         // 4. Paint pass
         self.scene.clear();

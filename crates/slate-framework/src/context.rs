@@ -14,6 +14,7 @@ use taffy::TaffyTree;
 
 use crate::executor::ForegroundExecutor;
 use crate::hit_test::{HitRegion, HitTestList};
+use crate::reactive_state::StateRegistry;
 use crate::text_system::TextSystem;
 use crate::types::{AccessibilityInfo, AccessibilityNode, Bounds, ElementId, NodeContext};
 
@@ -62,6 +63,7 @@ impl<'a> LayoutCtx<'a> {
 /// - Foreground executor for async tasks
 /// - Scale factor
 /// - Stable ElementId allocation via tree-position keying
+/// - State registry for element-level reactive state (internal use)
 pub struct PrepaintCtx<'a> {
     /// Taffy layout tree (read-only for bounds lookup).
     pub taffy: &'a TaffyTree<NodeContext>,
@@ -75,6 +77,13 @@ pub struct PrepaintCtx<'a> {
     pub executor: &'a ForegroundExecutor,
     /// Display scale factor.
     pub scale_factor: f64,
+
+    // --- Element-level state registry (Phase 4) ---
+    /// State registry for element-level reactive state slots.
+    /// Internal consumers (e.g., paint cache) use `cx.state_registry.use_state(id, default)`.
+    /// No public hooks-style API in v1 per F6 Route A decision.
+    #[allow(dead_code)] // Used in Phase 6 by paint cache
+    pub(crate) state_registry: &'a mut StateRegistry,
 
     // --- Tree-position keying for stable ElementIds (Phase 4 prep) ---
     /// Stack of ancestor element IDs; `last()` is the immediate parent.
@@ -95,13 +104,19 @@ impl<'a> PrepaintCtx<'a> {
     /// Create a new prepaint context.
     ///
     /// Caller must call `init_root_frame()` before the first `allocate_id`.
-    pub fn new(
+    ///
+    /// # Borrow Order (ADR-001)
+    ///
+    /// `state_registry` is borrowed after `id_stack` setup, before any view interior
+    /// borrows. This is slot 8 in the RefCell borrow-order discipline.
+    pub(crate) fn new(
         taffy: &'a TaffyTree<NodeContext>,
         hit_regions: &'a mut HitTestList,
         a11y_completed: &'a mut Vec<AccessibilityNode>,
         text: &'a mut TextSystem,
         executor: &'a ForegroundExecutor,
         scale_factor: f64,
+        state_registry: &'a mut StateRegistry,
     ) -> Self {
         Self {
             taffy,
@@ -110,6 +125,7 @@ impl<'a> PrepaintCtx<'a> {
             text,
             executor,
             scale_factor,
+            state_registry,
             id_stack: Vec::new(),
             child_counters: Vec::new(),
             next_key: None,
