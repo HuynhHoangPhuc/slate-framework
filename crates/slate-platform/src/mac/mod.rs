@@ -92,8 +92,13 @@ pub fn wake_run_loop() {
         0,
     );
     if let Some(event) = event {
-        // SAFETY: NSApplication::sharedApplication is thread-safe for posting events.
-        // We only post the event; we don't access any main-thread-only state.
+        // SAFETY: `postEvent:atStart:` is documented as thread-safe by Apple:
+        // "You can call this method from any thread of your app."
+        // See: https://developer.apple.com/documentation/appkit/nsapplication/postevent(_:atstart:)
+        //
+        // We use `MainThreadMarker::new_unchecked()` because objc2 requires it
+        // for `sharedApplication`, but we only call the thread-safe `postEvent`
+        // method — we don't access any main-thread-only state.
         let mtm = unsafe { MainThreadMarker::new_unchecked() };
         NSApplication::sharedApplication(mtm).postEvent_atStart(&event, false);
     }

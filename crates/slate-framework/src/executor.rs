@@ -13,6 +13,9 @@ use std::sync::Arc;
 
 use smol::Task;
 
+/// Maximum iterations for foreground poll to prevent infinite spin.
+const MAX_POLL_ITERATIONS: usize = 1000;
+
 /// Handle to the foreground (UI-thread) executor.
 ///
 /// Futures spawned here run between frames on the main thread.
@@ -73,43 +76,45 @@ impl ForegroundExecutor {
         self.inner.try_tick()
     }
 
-    /// Poll all pending futures until no more progress can be made.
+    /// Poll pending futures until no more progress or iteration limit reached.
     ///
-    /// Call this once per frame iteration.
+    /// Call this once per frame iteration. Limited to `MAX_POLL_ITERATIONS`
+    /// to prevent infinite spin if tasks continuously spawn new tasks.
     pub fn poll(&self) {
-        while self.inner.try_tick() {}
+        for _ in 0..MAX_POLL_ITERATIONS {
+            if !self.inner.try_tick() {
+                break;
+            }
+        }
     }
 }
 
 /// Background (worker-pool) executor for `Send` futures.
 ///
-/// Cheap to clone (Arc-wrapped). Futures run on smol's global thread pool.
+/// Cheap to clone. Futures run on smol's global thread pool which is
+/// lazily initialized with one thread per CPU core.
 #[derive(Clone)]
 pub struct BackgroundExecutor {
-    inner: Arc<smol::Executor<'static>>,
     redraw_requester: RedrawRequester,
 }
 
 impl BackgroundExecutor {
     /// Create a new background executor with the given redraw requester.
     pub fn new(redraw_requester: RedrawRequester) -> Self {
-        Self {
-            inner: Arc::new(smol::Executor::new()),
-            redraw_requester,
-        }
+        Self { redraw_requester }
     }
 
     /// Spawn a `Send` future on the background thread pool.
     ///
-    /// The future runs on smol's global thread pool. When it completes,
-    /// a redraw is requested to wake the UI thread.
+    /// The future runs on smol's global thread pool (lazily initialized).
+    /// When it completes, a redraw is requested to wake the UI thread.
     pub fn spawn<F, T>(&self, future: F) -> Task<T>
     where
         F: Future<Output = T> + Send + 'static,
         T: Send + 'static,
     {
         let req = self.redraw_requester.clone();
-        self.inner.spawn(async move {
+        smol::spawn(async move {
             let out = future.await;
             req.request();
             out
@@ -126,7 +131,7 @@ impl BackgroundExecutor {
         T: Send + 'static,
     {
         let req = self.redraw_requester.clone();
-        self.inner.spawn(async move {
+        smol::spawn(async move {
             let out = async_compat::Compat::new(future).await;
             req.request();
             out
@@ -143,7 +148,7 @@ impl BackgroundExecutor {
         T: Send + 'static,
     {
         let req = self.redraw_requester.clone();
-        self.inner.spawn(async move {
+        smol::spawn(async move {
             let out = smol::unblock(f).await;
             req.request();
             out
@@ -278,5 +283,70 @@ mod tests {
         // Should not block
         assert!(!executor.try_tick());
         executor.poll();
+    }
+
+    #[test]
+    fn background_spawn_runs_future() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let counter_clone = counter.clone();
+
+        let req = RedrawRequester::noop();
+        let executor = BackgroundExecutor::new(req);
+
+        let task = executor.spawn(async move {
+            counter_clone.fetch_add(1, Ordering::SeqCst);
+            42
+        });
+
+        // Block on the task to ensure it completes
+        let result = smol::block_on(task);
+        assert_eq!(result, 42);
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn background_spawn_requests_redraw() {
+        let redraw_count = Arc::new(AtomicUsize::new(0));
+        let redraw_count_clone = redraw_count.clone();
+
+        let req = RedrawRequester::new(move || {
+            redraw_count_clone.fetch_add(1, Ordering::SeqCst);
+        });
+        let executor = BackgroundExecutor::new(req);
+
+        let task = executor.spawn(async { 1 + 1 });
+        smol::block_on(task);
+
+        assert_eq!(redraw_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn background_spawn_blocking_runs_closure() {
+        let req = RedrawRequester::noop();
+        let executor = BackgroundExecutor::new(req);
+
+        let task = executor.spawn_blocking(|| {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            "done"
+        });
+
+        let result = smol::block_on(task);
+        assert_eq!(result, "done");
+    }
+
+    #[test]
+    fn executor_aggregate_polls_foreground() {
+        let counter = Rc::new(Cell::new(0));
+        let counter_clone = counter.clone();
+
+        let req = RedrawRequester::noop();
+        let executor = Executor::new(req);
+
+        let _task = executor.foreground.spawn_local(async move {
+            counter_clone.set(counter_clone.get() + 1);
+        });
+
+        executor.poll_foreground();
+        assert_eq!(counter.get(), 1);
     }
 }

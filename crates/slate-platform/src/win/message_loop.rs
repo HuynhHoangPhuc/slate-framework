@@ -13,7 +13,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::{Event, WindowId};
-use super::{dispatch_event, IN_SIZE_MOVE, SIZE_MOVE_TIMER_ID, WM_APP_WAKE};
+use super::{clear_wake_hwnd, dispatch_event, IN_SIZE_MOVE, SIZE_MOVE_TIMER_ID, WM_APP_WAKE};
 
 // ---------------------------------------------------------------------------
 // WinWindowInner — actual HWND state (Arc'd, OS holds raw ptr via GWLP_USERDATA)
@@ -185,6 +185,8 @@ pub(crate) unsafe extern "system" fn wnd_proc_trampoline(
             // C1 fix: last message this HWND will ever receive.
             unsafe { SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0) };
             unsafe { Arc::decrement_strong_count(inner_ptr) };
+            // H1 fix: clear wake HWND to prevent posting to dead window.
+            clear_wake_hwnd(hwnd);
         }
 
         res
