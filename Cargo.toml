@@ -4,6 +4,7 @@ members = [
     "crates/slate-renderer",
     "crates/slate-text",
     "crates/slate-framework",
+    "examples/anchor-md-to-png",
     "examples/hello-element",
     "examples/hello-rect",
     "examples/primitive-gallery",

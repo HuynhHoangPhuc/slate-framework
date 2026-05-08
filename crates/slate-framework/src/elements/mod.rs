@@ -8,4 +8,4 @@ pub mod div;
 pub mod text;
 
 pub use div::Div;
-pub use text::Text;
+pub use text::{Text, TextAlign, TextWrap};

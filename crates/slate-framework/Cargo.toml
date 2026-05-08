@@ -33,6 +33,7 @@ glam.workspace = true
 log.workspace = true
 thiserror.workspace = true
 pollster.workspace = true
+image.workspace = true
 
 [features]
 default = []

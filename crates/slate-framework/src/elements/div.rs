@@ -70,6 +70,14 @@ impl Div {
         self
     }
 
+    /// Add a type-erased child element.
+    ///
+    /// Use this when you already have an `AnyElement` (e.g., from a builder).
+    pub fn child_any(mut self, child: AnyElement) -> Self {
+        self.children.push(child);
+        self
+    }
+
     /// Add multiple children.
     pub fn children<I, E>(mut self, children: I) -> Self
     where

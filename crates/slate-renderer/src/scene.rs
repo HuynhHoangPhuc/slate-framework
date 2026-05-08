@@ -273,15 +273,11 @@ impl Scene {
         self.layers.last_mut().unwrap().glyphs.end = len_as_u32(self.glyphs.len());
     }
 
-    /// Close the currently-open layer. Called by `Renderer::render` before
-    /// touching the scene; must not be called by external code.
+    /// Close the currently-open layer. Called by `Renderer::render_scene`
+    /// before drawing, and by `HeadlessApp::render` for offscreen rendering.
     ///
     /// Idempotent: a no-op if no layer is open.
-    ///
-    /// `dead_code` is silenced because the only non-test caller lands in
-    /// Phase 7 (`Renderer::render(&mut Scene)` — see plan §7).
-    #[allow(dead_code)]
-    pub(crate) fn finish(&mut self) {
+    pub fn finish(&mut self) {
         self.cur_layer_open = false;
 
         #[cfg(debug_assertions)]

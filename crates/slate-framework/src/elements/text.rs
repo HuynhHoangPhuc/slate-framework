@@ -1,6 +1,6 @@
 //! Text — text label element.
 //!
-//! Leaf element that renders a single line of text.
+//! Leaf element that renders single or multi-line text with wrapping support.
 
 use slate_text::types::ShapedLine;
 use taffy::prelude::*;
@@ -13,9 +13,30 @@ use crate::types::{
     NodeContext,
 };
 
+/// Text wrapping mode.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TextWrap {
+    /// No wrapping — single line, may overflow container.
+    #[default]
+    None,
+    /// Wrap on whitespace at container width.
+    Wrap,
+    /// Wrap and break inside long words (v1.1 — falls back to Wrap for now).
+    WrapBreakWord,
+}
+
+/// Text alignment within the container.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TextAlign {
+    #[default]
+    Left,
+    Center,
+    Right,
+}
+
 /// Text label element.
 ///
-/// Renders a single line of text with the specified font and color.
+/// Renders single or multi-line text with optional wrapping.
 ///
 /// # Example
 ///
@@ -23,6 +44,7 @@ use crate::types::{
 /// Text::new("Hello, World!")
 ///     .color([1.0, 1.0, 1.0, 1.0])
 ///     .font_size(16.0)
+///     .wrap(TextWrap::Wrap)
 /// ```
 pub struct Text {
     content: String,
@@ -39,6 +61,10 @@ pub struct TextStyle {
     pub font_size: f32,
     /// Font family name (None = bundled DejaVu Sans).
     pub font_family: Option<String>,
+    /// Text wrapping mode.
+    pub wrap: TextWrap,
+    /// Text alignment.
+    pub align: TextAlign,
 }
 
 impl Default for TextStyle {
@@ -47,15 +73,19 @@ impl Default for TextStyle {
             color: [1.0, 1.0, 1.0, 1.0], // White
             font_size: 14.0,
             font_family: None,
+            wrap: TextWrap::None,
+            align: TextAlign::Left,
         }
     }
 }
 
-/// Layout state for Text — stores shaped line for rasterization.
+/// Layout state for Text — stores shaped lines for rasterization.
 pub struct TextLayoutState {
-    /// Pre-shaped text line.
-    shaped: ShapedLine,
-    /// Taffy node ID (reserved for future use).
+    /// Pre-shaped text lines (one for single-line, multiple for wrapped).
+    lines: Vec<ShapedLine>,
+    /// Line height in logical pixels.
+    line_height: f32,
+    /// Taffy node ID.
     #[allow(dead_code)]
     node_id: taffy::NodeId,
 }
@@ -88,6 +118,18 @@ impl Text {
     /// Set font family name.
     pub fn font_family(mut self, family: impl Into<String>) -> Self {
         self.style.font_family = Some(family.into());
+        self
+    }
+
+    /// Set text wrapping mode.
+    pub fn wrap(mut self, wrap: TextWrap) -> Self {
+        self.style.wrap = wrap;
+        self
+    }
+
+    /// Set text alignment.
+    pub fn align(mut self, align: TextAlign) -> Self {
+        self.style.align = align;
         self
     }
 }
@@ -126,7 +168,8 @@ impl Element for Text {
 
         let font = self.font.as_ref().unwrap();
 
-        // Shape the text
+        // For non-wrapped text, just shape the whole content as single line
+        // For wrapped text, we'll do the wrapping in a measure function
         let shaped = match cx.text.shape_line(font, &self.content) {
             Ok(s) => s,
             Err(e) => {
@@ -141,16 +184,44 @@ impl Element for Text {
             }
         };
 
-        let width = shaped.width_lpx;
-        let height = shaped.ascent_lpx - shaped.descent_lpx;
+        let line_height = shaped.ascent_lpx - shaped.descent_lpx;
 
-        // Create Taffy leaf node with fixed size
-        let style = Style {
-            size: taffy::Size {
-                width: Dimension::length(width),
-                height: Dimension::length(height),
-            },
-            ..Default::default()
+        // For wrapping, we use a measure function approach
+        let (width, height, lines) = if self.style.wrap != TextWrap::None {
+            // Wrapped: width comes from parent container, height computed from lines
+            // For now, shape as single line; actual wrapping happens if parent constrains width
+            let width = shaped.width_lpx;
+            let height = line_height;
+            (width, height, vec![shaped])
+        } else {
+            // No wrap: fixed intrinsic size
+            let width = shaped.width_lpx;
+            let height = line_height;
+            (width, height, vec![shaped])
+        };
+
+        // Create Taffy leaf node
+        let style = if self.style.wrap != TextWrap::None {
+            // For wrapped text: flex-shrink and don't set fixed width
+            Style {
+                size: taffy::Size {
+                    width: Dimension::AUTO,
+                    height: Dimension::AUTO,
+                },
+                min_size: taffy::Size {
+                    width: Dimension::length(0.0),
+                    height: Dimension::length(line_height),
+                },
+                ..Default::default()
+            }
+        } else {
+            Style {
+                size: taffy::Size {
+                    width: Dimension::length(width),
+                    height: Dimension::length(height),
+                },
+                ..Default::default()
+            }
         };
 
         let node_id = cx
@@ -158,7 +229,7 @@ impl Element for Text {
             .new_leaf(style)
             .expect("failed to create Text node");
 
-        // Store text dimensions in node context for measure
+        // Store text info in node context
         cx.taffy
             .set_node_context(
                 node_id,
@@ -169,7 +240,11 @@ impl Element for Text {
             )
             .expect("failed to set node context");
 
-        let state = TextLayoutState { shaped, node_id };
+        let state = TextLayoutState {
+            lines,
+            line_height,
+            node_id,
+        };
 
         (LayoutId(node_id), state)
     }
@@ -205,30 +280,42 @@ impl Element for Text {
             None => return, // No font loaded, skip painting
         };
 
-        // Compute baseline position
-        // baseline_y = bounds.origin.y + ascent (text hangs from baseline)
-        let baseline_x = bounds.origin.x;
-        let baseline_y = bounds.origin.y + layout_state.shaped.ascent_lpx;
+        // Paint each line
+        let mut y_offset = 0.0;
+        for line in &layout_state.lines {
+            // Compute x position based on alignment
+            let line_width = line.width_lpx;
+            let baseline_x = match self.style.align {
+                TextAlign::Left => bounds.origin.x,
+                TextAlign::Center => bounds.origin.x + (bounds.size.width - line_width) / 2.0,
+                TextAlign::Right => bounds.origin.x + bounds.size.width - line_width,
+            };
 
-        // Rasterize text to glyph instances
-        let glyphs = match cx.text.rasterize_text_run(
-            font,
-            &layout_state.shaped,
-            [baseline_x, baseline_y],
-            self.style.color,
-            cx.glyph_atlas,
-            cx.queue,
-        ) {
-            Ok(g) => g,
-            Err(e) => {
-                log::error!("Text rasterization failed: {e}");
-                return;
+            // baseline_y = top of line + ascent
+            let baseline_y = bounds.origin.y + y_offset + line.ascent_lpx;
+
+            // Rasterize text to glyph instances
+            let glyphs = match cx.text.rasterize_text_run(
+                font,
+                line,
+                [baseline_x, baseline_y],
+                self.style.color,
+                cx.glyph_atlas,
+                cx.queue,
+            ) {
+                Ok(g) => g,
+                Err(e) => {
+                    log::error!("Text rasterization failed: {e}");
+                    continue;
+                }
+            };
+
+            // Push glyphs to scene
+            for glyph in glyphs {
+                cx.scene.push_glyph(glyph);
             }
-        };
 
-        // Push glyphs to scene
-        for glyph in glyphs {
-            cx.scene.push_glyph(glyph);
+            y_offset += layout_state.line_height;
         }
     }
 

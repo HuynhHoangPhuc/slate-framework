@@ -30,6 +30,7 @@ pub mod context;
 pub mod element;
 pub mod elements;
 pub mod executor;
+pub mod headless;
 pub mod hit_test;
 pub mod layout;
 pub mod style;
@@ -45,10 +46,11 @@ pub use slate_text;
 
 // Re-export core types
 pub use app::App;
+pub use headless::{HeadlessApp, HeadlessError};
 pub use color::Color;
 pub use context::{LayoutCtx, PaintCtx, PrepaintCtx};
 pub use element::{AnyElement, Element, IntoElement};
-pub use elements::{Div, Text};
+pub use elements::{Div, Text, TextAlign, TextWrap};
 pub use view::{IntoAny, View};
 pub use executor::{BackgroundExecutor, Executor, ForegroundExecutor, RedrawRequester};
 pub use hit_test::{CursorStyle, HitRegion, HitTestList, HitTestResult};

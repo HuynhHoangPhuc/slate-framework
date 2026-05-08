@@ -1,0 +1,455 @@
+//! Headless rendering — offscreen wgpu rendering without a platform window.
+//!
+//! `HeadlessApp` runs the full layout → prepaint → paint pipeline against an
+//! offscreen texture, then reads back the pixels as an `image::RgbaImage`.
+//!
+//! # Example
+//!
+//! ```ignore
+//! let mut app = HeadlessApp::new(800, 600)?;
+//! let ui = Div::new().child(Text::new("Hello!"));
+//! let image = app.render(ui.into_any())?;
+//! image.save("output.png")?;
+//! ```
+
+use std::num::NonZeroU32;
+
+use image::RgbaImage;
+use wgpu::{
+    Backends, BindGroup, BindGroupDescriptor, BindGroupEntry, BindingResource, Buffer,
+    BufferDescriptor, BufferUsages, Color, CommandEncoderDescriptor, Device, DeviceDescriptor,
+    ExperimentalFeatures, Extent3d, Features, Instance, InstanceDescriptor, Limits, LoadOp,
+    MapMode, MemoryHints, Operations, Origin3d, PollType, Queue, RenderPassColorAttachment,
+    RenderPassDescriptor, RequestDeviceError, StoreOp, TexelCopyBufferInfo, TexelCopyBufferLayout,
+    TexelCopyTextureInfo, Texture, TextureAspect, TextureDescriptor, TextureDimension,
+    TextureFormat, TextureUsages, TextureView, Trace,
+};
+
+use slate_renderer::atlas::{Atlas, Format};
+use slate_renderer::glyph_pipeline::GlyphPipeline;
+use slate_renderer::image_pipeline::ImagePipeline;
+use slate_renderer::instanced_rect_pipeline::InstancedRectPipeline;
+use slate_renderer::pipeline_shared::{self, ViewportUniform};
+use slate_renderer::shadow_pipeline::ShadowPipeline;
+use slate_renderer::Scene;
+
+use crate::context::{LayoutCtx, PaintCtx, PrepaintCtx};
+use crate::element::AnyElement;
+use crate::executor::{Executor, RedrawRequester};
+use crate::hit_test::HitTestList;
+use crate::layout::{compute_layout, resolve_bounds, LayoutTree};
+use crate::text_system::TextSystem;
+use crate::types::{AccessibilityNode, Size};
+
+/// Headless application for offscreen rendering.
+///
+/// Renders elements to an in-memory texture without requiring a platform window.
+pub struct HeadlessApp {
+    device: Device,
+    queue: Queue,
+    width: u32,
+    height: u32,
+    scale_factor: f64,
+
+    // Render target
+    target_texture: Texture,
+    target_view: TextureView,
+    staging_buffer: Buffer,
+
+    // Shared GPU resources
+    #[allow(dead_code)]
+    viewport_buf: Buffer,
+    viewport_bg: BindGroup,
+    unit_quad: Buffer,
+
+    // Atlases
+    image_atlas: Atlas,
+    glyph_atlas: Atlas,
+
+    // Pipelines
+    rect_pipeline: InstancedRectPipeline,
+    shadow_pipeline: ShadowPipeline,
+    image_pipeline: ImagePipeline,
+    glyph_pipeline: GlyphPipeline,
+
+    // Framework state
+    text_system: TextSystem,
+    layout_tree: LayoutTree,
+    hit_test_list: HitTestList,
+    a11y_nodes: Vec<AccessibilityNode>,
+    scene: Scene,
+    executor: Executor,
+}
+
+/// Error creating or rendering with HeadlessApp.
+#[derive(thiserror::Error, Debug)]
+pub enum HeadlessError {
+    #[error("no compatible GPU adapter found")]
+    NoAdapter,
+    #[error("failed to open GPU device: {0}")]
+    Device(#[from] RequestDeviceError),
+    #[error("text system init failed: {0}")]
+    TextSystem(String),
+    #[error("buffer mapping failed")]
+    BufferMapping,
+    #[error("invalid image dimensions")]
+    InvalidDimensions,
+}
+
+impl HeadlessApp {
+    /// Create a new headless app with the given dimensions (logical pixels).
+    ///
+    /// Uses scale_factor of 1.0 by default. Call `with_scale_factor` to change.
+    pub fn new(width: u32, height: u32) -> Result<Self, HeadlessError> {
+        Self::with_scale_factor(width, height, 1.0)
+    }
+
+    /// Create a new headless app with custom scale factor.
+    pub fn with_scale_factor(
+        width: u32,
+        height: u32,
+        scale_factor: f64,
+    ) -> Result<Self, HeadlessError> {
+        // Use PRIMARY backends for headless (works on all platforms)
+        let instance = Instance::new(InstanceDescriptor {
+            backends: Backends::PRIMARY,
+            flags: wgpu::InstanceFlags::default(),
+            memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+            backend_options: Default::default(),
+            display: None,
+        });
+
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower, // Better for headless/CI
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }))
+        .map_err(|_| HeadlessError::NoAdapter)?;
+
+        log::info!(
+            "HeadlessApp: GPU adapter selected: {:?}",
+            adapter.get_info()
+        );
+
+        let (device, queue) = pollster::block_on(adapter.request_device(&DeviceDescriptor {
+            label: Some("slate-headless-device"),
+            required_features: Features::empty(),
+            required_limits: Limits::downlevel_defaults()
+                .using_resolution(adapter.limits())
+                .using_alignment(adapter.limits()),
+            memory_hints: MemoryHints::Performance,
+            trace: Trace::Off,
+            experimental_features: ExperimentalFeatures::disabled(),
+        }))?;
+
+        let format = TextureFormat::Rgba8UnormSrgb;
+
+        // Create offscreen render target
+        let target_texture = device.create_texture(&TextureDescriptor {
+            label: Some("slate-headless-target"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format,
+            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+
+        let target_view = target_texture.create_view(&Default::default());
+
+        // Create staging buffer for readback (4 bytes per pixel, aligned to 256)
+        let bytes_per_row = Self::aligned_bytes_per_row(width);
+        let buffer_size = (bytes_per_row * height) as u64;
+        let staging_buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("slate-headless-staging"),
+            size: buffer_size,
+            usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        // Shared resources
+        let viewport_bgl = pipeline_shared::viewport_bind_group_layout(&device);
+        let viewport_buf = device.create_buffer(&BufferDescriptor {
+            label: Some("slate-viewport-buf"),
+            size: std::mem::size_of::<ViewportUniform>() as u64,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(
+            &viewport_buf,
+            0,
+            bytemuck::bytes_of(&ViewportUniform {
+                size: [width as f32, height as f32],
+                _pad: [0.0; 2],
+            }),
+        );
+        let viewport_bg = device.create_bind_group(&BindGroupDescriptor {
+            label: Some("slate-viewport-bg"),
+            layout: &viewport_bgl,
+            entries: &[BindGroupEntry {
+                binding: 0,
+                resource: BindingResource::Buffer(viewport_buf.as_entire_buffer_binding()),
+            }],
+        });
+        let unit_quad = pipeline_shared::create_unit_quad(&device);
+
+        // Atlases
+        let image_atlas = Atlas::new(&device, Format::Rgba8UnormSrgb);
+        let glyph_atlas = Atlas::new(&device, Format::R8Unorm);
+
+        // Pipelines
+        let rect_pipeline = InstancedRectPipeline::new(&device, format, &viewport_bgl);
+        let shadow_pipeline = ShadowPipeline::new(&device, format, &viewport_bgl);
+        let image_pipeline = ImagePipeline::new(&device, format, &viewport_bgl, &image_atlas);
+        let glyph_pipeline = GlyphPipeline::new(&device, format, &viewport_bgl, &glyph_atlas);
+
+        // Framework state
+        let text_system =
+            TextSystem::new().map_err(|e| HeadlessError::TextSystem(e.to_string()))?;
+        let layout_tree = LayoutTree::new();
+        let hit_test_list = HitTestList::new();
+        let a11y_nodes = Vec::new();
+        let scene = Scene::new();
+        let redraw_requester = RedrawRequester::new(|| {}); // No-op for headless
+        let executor = Executor::new(redraw_requester);
+
+        Ok(Self {
+            device,
+            queue,
+            width,
+            height,
+            scale_factor,
+            target_texture,
+            target_view,
+            staging_buffer,
+            viewport_buf,
+            viewport_bg,
+            unit_quad,
+            image_atlas,
+            glyph_atlas,
+            rect_pipeline,
+            shadow_pipeline,
+            image_pipeline,
+            glyph_pipeline,
+            text_system,
+            layout_tree,
+            hit_test_list,
+            a11y_nodes,
+            scene,
+            executor,
+        })
+    }
+
+    /// Bytes per row aligned to 256 (wgpu requirement for buffer copies).
+    fn aligned_bytes_per_row(width: u32) -> u32 {
+        let bytes_per_pixel = 4u32; // RGBA8
+        let unaligned = width * bytes_per_pixel;
+        let alignment = 256u32;
+        unaligned.div_ceil(alignment) * alignment
+    }
+
+    /// Render an element tree and return the result as an RGBA image.
+    pub fn render(&mut self, mut root: AnyElement) -> Result<RgbaImage, HeadlessError> {
+        let w = self.width;
+        let h = self.height;
+
+        // 1. Layout pass
+        self.layout_tree.clear();
+        let root_id = {
+            let mut cx = LayoutCtx::new(
+                self.layout_tree.inner_mut(),
+                &mut self.text_system,
+                &self.executor.foreground,
+                self.scale_factor,
+            );
+            compute_layout(&mut root, &mut cx, Size::new(w as f32, h as f32))
+        };
+
+        let Some(root_id) = root_id else {
+            log::warn!("HeadlessApp: layout computation failed");
+            return Err(HeadlessError::InvalidDimensions);
+        };
+
+        // 2. Resolve bounds
+        let root_bounds = resolve_bounds(self.layout_tree.inner(), root_id);
+        let Some(root_bounds) = root_bounds else {
+            log::warn!("HeadlessApp: bounds resolution failed");
+            return Err(HeadlessError::InvalidDimensions);
+        };
+
+        // 3. Prepaint pass
+        self.hit_test_list.clear();
+        self.a11y_nodes.clear();
+        {
+            let mut cx = PrepaintCtx::new(
+                self.layout_tree.inner(),
+                &mut self.hit_test_list,
+                &mut self.a11y_nodes,
+                &mut self.text_system,
+                &self.executor.foreground,
+                self.scale_factor,
+            );
+            root.prepaint(root_bounds, &mut cx);
+        }
+
+        // 4. Paint pass
+        self.scene.clear();
+        {
+            let (atlas, queue) = (&mut self.glyph_atlas, &self.queue);
+            let mut cx = PaintCtx::new(
+                self.layout_tree.inner(),
+                &mut self.scene,
+                &mut self.text_system,
+                atlas,
+                queue,
+                &self.executor.foreground,
+                self.scale_factor,
+            );
+            root.paint(root_bounds, &mut cx);
+        }
+
+        // 5. GPU render
+        self.scene.finish();
+        self.image_atlas.begin_frame();
+        self.glyph_atlas.begin_frame();
+
+        // Prepare pipelines
+        self.shadow_pipeline
+            .prepare(&self.device, &self.queue, &self.scene.shadows);
+        self.rect_pipeline
+            .prepare(&self.device, &self.queue, &self.scene.rects);
+        self.image_pipeline
+            .prepare(&self.device, &self.queue, &self.scene.images);
+        self.glyph_pipeline
+            .prepare(&self.device, &self.queue, &self.scene.glyphs);
+
+        // Record render pass
+        let mut encoder = self
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor {
+                label: Some("slate-headless-encoder"),
+            });
+
+        {
+            let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                label: Some("slate-headless-pass"),
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: &self.target_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: Operations {
+                        load: LoadOp::Clear(Color::TRANSPARENT),
+                        store: StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+                multiview_mask: None::<NonZeroU32>,
+            });
+
+            for layer in &self.scene.layers {
+                self.shadow_pipeline.record(
+                    &mut pass,
+                    &self.viewport_bg,
+                    &self.unit_quad,
+                    layer.shadows.clone(),
+                );
+                self.rect_pipeline.record(
+                    &mut pass,
+                    &self.viewport_bg,
+                    &self.unit_quad,
+                    layer.rects.clone(),
+                );
+                self.glyph_pipeline.record(
+                    &mut pass,
+                    &self.viewport_bg,
+                    &self.unit_quad,
+                    layer.glyphs.clone(),
+                );
+                self.image_pipeline.record(
+                    &mut pass,
+                    &self.viewport_bg,
+                    &self.unit_quad,
+                    layer.images.clone(),
+                );
+            }
+        }
+
+        // Copy texture to staging buffer
+        let bytes_per_row = Self::aligned_bytes_per_row(w);
+        encoder.copy_texture_to_buffer(
+            TexelCopyTextureInfo {
+                texture: &self.target_texture,
+                mip_level: 0,
+                origin: Origin3d::ZERO,
+                aspect: TextureAspect::All,
+            },
+            TexelCopyBufferInfo {
+                buffer: &self.staging_buffer,
+                layout: TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(bytes_per_row),
+                    rows_per_image: Some(h),
+                },
+            },
+            Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        self.queue.submit(std::iter::once(encoder.finish()));
+
+        // Read back pixels
+        let buffer_slice = self.staging_buffer.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        buffer_slice.map_async(MapMode::Read, move |result| {
+            tx.send(result).ok();
+        });
+
+        let _ = self.device.poll(PollType::wait_indefinitely());
+
+        rx.recv()
+            .map_err(|_| HeadlessError::BufferMapping)?
+            .map_err(|_| HeadlessError::BufferMapping)?;
+
+        // Copy to image buffer (removing row padding)
+        let data = buffer_slice.get_mapped_range();
+        let mut pixels = Vec::with_capacity((w * h * 4) as usize);
+
+        for row in 0..h {
+            let start = (row * bytes_per_row) as usize;
+            let end = start + (w * 4) as usize;
+            pixels.extend_from_slice(&data[start..end]);
+        }
+
+        drop(data);
+        self.staging_buffer.unmap();
+
+        // Convert from SRGB to linear for image crate (it expects linear)
+        // Actually image crate expects sRGB, so we're good
+        RgbaImage::from_raw(w, h, pixels).ok_or(HeadlessError::InvalidDimensions)
+    }
+
+    /// Get the current dimensions.
+    pub fn size(&self) -> (u32, u32) {
+        (self.width, self.height)
+    }
+
+    /// Get the scale factor.
+    pub fn scale_factor(&self) -> f64 {
+        self.scale_factor
+    }
+
+    /// Mutable access to the text system.
+    pub fn text_system_mut(&mut self) -> &mut TextSystem {
+        &mut self.text_system
+    }
+}

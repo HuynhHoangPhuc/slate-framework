@@ -1,0 +1,20 @@
+[package]
+name = "anchor-md-to-png"
+description = "Phase 3.5 anchor spike — markdown to PNG headless renderer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+
+[[bin]]
+name = "anchor-md-to-png"
+path = "src/main.rs"
+
+[dependencies]
+slate-framework = { path = "../../crates/slate-framework" }
+pulldown-cmark = "0.13"
+image.workspace = true
+log.workspace = true
+env_logger.workspace = true
