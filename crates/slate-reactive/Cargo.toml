@@ -1,0 +1,16 @@
+[package]
+name = "slate-reactive"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Reactive primitives for Slate UI framework"
+
+[dependencies]
+parking_lot.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+trybuild = "1"
