@@ -62,7 +62,16 @@ pub use types::{
     LiveRegion, NodeContext, Point, Size,
 };
 
-// Re-export Taffy types commonly used with Elements
-pub use taffy::{
-    AlignItems, FlexDirection, FlexWrap, JustifyContent, TaffyTree,
-};
+// Note: TaffyTree is NOT re-exported — internal modules import taffy::TaffyTree directly.
+// This hides the layout tree implementation from external consumers.
+
+/// Curated re-exports of Taffy layout enums used by Slate styles.
+///
+/// These are the public layout primitives — `TaffyTree` itself is hidden.
+/// TODO(v1.1): mirror as Slate-owned enums + From<TaffyEnum> impls to enable backend swap.
+pub mod layout_types {
+    pub use taffy::{AlignItems, FlexDirection, FlexWrap, JustifyContent};
+}
+
+// Re-export layout enums at crate root for convenience
+pub use layout_types::{AlignItems, FlexDirection, FlexWrap, JustifyContent};

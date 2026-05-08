@@ -19,6 +19,39 @@ use crate::text_system::TextSystem;
 use crate::types::{AccessibilityNode, Size};
 use crate::view::View;
 
+// Debug-mode borrow-order discipline (see ADR-001)
+// Detects borrow-order violations before they ship.
+#[cfg(debug_assertions)]
+thread_local! {
+    static BORROW_ORDER: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(debug_assertions)]
+fn reset_borrow_order() {
+    BORROW_ORDER.with(|c| c.set(0));
+}
+
+#[cfg(debug_assertions)]
+#[allow(dead_code)] // Infrastructure for future simultaneous-borrow detection
+fn check_borrow_order(slot: u8) {
+    BORROW_ORDER.with(|c| {
+        let last = c.get();
+        debug_assert!(
+            slot > last,
+            "RefCell borrow-order violation: tried slot {} after slot {}; see ADR-001",
+            slot,
+            last
+        );
+        c.set(slot);
+    });
+}
+
+#[cfg(not(debug_assertions))]
+fn reset_borrow_order() {}
+
+#[cfg(not(debug_assertions))]
+fn check_borrow_order(_slot: u8) {}
+
 /// Application container.
 ///
 /// Owns all framework resources: platform, window, renderer, executor,
@@ -116,6 +149,18 @@ impl App {
             }
 
             Event::WindowRedrawRequested { .. } => {
+                // BORROW ORDER (do not reorder; see ADR-001 in plans/260508-1245-*):
+                // 1. view  2. layout_tree  3. text_system  4. hit_test_list
+                // 5. a11y_nodes  6. scene  7. renderer
+                //
+                // Each borrow lives in the smallest scope possible — guard drops
+                // before next acquire. Phase 4 signals depend on this discipline
+                // to avoid deadlock during read-during-render.
+                //
+                // Debug builds reset the borrow-order cookie here; if future changes
+                // introduce simultaneous borrows, add check_borrow_order(N) calls.
+                reset_borrow_order();
+
                 // Skip if not initialized
                 if renderer.borrow().is_none() {
                     return;
@@ -189,7 +234,22 @@ impl App {
                         scale_factor,
                     );
 
+                    // Initialize tree-position keying for stable ElementIds
+                    cx.init_root_frame();
+
                     root.prepaint(root_bounds, &mut cx);
+
+                    // Verify prepaint frames are balanced (unbalanced = bug in element prepaint)
+                    debug_assert!(
+                        cx.id_stack.len() == 1,
+                        "unbalanced prepaint frames: expected 1 (root), got {}",
+                        cx.id_stack.len()
+                    );
+                    debug_assert!(
+                        cx.a11y_stack.is_empty(),
+                        "unbalanced a11y stack at frame end: {} unclosed nodes",
+                        cx.a11y_stack.len()
+                    );
                 }
 
                 // 5. Paint pass (split borrow on renderer for atlas/queue)
@@ -238,6 +298,14 @@ impl App {
 
             Event::Exiting => {
                 log::info!("exiting");
+            }
+
+            Event::Wake => {
+                // Background task completed — poll executor to process results,
+                // then request redraw so any state changes render this frame.
+                // Order matters: poll first (drains completed tasks), then redraw.
+                executor_ref.foreground.poll();
+                window_ref.request_redraw();
             }
 
             _ => {}

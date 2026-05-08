@@ -8,7 +8,7 @@
 //! `AnyElement` provides type erasure via `Box<dyn AnyElementDynamic>`.
 
 use crate::context::{LayoutCtx, PaintCtx, PrepaintCtx};
-use crate::types::{AccessibilityInfo, Bounds, LayoutId};
+use crate::types::{AccessibilityInfo, Bounds, ElementId, LayoutId};
 
 /// Core trait for UI elements with three-phase lifecycle.
 ///
@@ -83,6 +83,16 @@ pub trait Element: 'static {
     fn accessibility(&self) -> Option<AccessibilityInfo> {
         None
     }
+
+    /// Return the stable ElementId allocated during prepaint.
+    ///
+    /// Returns `None` until prepaint has been called. Override to expose
+    /// the ID allocated via `PrepaintCtx::allocate_id`.
+    ///
+    /// Phase 4 signals use this for subscription identity.
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
 }
 
 /// Sealed trait marker for `IntoElement`.
@@ -147,6 +157,11 @@ impl AnyElement {
     pub fn accessibility(&self) -> Option<AccessibilityInfo> {
         self.element.accessibility()
     }
+
+    /// Get the stable ElementId (available after prepaint).
+    pub fn id(&self) -> Option<ElementId> {
+        self.element.id()
+    }
 }
 
 /// Internal trait for type-erased element operations.
@@ -158,6 +173,7 @@ trait AnyElementDynamic: 'static {
     fn prepaint(&mut self, bounds: Bounds, cx: &mut PrepaintCtx);
     fn paint(&mut self, bounds: Bounds, cx: &mut PaintCtx);
     fn accessibility(&self) -> Option<AccessibilityInfo>;
+    fn id(&self) -> Option<ElementId>;
 }
 
 /// Internal wrapper storing element + per-phase state.
@@ -202,10 +218,16 @@ impl<E: Element> AnyElementDynamic for ElementState<E> {
     fn accessibility(&self) -> Option<AccessibilityInfo> {
         self.element.accessibility()
     }
+
+    fn id(&self) -> Option<ElementId> {
+        self.element.id()
+    }
 }
 
-// Re-export the sealed module for element implementations
-pub use sealed::Sealed;
+// Sealed pattern: the `Sealed` trait is `pub(crate)` so external crates cannot
+// implement `Element`. Framework-internal impls access it via `crate::element::sealed::Sealed`.
+// See: https://rust-lang.github.io/api-guidelines/future-proofing.html#sealed-traits-protect-against-downstream-implementations-c-sealed
+pub(crate) use sealed::Sealed;
 
 #[cfg(test)]
 mod tests {

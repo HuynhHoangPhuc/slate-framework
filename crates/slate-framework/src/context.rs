@@ -15,7 +15,7 @@ use taffy::TaffyTree;
 use crate::executor::ForegroundExecutor;
 use crate::hit_test::{HitRegion, HitTestList};
 use crate::text_system::TextSystem;
-use crate::types::{AccessibilityNode, NodeContext};
+use crate::types::{AccessibilityInfo, AccessibilityNode, Bounds, ElementId, NodeContext};
 
 /// Context for the `request_layout` phase.
 ///
@@ -57,31 +57,48 @@ impl<'a> LayoutCtx<'a> {
 /// Provides access to:
 /// - Taffy tree for child bounds lookup (read-only)
 /// - Hit region registration for pointer events
-/// - Accessibility node registration
+/// - Accessibility node registration (hierarchical tree via open/close pattern)
 /// - Text system for text-related computations
 /// - Foreground executor for async tasks
 /// - Scale factor
+/// - Stable ElementId allocation via tree-position keying
 pub struct PrepaintCtx<'a> {
     /// Taffy layout tree (read-only for bounds lookup).
     pub taffy: &'a TaffyTree<NodeContext>,
     /// Hit regions registered during prepaint (Phase 6 dispatches events).
     pub hit_regions: &'a mut HitTestList,
-    /// Accessibility nodes for the a11y tree (Phase 5).
-    pub a11y_nodes: &'a mut Vec<AccessibilityNode>,
+    /// Completed top-level accessibility nodes (root-level a11y tree).
+    a11y_completed: &'a mut Vec<AccessibilityNode>,
     /// Text system (mutable for lazy font loading).
     pub text: &'a mut TextSystem,
     /// Foreground executor for UI-thread async tasks.
     pub executor: &'a ForegroundExecutor,
     /// Display scale factor.
     pub scale_factor: f64,
+
+    // --- Tree-position keying for stable ElementIds (Phase 4 prep) ---
+    /// Stack of ancestor element IDs; `last()` is the immediate parent.
+    /// Pushed by `push_frame`, popped by `pop_frame`. Length 1 (root) at frame start.
+    pub(crate) id_stack: Vec<ElementId>,
+    /// Per-depth child counter, parallel to `id_stack`.
+    /// Reset to 0 at each `push_frame`, incremented by `allocate_id`.
+    pub(crate) child_counters: Vec<u32>,
+    /// User-provided key for the *next* `allocate_id` call; consumed on use.
+    pub(crate) next_key: Option<String>,
+
+    // --- Hierarchical a11y tree building ---
+    /// In-progress a11y node builders; `last_mut()` is the current node accumulating children.
+    pub(crate) a11y_stack: Vec<AccessibilityNode>,
 }
 
 impl<'a> PrepaintCtx<'a> {
     /// Create a new prepaint context.
+    ///
+    /// Caller must call `init_root_frame()` before the first `allocate_id`.
     pub fn new(
         taffy: &'a TaffyTree<NodeContext>,
         hit_regions: &'a mut HitTestList,
-        a11y_nodes: &'a mut Vec<AccessibilityNode>,
+        a11y_completed: &'a mut Vec<AccessibilityNode>,
         text: &'a mut TextSystem,
         executor: &'a ForegroundExecutor,
         scale_factor: f64,
@@ -89,11 +106,78 @@ impl<'a> PrepaintCtx<'a> {
         Self {
             taffy,
             hit_regions,
-            a11y_nodes,
+            a11y_completed,
             text,
             executor,
             scale_factor,
+            id_stack: Vec::new(),
+            child_counters: Vec::new(),
+            next_key: None,
+            a11y_stack: Vec::new(),
         }
+    }
+
+    /// Initialize the root frame for tree-position keying.
+    ///
+    /// Must be called once before prepaint traversal begins.
+    pub fn init_root_frame(&mut self) {
+        self.id_stack.clear();
+        self.id_stack.push(ElementId::root());
+        self.child_counters.clear();
+        self.child_counters.push(0);
+        self.next_key = None;
+    }
+
+    /// Allocate a stable `ElementId` for the next child of the current parent.
+    ///
+    /// Hashes `(parent_id, child_index, type_id, optional_user_key)` to produce
+    /// an ID that is stable across frames for the same tree position.
+    ///
+    /// # Stability Note
+    ///
+    /// Uses `DefaultHasher` which is NOT guaranteed stable across Rust versions.
+    /// IDs are ephemeral per-session — do not serialize or persist them.
+    /// Phase 4 signals use these for subscription identity within a single run.
+    pub fn allocate_id<E: 'static>(&mut self) -> ElementId {
+        let counter = self
+            .child_counters
+            .last_mut()
+            .expect("PrepaintCtx must have a root frame; call init_root_frame before prepaint");
+        let index = *counter;
+        *counter += 1;
+
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.id_stack.last().copied().hash(&mut hasher);
+        index.hash(&mut hasher);
+        std::any::TypeId::of::<E>().hash(&mut hasher);
+        if let Some(k) = self.next_key.take() {
+            k.hash(&mut hasher);
+        }
+        ElementId::from_hash(hasher.finish())
+    }
+
+    /// Push a frame: the given `id` becomes parent for descended children.
+    ///
+    /// Call after `allocate_id` for container elements, before recursing into children.
+    pub fn push_frame(&mut self, id: ElementId) {
+        self.id_stack.push(id);
+        self.child_counters.push(0);
+    }
+
+    /// Pop the current frame after recursing children.
+    ///
+    /// Call after all children have been prepainted.
+    pub fn pop_frame(&mut self) {
+        self.id_stack.pop();
+        self.child_counters.pop();
+    }
+
+    /// Set a user-provided key consumed by the next `allocate_id` call.
+    ///
+    /// Use for dynamic lists where insertion/removal shifts indices.
+    pub fn set_next_key(&mut self, k: impl Into<String>) {
+        self.next_key = Some(k.into());
     }
 
     /// Register a hit region for pointer event handling.
@@ -103,9 +187,55 @@ impl<'a> PrepaintCtx<'a> {
         self.hit_regions.push(region);
     }
 
-    /// Register an accessibility node.
+    /// Open an accessibility node frame for a container element.
+    ///
+    /// Call before recursing into children. The node will accumulate children
+    /// until `prepaint_node_close()` is called.
+    ///
+    /// Order: `prepaint_node_open` → `push_frame` → recurse → `pop_frame` → `prepaint_node_close`
+    ///
+    /// # Panic Safety
+    ///
+    /// Caller must ensure `prepaint_node_close()` is called even on error paths.
+    /// If not, `debug_assert` at frame end catches imbalance in dev builds.
+    /// In release, corrupted a11y tree is non-fatal (screen reader sees flat tree).
+    pub fn prepaint_node_open(&mut self, id: ElementId, bounds: Bounds, info: AccessibilityInfo) {
+        self.a11y_stack.push(AccessibilityNode {
+            id,
+            bounds,
+            info,
+            children: Vec::new(),
+        });
+    }
+
+    /// Close the current accessibility node frame.
+    ///
+    /// Pops the top node from the stack. If there's a parent on the stack,
+    /// appends as a child; otherwise appends to the completed list.
+    pub fn prepaint_node_close(&mut self) {
+        debug_assert!(
+            !self.a11y_stack.is_empty(),
+            "prepaint_node_close without matching open"
+        );
+        let Some(node) = self.a11y_stack.pop() else {
+            log::warn!("a11y close without open; dropped");
+            return;
+        };
+        match self.a11y_stack.last_mut() {
+            Some(parent) => parent.children.push(node),
+            None => self.a11y_completed.push(node),
+        }
+    }
+
+    /// Register a leaf accessibility node (shorthand for open + immediate close).
+    ///
+    /// Use for elements with no children (e.g., Text).
     pub fn register_a11y_node(&mut self, node: AccessibilityNode) {
-        self.a11y_nodes.push(node);
+        // Leaf nodes get added to the current parent (if any) or completed list
+        match self.a11y_stack.last_mut() {
+            Some(parent) => parent.children.push(node),
+            None => self.a11y_completed.push(node),
+        }
     }
 }
 
@@ -178,5 +308,77 @@ mod tests {
         assert_not_sync::<LayoutCtx<'_>>();
         assert_not_sync::<PrepaintCtx<'_>>();
         assert_not_sync::<PaintCtx<'_>>();
+    }
+
+    #[test]
+    fn allocate_id_stability_across_calls() {
+        // Test that same tree position produces same ID across "frames"
+        // This simulates calling allocate_id twice with identical tree state
+
+        use std::hash::{Hash, Hasher};
+
+        fn compute_id<E: 'static>(parent: ElementId, index: u32, key: Option<&str>) -> ElementId {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            parent.hash(&mut hasher);
+            index.hash(&mut hasher);
+            std::any::TypeId::of::<E>().hash(&mut hasher);
+            if let Some(k) = key {
+                k.hash(&mut hasher);
+            }
+            ElementId::from_hash(hasher.finish())
+        }
+
+        struct TestElement;
+
+        // Same position (root parent, index 0, TestElement type) → same ID
+        let id1 = compute_id::<TestElement>(ElementId::root(), 0, None);
+        let id2 = compute_id::<TestElement>(ElementId::root(), 0, None);
+        assert_eq!(id1, id2, "same tree position should produce same ID");
+
+        // Different index → different ID
+        let id3 = compute_id::<TestElement>(ElementId::root(), 1, None);
+        assert_ne!(id1, id3, "different index should produce different ID");
+
+        // Same position with user key → different ID than without key
+        let id4 = compute_id::<TestElement>(ElementId::root(), 0, Some("toolbar"));
+        assert_ne!(id1, id4, "user key should change the ID");
+
+        // Same position + same key → same ID
+        let id5 = compute_id::<TestElement>(ElementId::root(), 0, Some("toolbar"));
+        assert_eq!(id4, id5, "same key should produce same ID");
+    }
+
+    #[test]
+    fn push_pop_frame_lifo() {
+        // Test that push/pop frame maintains LIFO stack semantics
+        let parent1 = ElementId::from_hash(100);
+        let parent2 = ElementId::from_hash(200);
+
+        let mut stack: Vec<ElementId> = vec![ElementId::root()];
+        let mut counters: Vec<u32> = vec![0];
+
+        // Push first frame
+        stack.push(parent1);
+        counters.push(0);
+        assert_eq!(stack.len(), 2);
+        assert_eq!(*stack.last().unwrap(), parent1);
+
+        // Push second frame
+        stack.push(parent2);
+        counters.push(0);
+        assert_eq!(stack.len(), 3);
+        assert_eq!(*stack.last().unwrap(), parent2);
+
+        // Pop second frame
+        stack.pop();
+        counters.pop();
+        assert_eq!(stack.len(), 2);
+        assert_eq!(*stack.last().unwrap(), parent1);
+
+        // Pop first frame
+        stack.pop();
+        counters.pop();
+        assert_eq!(stack.len(), 1);
+        assert_eq!(*stack.last().unwrap(), ElementId::root());
     }
 }

@@ -14,10 +14,7 @@ use crate::element::{AnyElement, Element, IntoElement, Sealed};
 use crate::hit_test::{CursorStyle, HitRegion};
 use crate::layout::resolve_child_bounds;
 use crate::style::Style;
-use crate::types::{
-    AccessibilityInfo, AccessibilityNode, AccessibilityRole, Bounds, ElementId, LayoutId,
-    NodeContext,
-};
+use crate::types::{AccessibilityInfo, AccessibilityRole, Bounds, ElementId, LayoutId, NodeContext};
 
 /// Flexbox container element.
 ///
@@ -35,6 +32,10 @@ pub struct Div {
     children: Vec<AnyElement>,
     layout_style: Style,
     visual: DivVisual,
+    /// User-provided stability key for dynamic lists (consumed during prepaint).
+    user_key: Option<String>,
+    /// Stable ElementId allocated during prepaint (available after prepaint).
+    last_id: Option<ElementId>,
 }
 
 /// Visual styling for a Div (non-layout properties).
@@ -61,7 +62,18 @@ impl Div {
             children: Vec::new(),
             layout_style: Style::default(),
             visual: DivVisual::default(),
+            user_key: None,
+            last_id: None,
         }
+    }
+
+    /// Set a stability key for dynamic lists.
+    ///
+    /// Use when child order or count changes between frames (e.g., list items).
+    /// Static trees can omit — tree-position keying handles them automatically.
+    pub fn key(mut self, k: impl Into<String>) -> Self {
+        self.user_key = Some(k.into());
+        self
     }
 
     /// Add a child element.
@@ -166,15 +178,25 @@ impl Element for Div {
 
         // Convert unified Style to taffy::Style
         let taffy_style = taffy::Style::from(&self.layout_style);
-        let node_id = cx
-            .taffy
-            .new_with_children(taffy_style, &child_nodes)
-            .expect("failed to create Div node");
+        let node_id = match cx.taffy.new_with_children(taffy_style, &child_nodes) {
+            Ok(id) => id,
+            Err(e) => {
+                log::error!("Div: failed to create Taffy node: {e}; rendering empty");
+                // Sentinel: empty leaf node so layout completes; widget renders zero-size
+                match cx.taffy.new_leaf(taffy::Style::default()) {
+                    Ok(id) => id,
+                    Err(e2) => {
+                        log::error!("Div: Taffy new_leaf also failed ({e2}) — pathological state");
+                        taffy::NodeId::from(u64::MAX)
+                    }
+                }
+            }
+        };
 
-        // Set node context (container)
-        cx.taffy
-            .set_node_context(node_id, Some(NodeContext::None))
-            .expect("failed to set node context");
+        // Set node context (container) — non-fatal if fails
+        if let Err(e) = cx.taffy.set_node_context(node_id, Some(NodeContext::None)) {
+            log::error!("Div: failed to set node context: {e}; layout proceeds without context");
+        }
 
         (LayoutId(node_id), DivLayoutState { node_id })
     }
@@ -185,7 +207,12 @@ impl Element for Div {
         layout_state: &mut Self::LayoutState,
         cx: &mut PrepaintCtx,
     ) -> Self::PaintState {
-        let element_id = ElementId::next();
+        // Tree-position keying: set user key if provided, allocate stable ID
+        if let Some(k) = self.user_key.take() {
+            cx.set_next_key(k);
+        }
+        let element_id = cx.allocate_id::<Div>();
+        self.last_id = Some(element_id);
 
         // Register hit region if Div has background (clickable container)
         if self.visual.background.is_some() {
@@ -194,15 +221,22 @@ impl Element for Div {
             );
         }
 
-        // Register accessibility node for this Div
-        if let Some(info) = self.accessibility() {
-            cx.register_a11y_node(AccessibilityNode {
-                id: element_id,
-                bounds,
-                info,
-                children: Vec::new(),
-            });
-        }
+        // Open a11y node before children (will accumulate children's a11y nodes)
+        // Order: prepaint_node_open → push_frame → recurse → pop_frame → prepaint_node_close
+        //
+        // PANIC SAFETY: If child.prepaint() panics, a11y_stack will be left unbalanced.
+        // - Debug builds: frame-end debug_assert catches this before render
+        // - Release builds: corrupted a11y tree is non-fatal (screen reader sees flat tree)
+        // - Child prepaint implementations should not panic in normal operation
+        let opened_a11y = if let Some(info) = self.accessibility() {
+            cx.prepaint_node_open(element_id, bounds, info);
+            true
+        } else {
+            false
+        };
+
+        // Push frame so children's IDs derive from this Div's ID
+        cx.push_frame(element_id);
 
         // Prepaint children with their resolved bounds
         for (i, child) in self.children.iter_mut().enumerate() {
@@ -211,6 +245,14 @@ impl Element for Div {
             {
                 child.prepaint(child_bounds, cx);
             }
+        }
+
+        // Pop frame after children are processed
+        cx.pop_frame();
+
+        // Close a11y node after children (children are now nested)
+        if opened_a11y {
+            cx.prepaint_node_close();
         }
 
         DivPaintState
@@ -254,6 +296,10 @@ impl Element for Div {
             role: AccessibilityRole::Group,
             ..Default::default()
         })
+    }
+
+    fn id(&self) -> Option<ElementId> {
+        self.last_id
     }
 }
 

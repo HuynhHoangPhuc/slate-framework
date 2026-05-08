@@ -86,13 +86,22 @@ impl Color {
     }
 
     /// Create a color with modified alpha.
+    ///
+    /// When the original alpha is non-zero, RGB is unpremultiplied then repremultiplied
+    /// with the new alpha. When the original alpha is zero, stored RGB is treated as
+    /// the intended base color and scaled by the new alpha directly.
     pub fn with_alpha(mut self, alpha: f32) -> Self {
-        // Unpremultiply, change alpha, repremultiply
         if self.0[3] > 0.0 {
+            // Unpremultiply, change alpha, repremultiply
             let inv_a = 1.0 / self.0[3];
             self.0[0] = self.0[0] * inv_a * alpha;
             self.0[1] = self.0[1] * inv_a * alpha;
             self.0[2] = self.0[2] * inv_a * alpha;
+        } else {
+            // Preserve stored RGB; scale by new alpha (stored RGB is treated as "intended" base)
+            self.0[0] *= alpha;
+            self.0[1] *= alpha;
+            self.0[2] *= alpha;
         }
         self.0[3] = alpha;
         self
@@ -154,5 +163,27 @@ mod tests {
         assert!(Color::from_hex("invalid").is_none());
         assert!(Color::from_hex("#GGG").is_none());
         assert!(Color::from_hex("#12345").is_none());
+    }
+
+    #[test]
+    fn with_alpha_from_zero_preserves_rgb() {
+        // Stored RGB at zero alpha should scale by new alpha, not zero out
+        let c = Color([0.5, 0.7, 0.3, 0.0]);
+        let c2 = c.with_alpha(1.0);
+        assert!((c2.0[0] - 0.5).abs() < 1e-6);
+        assert!((c2.0[1] - 0.7).abs() < 1e-6);
+        assert!((c2.0[2] - 0.3).abs() < 1e-6);
+        assert!((c2.0[3] - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn with_alpha_from_nonzero_unpremultiplies() {
+        // Non-zero alpha: unpremultiply then repremultiply
+        let c = Color([0.5, 0.5, 0.5, 0.5]); // premul: actual RGB=1.0
+        let c2 = c.with_alpha(1.0);
+        assert!((c2.0[0] - 1.0).abs() < 1e-6);
+        assert!((c2.0[1] - 1.0).abs() < 1e-6);
+        assert!((c2.0[2] - 1.0).abs() < 1e-6);
+        assert!((c2.0[3] - 1.0).abs() < 1e-6);
     }
 }

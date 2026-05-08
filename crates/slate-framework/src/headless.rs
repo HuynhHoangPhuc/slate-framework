@@ -294,7 +294,23 @@ impl HeadlessApp {
                 &self.executor.foreground,
                 self.scale_factor,
             );
+
+            // Initialize tree-position keying for stable ElementIds
+            cx.init_root_frame();
+
             root.prepaint(root_bounds, &mut cx);
+
+            // Verify prepaint frames are balanced
+            debug_assert!(
+                cx.id_stack.len() == 1,
+                "unbalanced prepaint frames: expected 1 (root), got {}",
+                cx.id_stack.len()
+            );
+            debug_assert!(
+                cx.a11y_stack.is_empty(),
+                "unbalanced a11y stack at frame end: {} unclosed nodes",
+                cx.a11y_stack.len()
+            );
         }
 
         // 4. Paint pass

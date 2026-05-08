@@ -155,9 +155,27 @@ static ELEMENT_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 pub struct ElementId(pub u64);
 
 impl ElementId {
-    /// Generate the next unique ElementId.
+    /// Generate the next unique ElementId (monotonic counter).
+    ///
+    /// Use for non-tree contexts (e.g., tests, internal bookkeeping).
+    /// For stable cross-frame identity, prefer `PrepaintCtx::allocate_id`.
     pub fn next() -> Self {
         Self(ELEMENT_ID_COUNTER.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /// Create an ElementId from a hash value.
+    ///
+    /// Used by `PrepaintCtx::allocate_id` for tree-position keying.
+    /// Same hash → same ElementId across frames.
+    pub(crate) const fn from_hash(hash: u64) -> Self {
+        Self(hash)
+    }
+
+    /// Root sentinel ElementId (hash 0).
+    ///
+    /// Used as the initial parent in `PrepaintCtx` before any elements are allocated.
+    pub(crate) const fn root() -> Self {
+        Self(0)
     }
 
     /// Create an ElementId with a specific value (for testing or serialization).
@@ -335,5 +353,27 @@ mod tests {
         assert_ne!(id1, id2);
         assert_ne!(id2, id3);
         assert!(id2.0 > id1.0);
+    }
+
+    #[test]
+    fn element_id_from_hash_stability() {
+        // Same hash produces same ElementId across calls
+        let id1 = ElementId::from_hash(12345);
+        let id2 = ElementId::from_hash(12345);
+        assert_eq!(id1, id2);
+
+        // Different hashes produce different IDs
+        let id3 = ElementId::from_hash(67890);
+        assert_ne!(id1, id3);
+    }
+
+    #[test]
+    fn element_id_root_sentinel() {
+        let root = ElementId::root();
+        assert_eq!(root.as_u64(), 0);
+
+        // Root is distinct from next() IDs (which start at 1)
+        let next_id = ElementId::next();
+        assert_ne!(root, next_id);
     }
 }
