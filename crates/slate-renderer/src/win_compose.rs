@@ -164,7 +164,7 @@ impl WinCompose {
                 .map_err(|e| RendererError::RawHandle(format!("CreateEventW: {e}")))?
         };
 
-        Ok(Self {
+        let mut this = Self {
             width: w.max(1),
             height: h.max(1),
             format: TextureFormat::Bgra8UnormSrgb,
@@ -185,7 +185,10 @@ impl WinCompose {
             raw_queue,
             raw_device,
             _window: window,
-        })
+        };
+        // Acquire back buffers immediately so configure() with same size is a no-op
+        this.acquire_back_buffers(device);
+        Ok(this)
     }
 
     fn acquire_back_buffers(&mut self, device: &Device) {
