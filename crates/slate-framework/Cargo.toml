@@ -15,3 +15,15 @@ categories = ["gui", "graphics", "rendering"]
 slate-platform = { path = "../slate-platform" }
 slate-renderer = { path = "../slate-renderer" }
 slate-text = { path = "../slate-text" }
+
+# Phase 3 dependencies (pinned to latest stable 2026-05-07)
+taffy = "=0.10.1"
+smallvec = "=1.15.1"
+accesskit = "=0.24.0"
+
+# Shared workspace deps
+wgpu.workspace = true
+bytemuck.workspace = true
+glam.workspace = true
+log.workspace = true
+thiserror.workspace = true
