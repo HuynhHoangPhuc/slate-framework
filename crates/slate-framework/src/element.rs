@@ -93,6 +93,30 @@ pub trait Element: 'static {
     fn id(&self) -> Option<ElementId> {
         None
     }
+
+    /// Compute a hash of paint-relevant inputs for caching.
+    ///
+    /// Returns 0 by default (sentinel: caching disabled, always rebuild).
+    /// Cacheable elements (`Text`) override to hash content, style, and bounds.
+    ///
+    /// # Phase 6 (D10) Cache Protocol
+    ///
+    /// - `hash == 0`: Cache bypass — element always re-paints.
+    /// - `hash != 0`: Cache lookup by `(ElementId, hash)`.
+    ///
+    /// # Strategy L (Leaves Only)
+    ///
+    /// Only leaf elements (`Text`) override this method. Container elements
+    /// (`Div`) return 0 (the default) to avoid stale-child replay issues.
+    ///
+    /// # F2 Quantization
+    ///
+    /// Bounds and colors contain `f32` which has no `Hash` impl. Use
+    /// `paint_cache::hash_f32` / `hash_bounds` / `hash_color` helpers
+    /// with 1/256-px quantization.
+    fn paint_input_hash(&self, _bounds: Bounds) -> u64 {
+        0
+    }
 }
 
 /// Sealed trait marker for `IntoElement`.
@@ -162,6 +186,11 @@ impl AnyElement {
     pub fn id(&self) -> Option<ElementId> {
         self.element.id()
     }
+
+    /// Get the paint input hash for caching (0 = caching disabled).
+    pub fn paint_input_hash(&self, bounds: Bounds) -> u64 {
+        self.element.paint_input_hash(bounds)
+    }
 }
 
 /// Internal trait for type-erased element operations.
@@ -174,6 +203,7 @@ trait AnyElementDynamic: 'static {
     fn paint(&mut self, bounds: Bounds, cx: &mut PaintCtx);
     fn accessibility(&self) -> Option<AccessibilityInfo>;
     fn id(&self) -> Option<ElementId>;
+    fn paint_input_hash(&self, bounds: Bounds) -> u64;
 }
 
 /// Internal wrapper storing element + per-phase state.
@@ -221,6 +251,10 @@ impl<E: Element> AnyElementDynamic for ElementState<E> {
 
     fn id(&self) -> Option<ElementId> {
         self.element.id()
+    }
+
+    fn paint_input_hash(&self, bounds: Bounds) -> u64 {
+        self.element.paint_input_hash(bounds)
     }
 }
 

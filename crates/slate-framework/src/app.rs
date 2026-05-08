@@ -161,6 +161,10 @@ impl App {
         let state_registry: RefCell<StateRegistry> =
             RefCell::new(StateRegistry::new(runtime.clone()));
 
+        // Phase 6: TextShapingCache for text shaping optimization (borrow slot 9)
+        let text_shaping_cache: RefCell<crate::paint_cache::TextShapingCache> =
+            RefCell::new(crate::paint_cache::TextShapingCache::new());
+
         // AppContext for view factory
         let cx = AppContext {
             runtime: runtime.clone(),
@@ -279,7 +283,7 @@ impl App {
                     return;
                 };
 
-                // 4. Prepaint pass (borrow slot 8: state_registry)
+                // 4. Prepaint pass (borrow slots 8-9: state_registry, text_shaping_cache)
                 {
                     let tree = layout_tree.borrow();
                     let mut hit = hit_test_list.borrow_mut();
@@ -287,6 +291,7 @@ impl App {
                     let mut ts = text_system.borrow_mut();
                     let ts = ts.as_mut().expect("text system not initialized");
                     let mut sr = state_registry.borrow_mut();
+                    let mut tsc = text_shaping_cache.borrow_mut();
 
                     hit.clear();
                     a11y.clear();
@@ -299,6 +304,7 @@ impl App {
                         &executor_ref.foreground,
                         scale_factor,
                         &mut sr,
+                        &mut tsc,
                     );
 
                     // Initialize tree-position keying for stable ElementIds
@@ -364,6 +370,14 @@ impl App {
                     let mut sr = state_registry.borrow_mut();
                     sr.advance_frame();
                     sr.gc();
+                }
+
+                // 9. Phase 6: Advance frame counter and GC stale text shaping cache
+                // Entries not accessed for 2+ consecutive frames are dropped.
+                {
+                    let mut tsc = text_shaping_cache.borrow_mut();
+                    tsc.advance_frame();
+                    tsc.gc();
                 }
             }
 

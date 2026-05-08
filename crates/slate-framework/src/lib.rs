@@ -33,6 +33,7 @@ pub mod executor;
 pub mod headless;
 pub mod hit_test;
 pub mod layout;
+pub(crate) mod paint_cache;
 pub(crate) mod reactive_state;
 pub mod style;
 pub mod text_system;

@@ -338,63 +338,87 @@ impl Element for Text {
         let element_id = cx.allocate_id::<Text>();
         self.last_id = Some(element_id);
 
-        // TextWrap::Wrap v1: ASCII whitespace split + greedy fit.
-        // Limitations:
-        //   - No UAX#14 line-break (Asian scripts, hyphens, em-dashes break wrong)
-        //   - No BiDi reordering
-        //   - No hyphenation, no overflow-wrap-anywhere
-        //   - Per-word reshape (2x cost vs caching advance widths)
-        //   - Whitespace-only content: keeps original single-line shape (harmless)
-        // Deferred to v1.1: word-width caching, WrapBreakWord, UAX#14.
-        if self.style.wrap == TextWrap::WrapBreakWord {
-            log::debug!("TextWrap::WrapBreakWord not implemented in v1; falling back to Wrap");
-        }
-        if self.style.wrap != TextWrap::None
-            && bounds.size.width < layout_state.intrinsic_width
-            && bounds.size.width > 0.0
-            && let Some(font) = &self.font
-        {
-            let max_width = bounds.size.width;
-            let words: Vec<&str> = self.content.split_whitespace().collect();
-            let mut lines: Vec<ShapedLine> = Vec::new();
-            let mut current_line = String::new();
+        // Phase 6: TextShapingCache lookup
+        // Compute paint_input_hash to check cache before reshaping
+        let input_hash = self.paint_input_hash(bounds);
 
-            for word in words {
-                let candidate = if current_line.is_empty() {
-                    word.to_string()
-                } else {
-                    format!("{} {}", current_line, word)
-                };
+        // Check if we can use cached lines
+        if let Some(cached_lines) = cx.text_shaping_cache.get(element_id, input_hash) {
+            // Cache hit: use cached lines directly
+            layout_state.lines = cached_lines.to_vec();
+        } else {
+            // Cache miss: do normal shaping/wrapping, then cache the result
 
-                // Shape candidate to check width
-                match cx.text.shape_line(font, &candidate) {
-                    Ok(shaped) if shaped.width_lpx <= max_width || current_line.is_empty() => {
-                        // Fits, or first word on line (must accept even if overflows)
-                        current_line = candidate;
-                    }
-                    Ok(_) => {
-                        // Doesn't fit; commit current line, start new with this word
-                        if let Ok(shaped) = cx.text.shape_line(font, &current_line) {
-                            lines.push(shaped);
+            // TextWrap::Wrap v1: ASCII whitespace split + greedy fit.
+            // Limitations:
+            //   - No UAX#14 line-break (Asian scripts, hyphens, em-dashes break wrong)
+            //   - No BiDi reordering
+            //   - No hyphenation, no overflow-wrap-anywhere
+            //   - Per-word reshape (2x cost vs caching advance widths)
+            //   - Whitespace-only content: keeps original single-line shape (harmless)
+            // Deferred to v1.1: word-width caching, WrapBreakWord, UAX#14.
+            if self.style.wrap == TextWrap::WrapBreakWord {
+                log::debug!("TextWrap::WrapBreakWord not implemented in v1; falling back to Wrap");
+            }
+            if self.style.wrap != TextWrap::None
+                && bounds.size.width < layout_state.intrinsic_width
+                && bounds.size.width > 0.0
+                && let Some(font) = &self.font
+            {
+                let max_width = bounds.size.width;
+                let words: Vec<&str> = self.content.split_whitespace().collect();
+                let mut lines: Vec<ShapedLine> = Vec::new();
+                let mut current_line = String::new();
+
+                for word in words {
+                    let candidate = if current_line.is_empty() {
+                        word.to_string()
+                    } else {
+                        format!("{} {}", current_line, word)
+                    };
+
+                    // Shape candidate to check width
+                    match cx.text.shape_line(font, &candidate) {
+                        Ok(shaped) if shaped.width_lpx <= max_width || current_line.is_empty() => {
+                            // Fits, or first word on line (must accept even if overflows)
+                            current_line = candidate;
                         }
-                        current_line = word.to_string();
+                        Ok(_) => {
+                            // Doesn't fit; commit current line, start new with this word
+                            if let Ok(shaped) = cx.text.shape_line(font, &current_line) {
+                                lines.push(shaped);
+                            }
+                            current_line = word.to_string();
+                        }
+                        Err(e) => {
+                            log::warn!("Text wrap shaping failed: {e}; continuing with partial");
+                            current_line = candidate;
+                        }
                     }
-                    Err(e) => {
-                        log::warn!("Text wrap shaping failed: {e}; continuing with partial");
-                        current_line = candidate;
-                    }
+                }
+
+                // Push final line
+                if !current_line.is_empty()
+                    && let Ok(shaped) = cx.text.shape_line(font, &current_line)
+                {
+                    lines.push(shaped);
+                }
+
+                if !lines.is_empty() {
+                    layout_state.lines = lines;
                 }
             }
 
-            // Push final line
-            if !current_line.is_empty()
-                && let Ok(shaped) = cx.text.shape_line(font, &current_line)
-            {
-                lines.push(shaped);
-            }
-
-            if !lines.is_empty() {
-                layout_state.lines = lines;
+            // Cache the shaped lines (if hash != 0, i.e., caching is enabled)
+            if input_hash != 0 {
+                let font_id = slate_text::types::FontId::PRIMARY;
+                cx.text_shaping_cache.insert(
+                    element_id,
+                    input_hash,
+                    layout_state.lines.clone(),
+                    font_id,
+                    self.style.font_size,
+                );
             }
         }
 
@@ -473,6 +497,23 @@ impl Element for Text {
 
     fn id(&self) -> Option<ElementId> {
         self.last_id
+    }
+
+    /// Hash paint-relevant inputs for TextShapingCache lookup.
+    ///
+    /// Hashes: content, font_size, color (quantized), bounds (quantized).
+    /// Font family is not hashed since the loaded font handle is per-element.
+    fn paint_input_hash(&self, bounds: crate::types::Bounds) -> u64 {
+        use std::hash::{Hash, Hasher};
+        use crate::paint_cache::{hash_bounds, hash_color};
+
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        self.content.hash(&mut h);
+        // font_size as quantized integer (1/256 precision)
+        ((self.style.font_size * 256.0).round() as i32).hash(&mut h);
+        hash_color(&self.style.color, &mut h);
+        hash_bounds(&bounds, &mut h);
+        h.finish()
     }
 }
 

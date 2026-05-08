@@ -14,6 +14,7 @@ use taffy::TaffyTree;
 
 use crate::executor::ForegroundExecutor;
 use crate::hit_test::{HitRegion, HitTestList};
+use crate::paint_cache::TextShapingCache;
 use crate::reactive_state::StateRegistry;
 use crate::text_system::TextSystem;
 use crate::types::{AccessibilityInfo, AccessibilityNode, Bounds, ElementId, NodeContext};
@@ -85,6 +86,10 @@ pub struct PrepaintCtx<'a> {
     #[allow(dead_code)] // Used in Phase 6 by paint cache
     pub(crate) state_registry: &'a mut StateRegistry,
 
+    // --- Text shaping cache (Phase 6) ---
+    /// Cache for pre-atlas shaped text to skip shaping on unchanged Text elements.
+    pub(crate) text_shaping_cache: &'a mut TextShapingCache,
+
     // --- Tree-position keying for stable ElementIds (Phase 4 prep) ---
     /// Stack of ancestor element IDs; `last()` is the immediate parent.
     /// Pushed by `push_frame`, popped by `pop_frame`. Length 1 (root) at frame start.
@@ -109,6 +114,7 @@ impl<'a> PrepaintCtx<'a> {
     ///
     /// `state_registry` is borrowed after `id_stack` setup, before any view interior
     /// borrows. This is slot 8 in the RefCell borrow-order discipline.
+    /// `text_shaping_cache` is slot 9.
     pub(crate) fn new(
         taffy: &'a TaffyTree<NodeContext>,
         hit_regions: &'a mut HitTestList,
@@ -117,6 +123,7 @@ impl<'a> PrepaintCtx<'a> {
         executor: &'a ForegroundExecutor,
         scale_factor: f64,
         state_registry: &'a mut StateRegistry,
+        text_shaping_cache: &'a mut TextShapingCache,
     ) -> Self {
         Self {
             taffy,
@@ -126,6 +133,7 @@ impl<'a> PrepaintCtx<'a> {
             executor,
             scale_factor,
             state_registry,
+            text_shaping_cache,
             id_stack: Vec::new(),
             child_counters: Vec::new(),
             next_key: None,

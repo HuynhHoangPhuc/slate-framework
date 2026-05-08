@@ -91,6 +91,9 @@ pub struct HeadlessApp {
 
     // Phase 4: StateRegistry for element-level reactive state
     state_registry: StateRegistry,
+
+    // Phase 6: TextShapingCache for text shaping optimization
+    text_shaping_cache: crate::paint_cache::TextShapingCache,
 }
 
 /// Error creating or rendering with HeadlessApp.
@@ -237,6 +240,9 @@ impl HeadlessApp {
         // Phase 4: StateRegistry for element-level reactive state
         let state_registry = StateRegistry::new(runtime.clone());
 
+        // Phase 6: TextShapingCache for text shaping optimization
+        let text_shaping_cache = crate::paint_cache::TextShapingCache::new();
+
         Ok(Self {
             device,
             queue,
@@ -264,6 +270,7 @@ impl HeadlessApp {
             runtime,
             observer_id,
             state_registry,
+            text_shaping_cache,
         })
     }
 
@@ -319,6 +326,7 @@ impl HeadlessApp {
                 &self.executor.foreground,
                 self.scale_factor,
                 &mut self.state_registry,
+                &mut self.text_shaping_cache,
             );
 
             // Initialize tree-position keying for stable ElementIds
@@ -342,6 +350,10 @@ impl HeadlessApp {
         // Phase 4: Advance frame counter and GC stale state slots
         self.state_registry.advance_frame();
         self.state_registry.gc();
+
+        // Phase 6: Advance frame counter and GC stale text shaping cache
+        self.text_shaping_cache.advance_frame();
+        self.text_shaping_cache.gc();
 
         // 4. Paint pass
         self.scene.clear();
@@ -524,5 +536,29 @@ impl HeadlessApp {
         // Phase 5: Build element tree inside observer scope for reactive subscriptions
         let root = slate_reactive::with_observer(self.observer_id, || view.render());
         self.render(root)
+    }
+
+    // =========================================================================
+    // Phase 6: Test helpers for TextShapingCache metrics
+    // =========================================================================
+
+    /// Get text shaping cache hit count (for testing).
+    pub fn text_shaping_cache_hits(&self) -> u64 {
+        self.text_shaping_cache.hit_count()
+    }
+
+    /// Get text shaping cache miss count (for testing).
+    pub fn text_shaping_cache_misses(&self) -> u64 {
+        self.text_shaping_cache.miss_count()
+    }
+
+    /// Get number of entries in the text shaping cache (for testing).
+    pub fn text_shaping_cache_len(&self) -> usize {
+        self.text_shaping_cache.len()
+    }
+
+    /// Get memory used by text shaping cache in bytes (for testing).
+    pub fn text_shaping_cache_memory(&self) -> usize {
+        self.text_shaping_cache.memory_used()
     }
 }
