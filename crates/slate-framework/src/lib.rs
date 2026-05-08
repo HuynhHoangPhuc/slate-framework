@@ -28,6 +28,8 @@ pub mod context;
 pub mod element;
 pub mod elements;
 pub mod executor;
+pub mod layout;
+pub mod style;
 pub mod text_system;
 pub mod types;
 
@@ -41,6 +43,8 @@ pub use context::{LayoutCtx, PaintCtx, PrepaintCtx};
 pub use element::{AnyElement, Element, IntoElement};
 pub use elements::{Div, Text};
 pub use executor::{ForegroundExecutor, RedrawRequester};
+pub use layout::{compute_layout, resolve_bounds, resolve_child_bounds, LayoutTree};
+pub use style::{DisplayMode, Length, Overflow, Position, SizeConstraint, Style};
 pub use text_system::{PlatformFont, TextSystem};
 pub use types::{
     AccessibilityInfo, AccessibilityNode, AccessibilityRole, Bounds, Edges, ElementId, HitRegion,
@@ -49,6 +53,5 @@ pub use types::{
 
 // Re-export Taffy types commonly used with Elements
 pub use taffy::{
-    AlignItems, Display, FlexDirection, JustifyContent, Style as TaffyStyle,
-    TaffyTree,
+    AlignItems, FlexDirection, FlexWrap, JustifyContent, TaffyTree,
 };
