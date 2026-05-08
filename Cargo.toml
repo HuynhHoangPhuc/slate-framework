@@ -9,6 +9,7 @@ members = [
     "examples/hello-element",
     "examples/hello-rect",
     "examples/primitive-gallery",
+    "examples/reactive-counter",
     "examples/win-dcomp-spike",
 ]
 resolver = "2"

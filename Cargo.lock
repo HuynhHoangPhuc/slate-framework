@@ -1997,6 +1997,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "reactive-counter"
+version = "0.0.2"
+dependencies = [
+ "env_logger",
+ "log",
+ "slate-framework",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"

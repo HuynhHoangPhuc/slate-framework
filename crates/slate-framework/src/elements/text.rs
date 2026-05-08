@@ -123,6 +123,29 @@ impl Text {
         }
     }
 
+    /// Create a reactive Text element.
+    ///
+    /// The closure is called **eagerly at construction time** and the resulting
+    /// string is stored. Reactive subscription tracking happens because this
+    /// method is typically called inside `View::render`, which runs under
+    /// `with_observer(view_observer_id, ...)` — so signals read by the closure
+    /// auto-subscribe to the view observer.
+    ///
+    /// On signal change, the view re-renders, `View::render` re-creates this
+    /// `Text` via `Text::new_reactive(...)`, the closure re-runs, and a fresh
+    /// string is produced. This is Strategy A behavior (whole-view rebuild).
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let count = Signal::new(cx.runtime(), 0u32);
+    /// let c = count.clone();
+    /// Text::new_reactive(move || format!("Count: {}", c.get()))
+    /// ```
+    pub fn new_reactive(f: impl FnOnce() -> String) -> Self {
+        Self::new(f())
+    }
+
     /// Set a stability key for dynamic lists.
     ///
     /// Use when text order changes between frames (e.g., list items).

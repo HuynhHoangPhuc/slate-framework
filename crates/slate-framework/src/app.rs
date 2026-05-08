@@ -12,13 +12,49 @@ use slate_platform::{
 use slate_renderer::{Renderer, Scene};
 
 use crate::context::{LayoutCtx, PaintCtx, PrepaintCtx};
-use crate::executor::{Executor, RedrawRequester};
+use crate::executor::{BackgroundExecutor, Executor, RedrawRequester};
 use crate::hit_test::HitTestList;
 use crate::layout::{compute_layout, resolve_bounds, LayoutTree};
 use crate::reactive_state::StateRegistry;
 use crate::text_system::TextSystem;
 use crate::types::{AccessibilityNode, Size};
 use crate::view::View;
+
+/// Application context passed to the view factory.
+///
+/// Provides access to the reactive runtime and background executor for constructing
+/// signals and spawning background tasks.
+///
+/// Note: `ForegroundExecutor` is intentionally not exposed here because it's `!Send`
+/// and bound to the UI thread. UI-thread tasks should use the foreground executor
+/// available in element context methods.
+///
+/// # Example
+///
+/// ```ignore
+/// App::new(options).run(|cx| {
+///     let count = Signal::new(cx.runtime(), 0u32);
+///     cx.background_executor().spawn(async move { /* ... */ }).detach();
+///     MyView { count }
+/// });
+/// ```
+#[derive(Clone)]
+pub struct AppContext {
+    runtime: Arc<slate_reactive::Runtime>,
+    background_executor: BackgroundExecutor,
+}
+
+impl AppContext {
+    /// Get the reactive runtime for creating signals.
+    pub fn runtime(&self) -> Arc<slate_reactive::Runtime> {
+        self.runtime.clone()
+    }
+
+    /// Get the background executor for spawning async tasks.
+    pub fn background_executor(&self) -> BackgroundExecutor {
+        self.background_executor.clone()
+    }
+}
 
 // Debug-mode borrow-order discipline (see ADR-001)
 // Detects borrow-order violations before they ship.
@@ -66,7 +102,10 @@ fn check_borrow_order(_slot: u8) {}
 ///     size: (800, 600),
 ///     ..Default::default()
 /// })
-/// .run(|| MyView::new());
+/// .run(|cx| {
+///     let count = Signal::new(cx.runtime(), 0);
+///     MyView::new(count)
+/// });
 /// ```
 pub struct App {
     platform: DefaultPlatform,
@@ -86,12 +125,15 @@ impl App {
 
     /// Run the application with the given view factory.
     ///
+    /// `view_fn` receives an [`AppContext`] with access to the reactive runtime
+    /// and background executor for constructing signals and spawning tasks.
+    ///
     /// `view_fn` is `FnMut` because `Event::Resumed` can fire multiple times
     /// (e.g., after suspend on mobile platforms).
     ///
     /// This method enters the platform event loop and does not return until
     /// the application exits.
-    pub fn run<V: View>(self, mut view_fn: impl FnMut() -> V + 'static) {
+    pub fn run<V: View>(self, mut view_fn: impl FnMut(&AppContext) -> V + 'static) {
         let App { platform, window } = self;
 
         // Deferred initialization (set up in Event::Resumed)
@@ -101,14 +143,29 @@ impl App {
 
         // Per-frame state (always allocated)
         let redraw_requester = RedrawRequester::new(wake_run_loop);
-        let executor = Executor::new(redraw_requester);
+        let executor = Executor::new(redraw_requester.clone());
         let layout_tree: RefCell<LayoutTree> = RefCell::new(LayoutTree::new());
         let hit_test_list: RefCell<HitTestList> = RefCell::new(HitTestList::new());
         let a11y_nodes: RefCell<Vec<AccessibilityNode>> = RefCell::new(Vec::new());
         let scene: RefCell<Scene> = RefCell::new(Scene::new());
+
+        // Phase 5: Reactive runtime with redraw wiring
+        let runtime = slate_reactive::Runtime::new();
+        runtime.install_redraw({
+            let req = redraw_requester.clone();
+            Arc::new(move || req.request())
+        });
+        let view_observer_id = runtime.next_observer_id();
+
         // Phase 4: StateRegistry for element-level reactive state (borrow slot 8)
         let state_registry: RefCell<StateRegistry> =
-            RefCell::new(StateRegistry::new(slate_reactive::Runtime::new()));
+            RefCell::new(StateRegistry::new(runtime.clone()));
+
+        // AppContext for view factory
+        let cx = AppContext {
+            runtime: runtime.clone(),
+            background_executor: executor.background.clone(),
+        };
 
         let platform_ref = &platform;
         let window_ref = window.clone();
@@ -140,7 +197,7 @@ impl App {
 
                 *renderer.borrow_mut() = Some(r);
                 *text_system.borrow_mut() = Some(ts);
-                *view.borrow_mut() = Some(view_fn());
+                *view.borrow_mut() = Some(view_fn(&cx));
 
                 // Request initial redraw
                 window_ref.request_redraw();
@@ -173,11 +230,15 @@ impl App {
                 let (w, h) = window_ref.size();
                 let scale_factor = window_ref.scale_factor();
 
-                // 1. Build element tree
+                // Phase 5: Drain dirty bit and effects before render
+                runtime.drain_dirty();
+                runtime.drain_effects();
+
+                // 1. Build element tree (inside observer scope for reactive subscriptions)
                 let mut root = {
                     let mut v = view.borrow_mut();
                     let v = v.as_mut().expect("view not initialized");
-                    v.render()
+                    slate_reactive::with_observer(view_observer_id, || v.render())
                 };
 
                 // 2. Layout pass

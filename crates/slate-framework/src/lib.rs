@@ -46,9 +46,27 @@ pub use slate_renderer;
 pub use slate_text;
 
 // Re-export core types
-pub use app::App;
+pub use app::{App, AppContext};
 pub use headless::{HeadlessApp, HeadlessError};
 pub use color::Color;
+
+/// Reactive primitives for building reactive UIs.
+///
+/// # Example
+///
+/// ```ignore
+/// use slate_framework::reactive::Signal;
+///
+/// let count = Signal::new(cx.runtime(), 0u32);
+/// let c = count.clone();
+/// Text::new_reactive(move || format!("Count: {}", c.get()))
+/// ```
+pub mod reactive {
+    pub use slate_reactive::{Effect, Memo, ReactiveOwner, Signal};
+}
+
+// Re-export smol::Timer for async timing (Phase 5: F1)
+pub use smol::Timer;
 pub use context::{LayoutCtx, PaintCtx, PrepaintCtx};
 pub use element::{AnyElement, Element, IntoElement};
 pub use elements::{Div, Text, TextAlign, TextWrap};

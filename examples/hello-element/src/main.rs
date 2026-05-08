@@ -93,5 +93,5 @@ fn main() {
         min_size: Some((320, 240)),
         resizable: true,
     })
-    .run(|| HelloView);
+    .run(|_cx| HelloView);
 }

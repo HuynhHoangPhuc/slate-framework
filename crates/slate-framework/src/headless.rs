@@ -25,6 +25,9 @@ use wgpu::{
     TextureFormat, TextureUsages, TextureView, Trace,
 };
 
+use std::sync::Arc;
+
+use slate_reactive::{ObserverId, Runtime};
 use slate_renderer::atlas::{Atlas, Format};
 use slate_renderer::glyph_pipeline::GlyphPipeline;
 use slate_renderer::image_pipeline::ImagePipeline;
@@ -41,6 +44,7 @@ use crate::layout::{compute_layout, resolve_bounds, LayoutTree};
 use crate::reactive_state::StateRegistry;
 use crate::text_system::TextSystem;
 use crate::types::{AccessibilityNode, Size};
+use crate::view::View;
 
 /// Headless application for offscreen rendering.
 ///
@@ -80,6 +84,11 @@ pub struct HeadlessApp {
     a11y_nodes: Vec<AccessibilityNode>,
     scene: Scene,
     executor: Executor,
+
+    // Phase 5: Reactive runtime for headless tests
+    runtime: Arc<Runtime>,
+    observer_id: ObserverId,
+
     // Phase 4: StateRegistry for element-level reactive state
     state_registry: StateRegistry,
 }
@@ -220,8 +229,13 @@ impl HeadlessApp {
         let scene = Scene::new();
         let redraw_requester = RedrawRequester::new(|| {}); // No-op for headless
         let executor = Executor::new(redraw_requester);
-        // Phase 4: StateRegistry uses dummy runtime for headless (no redraw wiring)
-        let state_registry = StateRegistry::dummy();
+
+        // Phase 5: Runtime for reactive headless tests (no redraw wiring needed)
+        let runtime = Runtime::new();
+        let observer_id = runtime.next_observer_id();
+
+        // Phase 4: StateRegistry for element-level reactive state
+        let state_registry = StateRegistry::new(runtime.clone());
 
         Ok(Self {
             device,
@@ -247,6 +261,8 @@ impl HeadlessApp {
             a11y_nodes,
             scene,
             executor,
+            runtime,
+            observer_id,
             state_registry,
         })
     }
@@ -261,6 +277,9 @@ impl HeadlessApp {
 
     /// Render an element tree and return the result as an RGBA image.
     pub fn render(&mut self, mut root: AnyElement) -> Result<RgbaImage, HeadlessError> {
+        // Phase 5: Drain effects before render
+        self.runtime.drain_effects();
+
         let w = self.width;
         let h = self.height;
 
@@ -478,5 +497,32 @@ impl HeadlessApp {
     /// Mutable access to the text system.
     pub fn text_system_mut(&mut self) -> &mut TextSystem {
         &mut self.text_system
+    }
+
+    /// Get the reactive runtime for creating signals in tests.
+    pub fn runtime(&self) -> Arc<Runtime> {
+        self.runtime.clone()
+    }
+
+    /// Render a View with reactive observer wrapping.
+    ///
+    /// Use this for testing reactive Views. The view's `render()` method is called
+    /// inside `with_observer(...)` so that signals read during render auto-subscribe
+    /// to the headless observer.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let mut app = HeadlessApp::new(400, 200)?;
+    /// let count = Signal::new(app.runtime(), 0u32);
+    /// let mut view = CounterView { count: count.clone() };
+    /// let img = app.render_view(&mut view)?;
+    /// count.set(1);
+    /// let img2 = app.render_view(&mut view)?;
+    /// ```
+    pub fn render_view<V: View>(&mut self, view: &mut V) -> Result<RgbaImage, HeadlessError> {
+        // Phase 5: Build element tree inside observer scope for reactive subscriptions
+        let root = slate_reactive::with_observer(self.observer_id, || view.render());
+        self.render(root)
     }
 }

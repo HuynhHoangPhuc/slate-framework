@@ -48,9 +48,11 @@ impl StateRegistry {
         }
     }
 
-    /// Create a dummy registry for headless/test contexts.
+    /// Create a dummy registry for test contexts without external runtime.
     ///
-    /// Uses a fresh runtime with no external wiring.
+    /// Uses a fresh runtime with no external wiring. Prefer `new()` with a
+    /// shared runtime for reactive tests.
+    #[allow(dead_code)] // Kept for unit tests that don't need external runtime
     pub fn dummy() -> Self {
         Self::new(Runtime::new())
     }
