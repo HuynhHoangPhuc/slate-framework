@@ -42,7 +42,7 @@ pub use slate_text;
 pub use context::{LayoutCtx, PaintCtx, PrepaintCtx};
 pub use element::{AnyElement, Element, IntoElement};
 pub use elements::{Div, Text};
-pub use executor::{ForegroundExecutor, RedrawRequester};
+pub use executor::{BackgroundExecutor, Executor, ForegroundExecutor, RedrawRequester};
 pub use layout::{compute_layout, resolve_bounds, resolve_child_bounds, LayoutTree};
 pub use style::{DisplayMode, Length, Overflow, Position, SizeConstraint, Style};
 pub use text_system::{PlatformFont, TextSystem};

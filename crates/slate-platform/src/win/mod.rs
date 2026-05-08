@@ -28,6 +28,10 @@ pub use platform::WinPlatform;
 pub use window::WinWindow;
 
 use std::cell::Cell;
+use std::sync::atomic::{AtomicIsize, Ordering};
+
+use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_APP};
 
 use crate::{Event, WindowId};
 
@@ -44,6 +48,32 @@ thread_local! {
 }
 
 pub(crate) const SIZE_MOVE_TIMER_ID: usize = 0x5_1A_7E;
+
+/// Custom message for wake events from background threads.
+pub(crate) const WM_APP_WAKE: u32 = WM_APP + 1;
+
+/// Atomic storage for the main window HWND (used for wake from background).
+static WAKE_HWND: AtomicIsize = AtomicIsize::new(0);
+
+/// Register a window handle for wake events.
+///
+/// Called when a window is created. First window wins (CAS).
+pub(crate) fn register_wake_hwnd(hwnd: HWND) {
+    let _ = WAKE_HWND.compare_exchange(0, hwnd.0 as isize, Ordering::AcqRel, Ordering::Relaxed);
+}
+
+/// Wake the main run loop from a background thread.
+///
+/// Thread-safe. Posts WM_APP_WAKE to the registered window.
+/// Used by background executors to signal task completion.
+pub fn wake_run_loop() {
+    let hwnd_raw = WAKE_HWND.load(Ordering::Acquire);
+    if hwnd_raw != 0 {
+        let hwnd = HWND(hwnd_raw as *mut _);
+        // SAFETY: PostMessageW is thread-safe when targeting a valid HWND.
+        let _ = unsafe { PostMessageW(Some(hwnd), WM_APP_WAKE, WPARAM(0), LPARAM(0)) };
+    }
+}
 
 pub(crate) fn dispatch_event(event: Event) {
     HANDLER.with(|h| {

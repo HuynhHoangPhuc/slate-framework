@@ -13,7 +13,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::{Event, WindowId};
-use super::{dispatch_event, IN_SIZE_MOVE, SIZE_MOVE_TIMER_ID};
+use super::{dispatch_event, IN_SIZE_MOVE, SIZE_MOVE_TIMER_ID, WM_APP_WAKE};
 
 // ---------------------------------------------------------------------------
 // WinWindowInner — actual HWND state (Arc'd, OS holds raw ptr via GWLP_USERDATA)
@@ -130,6 +130,10 @@ impl WinWindowInner {
                     info.ptMinTrackSize.x = min_w as i32;
                     info.ptMinTrackSize.y = min_h as i32;
                 }
+                LRESULT(0)
+            }
+            _ if msg == WM_APP_WAKE => {
+                dispatch_event(Event::Wake);
                 LRESULT(0)
             }
             _ => {

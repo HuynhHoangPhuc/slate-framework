@@ -14,7 +14,7 @@ use objc2_foundation::{MainThreadMarker, NSNotification, NSObject, NSObjectProto
 
 use crate::{Event, Platform, WindowOptions};
 use super::window::MacWindow;
-use super::{dispatch_event, ffi_boundary, HANDLER, REDRAW_EVENT_SUBTYPE};
+use super::{dispatch_event, ffi_boundary, HANDLER, REDRAW_EVENT_SUBTYPE, WAKE_EVENT_SUBTYPE};
 use crate::WindowId;
 
 // ---------------------------------------------------------------------------
@@ -30,18 +30,25 @@ define_class!(
     unsafe impl NSObjectProtocol for SlateApplication {}
 
     impl SlateApplication {
-        /// Override sendEvent: to intercept our synthetic redraw events before
+        /// Override sendEvent: to intercept our synthetic redraw and wake events before
         /// they reach the default (no-op) routing for ApplicationDefined events.
         #[unsafe(method(sendEvent:))]
         fn send_event(&self, event: &NSEvent) {
-            if event.r#type() == NSEventType::ApplicationDefined
-                && event.subtype() == objc2_app_kit::NSEventSubtype(REDRAW_EVENT_SUBTYPE)
-            {
-                let window_id = WindowId(event.data1() as u64);
-                ffi_boundary(|| {
-                    dispatch_event(Event::WindowRedrawRequested { window: window_id });
-                });
-                return;
+            if event.r#type() == NSEventType::ApplicationDefined {
+                let subtype = event.subtype();
+                if subtype == objc2_app_kit::NSEventSubtype(REDRAW_EVENT_SUBTYPE) {
+                    let window_id = WindowId(event.data1() as u64);
+                    ffi_boundary(|| {
+                        dispatch_event(Event::WindowRedrawRequested { window: window_id });
+                    });
+                    return;
+                }
+                if subtype == objc2_app_kit::NSEventSubtype(WAKE_EVENT_SUBTYPE) {
+                    ffi_boundary(|| {
+                        dispatch_event(Event::Wake);
+                    });
+                    return;
+                }
             }
             // Forward all other events to the default NSApplication handling.
             let _: () = unsafe { msg_send![super(self), sendEvent: event] };

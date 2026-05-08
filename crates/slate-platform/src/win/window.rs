@@ -20,7 +20,7 @@ use windows::core::PCWSTR;
 use crate::{Window, WindowId, WindowOptions};
 use super::message_loop::WinWindowInner;
 use super::platform::CLASS_NAME;
-use super::{next_window_id, to_wide};
+use super::{next_window_id, register_wake_hwnd, to_wide};
 
 // ---------------------------------------------------------------------------
 // WinWindow — public window handle (thin Arc wrapper)
@@ -73,6 +73,10 @@ impl WinWindow {
         let inner_mut = inner_ptr as *mut WinWindowInner;
         // SAFETY: inner_ptr is our Arc's pointer; no other thread has access yet.
         unsafe { (*inner_mut).hwnd = hwnd };
+
+        // Register this HWND for wake events from background threads.
+        // First window wins; subsequent calls are no-ops (CAS).
+        register_wake_hwnd(hwnd);
 
         #[allow(clippy::arc_with_non_send_sync)]
         Arc::new(WinWindow { inner })

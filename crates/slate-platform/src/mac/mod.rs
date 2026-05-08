@@ -38,6 +38,9 @@ type EventHandler = std::cell::RefCell<Option<Box<dyn FnMut(Event) + 'static>>>;
 /// request. `data1` encodes the target `WindowId`.
 pub(crate) const REDRAW_EVENT_SUBTYPE: i16 = 42;
 
+/// Subtype marker for wake events from background threads.
+pub(crate) const WAKE_EVENT_SUBTYPE: i16 = 43;
+
 thread_local! {
     pub(crate) static HANDLER: EventHandler = const { std::cell::RefCell::new(None) };
 }
@@ -68,6 +71,30 @@ pub(crate) fn post_redraw_event(window_id: WindowId) {
     );
     if let Some(event) = event {
         let mtm = MainThreadMarker::new().unwrap();
+        NSApplication::sharedApplication(mtm).postEvent_atStart(&event, false);
+    }
+}
+
+/// Wake the main run loop from a background thread.
+///
+/// Thread-safe. Posts a synthetic event that triggers `Event::Wake`.
+/// Used by background executors to signal task completion.
+pub fn wake_run_loop() {
+    let event = NSEvent::otherEventWithType_location_modifierFlags_timestamp_windowNumber_context_subtype_data1_data2(
+        NSEventType::ApplicationDefined,
+        NSPoint::new(0.0, 0.0),
+        NSEventModifierFlags::empty(),
+        0.0,
+        0,
+        None,
+        WAKE_EVENT_SUBTYPE,
+        0,
+        0,
+    );
+    if let Some(event) = event {
+        // SAFETY: NSApplication::sharedApplication is thread-safe for posting events.
+        // We only post the event; we don't access any main-thread-only state.
+        let mtm = unsafe { MainThreadMarker::new_unchecked() };
         NSApplication::sharedApplication(mtm).postEvent_atStart(&event, false);
     }
 }
