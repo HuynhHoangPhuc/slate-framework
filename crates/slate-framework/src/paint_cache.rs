@@ -15,6 +15,9 @@
 //! This file is named `paint_cache.rs` (not `text_shaping_cache.rs`) so the post-v1
 //! expansion to a generic PaintCache (DrawCmd enum, Div caching) is rename-free.
 
+// Allow dead_code for API methods designed for future use (post-v1 expansion)
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::mem::size_of;
@@ -271,7 +274,7 @@ impl TextShapingCache {
         ids_by_age.sort_by_key(|(_, frame, _)| *frame);
 
         // Evict oldest 25%
-        let evict_count = (ids_by_age.len() + 3) / 4; // Round up
+        let evict_count = ids_by_age.len().div_ceil(4);
         for (id, _, size_bytes) in ids_by_age.into_iter().take(evict_count) {
             self.entries.remove(&id);
             self.memory_used = self.memory_used.saturating_sub(size_bytes);

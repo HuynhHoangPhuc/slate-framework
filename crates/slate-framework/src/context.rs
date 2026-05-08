@@ -115,6 +115,7 @@ impl<'a> PrepaintCtx<'a> {
     /// `state_registry` is borrowed after `id_stack` setup, before any view interior
     /// borrows. This is slot 8 in the RefCell borrow-order discipline.
     /// `text_shaping_cache` is slot 9.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         taffy: &'a TaffyTree<NodeContext>,
         hit_regions: &'a mut HitTestList,
