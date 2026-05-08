@@ -35,6 +35,9 @@ thiserror.workspace = true
 pollster.workspace = true
 image.workspace = true
 
+[dev-dependencies]
+trybuild = "1"
+
 [features]
 default = []
 tokio = ["dep:tokio", "dep:async-compat"]

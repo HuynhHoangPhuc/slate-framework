@@ -1,0 +1,64 @@
+name: Anchor PNG Diff
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  png-diff:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            baseline: sample-windows.png
+          - os: macos-latest
+            baseline: sample-macos.png
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check baseline exists
+        id: check-baseline
+        shell: bash
+        run: |
+          if [ -f "examples/anchor-md-to-png/expected/${{ matrix.baseline }}" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "::warning::Baseline ${{ matrix.baseline }} not found - skipping diff"
+          fi
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.check-baseline.outputs.exists == 'true'
+
+      - uses: Swatinem/rust-cache@v2
+        if: steps.check-baseline.outputs.exists == 'true'
+
+      - name: Render PNG
+        if: steps.check-baseline.outputs.exists == 'true'
+        shell: bash
+        run: |
+          cargo run --release -p anchor-md-to-png --bin anchor-md-to-png -- \
+            examples/anchor-md-to-png/inputs/sample.md \
+            ${{ runner.temp }}/actual.png
+
+      - name: Diff against baseline
+        if: steps.check-baseline.outputs.exists == 'true'
+        shell: bash
+        run: |
+          cargo run --release -p anchor-md-to-png --bin diff -- \
+            ${{ runner.temp }}/actual.png \
+            examples/anchor-md-to-png/expected/${{ matrix.baseline }}
+
+      - name: Upload artifacts on failure
+        if: failure() && steps.check-baseline.outputs.exists == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: png-diff-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/actual.png
+            ${{ runner.temp }}/diff.png

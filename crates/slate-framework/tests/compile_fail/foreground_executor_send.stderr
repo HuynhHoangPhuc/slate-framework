@@ -1,0 +1,50 @@
+error[E0277]: `*const ()` cannot be sent between threads safely
+ --> tests/compile_fail/foreground_executor_send.rs:7:19
+  |
+7 |     assert_send::<slate_framework::executor::ForegroundExecutor>();
+  |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `*const ()` cannot be sent between threads safely
+  |
+  = help: within `ForegroundExecutor`, the trait `Send` is not implemented for `*const ()`
+note: required because it appears within the type `PhantomData<*const ()>`
+ --> $RUST/core/src/marker.rs
+  |
+  | pub struct PhantomData<T: PointeeSized>;
+  |            ^^^^^^^^^^^
+note: required because it appears within the type `ForegroundExecutor`
+ --> src/executor.rs
+  |
+  | pub struct ForegroundExecutor {
+  |            ^^^^^^^^^^^^^^^^^^
+note: required by a bound in `assert_send`
+ --> tests/compile_fail/foreground_executor_send.rs:4:19
+  |
+4 | fn assert_send<T: Send>() {}
+  |                   ^^^^ required by this bound in `assert_send`
+
+error[E0277]: `Rc<()>` cannot be sent between threads safely
+ --> tests/compile_fail/foreground_executor_send.rs:7:19
+  |
+7 |     assert_send::<slate_framework::executor::ForegroundExecutor>();
+  |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Rc<()>` cannot be sent between threads safely
+  |
+  = help: within `ForegroundExecutor`, the trait `Send` is not implemented for `Rc<()>`
+note: required because it appears within the type `PhantomData<Rc<()>>`
+ --> $RUST/core/src/marker.rs
+  |
+  | pub struct PhantomData<T: PointeeSized>;
+  |            ^^^^^^^^^^^
+note: required because it appears within the type `async_executor::LocalExecutor<'static>`
+ --> $CARGO/async-executor-$VERSION/src/lib.rs
+  |
+  | pub struct LocalExecutor<'a> {
+  |            ^^^^^^^^^^^^^
+note: required because it appears within the type `ForegroundExecutor`
+ --> src/executor.rs
+  |
+  | pub struct ForegroundExecutor {
+  |            ^^^^^^^^^^^^^^^^^^
+note: required by a bound in `assert_send`
+ --> tests/compile_fail/foreground_executor_send.rs:4:19
+  |
+4 | fn assert_send<T: Send>() {}
+  |                   ^^^^ required by this bound in `assert_send`

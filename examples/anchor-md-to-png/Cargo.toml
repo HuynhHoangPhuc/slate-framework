@@ -7,10 +7,15 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 publish = false
+default-run = "anchor-md-to-png"
 
 [[bin]]
 name = "anchor-md-to-png"
 path = "src/main.rs"
+
+[[bin]]
+name = "diff"
+path = "src/bin/diff.rs"
 
 [dependencies]
 slate-framework = { path = "../../crates/slate-framework" }
