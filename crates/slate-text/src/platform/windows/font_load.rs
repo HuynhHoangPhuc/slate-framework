@@ -20,12 +20,10 @@ fn extract_family_name(bytes: &[u8]) -> Result<String, TextError> {
     let face = ttf_parser::Face::parse(bytes, 0)
         .map_err(|e| TextError::FontFileLoad(format!("ttf-parser: {e}")))?;
     for name in face.names() {
-        if name.name_id == ttf_parser::name_id::TYPOGRAPHIC_FAMILY
-            || name.name_id == ttf_parser::name_id::FAMILY
-        {
-            if let Some(family) = name.to_string() {
-                return Ok(family);
-            }
+        let is_family_name = name.name_id == ttf_parser::name_id::TYPOGRAPHIC_FAMILY
+            || name.name_id == ttf_parser::name_id::FAMILY;
+        if is_family_name && let Some(family) = name.to_string() {
+            return Ok(family);
         }
     }
     Err(TextError::FontFileLoad("No family name in font".into()))

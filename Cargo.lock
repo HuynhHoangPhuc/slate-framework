@@ -961,6 +961,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4f467dd6dccf739c208452f8014c75c18bb8301b050ad1cfb27153803edb0f51"
 
 [[package]]
+name = "hello-element"
+version = "0.0.2"
+dependencies = [
+ "env_logger",
+ "log",
+ "slate-framework",
+]
+
+[[package]]
 name = "hello-rect"
 version = "0.0.2"
 dependencies = [
@@ -2104,6 +2113,7 @@ dependencies = [
  "bytemuck",
  "glam",
  "log",
+ "pollster",
  "slate-platform",
  "slate-renderer",
  "slate-text",

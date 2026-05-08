@@ -13,8 +13,9 @@ use slate_renderer::scene::Scene;
 use taffy::TaffyTree;
 
 use crate::executor::ForegroundExecutor;
+use crate::hit_test::{HitRegion, HitTestList};
 use crate::text_system::TextSystem;
-use crate::types::{AccessibilityNode, HitRegion, NodeContext};
+use crate::types::{AccessibilityNode, NodeContext};
 
 /// Context for the `request_layout` phase.
 ///
@@ -64,7 +65,7 @@ pub struct PrepaintCtx<'a> {
     /// Taffy layout tree (read-only for bounds lookup).
     pub taffy: &'a TaffyTree<NodeContext>,
     /// Hit regions registered during prepaint (Phase 6 dispatches events).
-    pub hit_regions: &'a mut Vec<HitRegion>,
+    pub hit_regions: &'a mut HitTestList,
     /// Accessibility nodes for the a11y tree (Phase 5).
     pub a11y_nodes: &'a mut Vec<AccessibilityNode>,
     /// Text system (mutable for lazy font loading).
@@ -79,7 +80,7 @@ impl<'a> PrepaintCtx<'a> {
     /// Create a new prepaint context.
     pub fn new(
         taffy: &'a TaffyTree<NodeContext>,
-        hit_regions: &'a mut Vec<HitRegion>,
+        hit_regions: &'a mut HitTestList,
         a11y_nodes: &'a mut Vec<AccessibilityNode>,
         text: &'a mut TextSystem,
         executor: &'a ForegroundExecutor,
@@ -96,6 +97,8 @@ impl<'a> PrepaintCtx<'a> {
     }
 
     /// Register a hit region for pointer event handling.
+    ///
+    /// Z-index is auto-assigned based on registration order (back-to-front).
     pub fn register_hit_region(&mut self, region: HitRegion) {
         self.hit_regions.push(region);
     }

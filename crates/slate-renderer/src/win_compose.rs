@@ -52,7 +52,7 @@ pub(crate) struct WinCompose {
     fence_values: [u64; BUFFER_COUNT as usize],
     /// Next fence value to assign on Signal — monotonic, never reset.
     next_fence_value: u64,
-    back_buffer_textures: [Option<Arc<wgpu::Texture>>; BUFFER_COUNT as usize],
+    back_buffer_textures: [Option<wgpu::Texture>; BUFFER_COUNT as usize],
     back_buffer_resources: [Option<ID3D12Resource>; BUFFER_COUNT as usize],
     barrier_cmd_list: ID3D12GraphicsCommandList,
     barrier_cmd_alloc: ID3D12CommandAllocator,
@@ -225,12 +225,13 @@ impl WinCompose {
 
             let wgpu_tex = unsafe { device.create_texture_from_hal::<Dx12>(hal_tex, &desc) };
             self.back_buffer_resources[i as usize] = Some(buffer);
-            self.back_buffer_textures[i as usize] = Some(Arc::new(wgpu_tex));
+            self.back_buffer_textures[i as usize] = Some(wgpu_tex);
         }
         self.is_first_use = [true; BUFFER_COUNT as usize];
     }
 
-    fn release_back_buffers(&mut self) {
+    fn release_back_buffers(&mut self, _device: &Device) {
+        // Release wgpu textures first, then D3D12 resources
         for tex in &mut self.back_buffer_textures {
             *tex = None;
         }
@@ -279,12 +280,20 @@ impl CompositionTarget for WinCompose {
             return;
         }
 
+        // Match win-dcomp-spike resize flow: poll → wait_for_gpu → release → poll
+        // 1. Poll wgpu to process pending callbacks
         let _ = device.poll(wgpu::PollType::Wait {
             submission_index: None,
             timeout: None,
         });
+
+        // 2. Wait for GPU to complete all queued work
         self.flush();
-        self.release_back_buffers();
+
+        // 3. Release back buffer references
+        self.release_back_buffers(device);
+
+        // 4. Poll again to ensure wgpu processes texture destruction
         let _ = device.poll(wgpu::PollType::Wait {
             submission_index: None,
             timeout: None,
@@ -300,23 +309,13 @@ impl CompositionTarget for WinCompose {
             )
         };
         if let Err(e) = result {
-            log::warn!("ResizeBuffers failed: {:?} - retrying", e);
-            let _ = device.poll(wgpu::PollType::Wait {
-                submission_index: None,
-                timeout: None,
-            });
-            self.flush();
-            unsafe {
-                self.swap_chain
-                    .ResizeBuffers(
-                        BUFFER_COUNT,
-                        w,
-                        h,
-                        DXGI_FORMAT_B8G8R8A8_UNORM,
-                        DXGI_SWAP_CHAIN_FLAG(0),
-                    )
-                    .expect("ResizeBuffers failed on retry");
-            }
+            // ResizeBuffers can fail if DXGI still holds internal references to back buffers.
+            // This is a known issue with wgpu + DirectComposition swap chains.
+            // Continue with old size - compositor will stretch the content.
+            // TODO: Investigate proper synchronization to fix resize.
+            log::warn!("ResizeBuffers failed: {:?} - continuing with old size", e);
+            self.acquire_back_buffers(device);
+            return;
         }
 
         self.width = w;
@@ -379,7 +378,6 @@ impl CompositionTarget for WinCompose {
             view,
             inner: AcquiredFrameInner::Win {
                 back_buffer_index: idx as u32,
-                _texture: Arc::clone(texture),
             },
         })
     }
@@ -420,8 +418,11 @@ impl CompositionTarget for WinCompose {
             let _ = self.swap_chain.Present(1, DXGI_PRESENT(0));
             std::mem::ManuallyDrop::drop(&mut barrier.Anonymous.Transition);
         }
-        // Signal fence for this buffer so next acquire knows when it's idle
-        self.fence_values[idx] = self.signal_next();
+        // Signal and immediately wait for fence - ensures GPU is idle after each frame.
+        // This is required for reliable ResizeBuffers on composition swap chains.
+        let fence_val = self.signal_next();
+        self.wait_for_fence_value(fence_val);
+        self.fence_values[idx] = fence_val;
     }
 
     fn format(&self) -> TextureFormat {

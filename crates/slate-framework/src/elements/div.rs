@@ -11,9 +11,13 @@ use taffy::prelude::*;
 
 use crate::context::{LayoutCtx, PaintCtx, PrepaintCtx};
 use crate::element::{AnyElement, Element, IntoElement, Sealed};
+use crate::hit_test::{CursorStyle, HitRegion};
 use crate::layout::resolve_child_bounds;
 use crate::style::Style;
-use crate::types::{Bounds, LayoutId, NodeContext};
+use crate::types::{
+    AccessibilityInfo, AccessibilityNode, AccessibilityRole, Bounds, ElementId, LayoutId,
+    NodeContext,
+};
 
 /// Flexbox container element.
 ///
@@ -173,6 +177,25 @@ impl Element for Div {
         layout_state: &mut Self::LayoutState,
         cx: &mut PrepaintCtx,
     ) -> Self::PaintState {
+        let element_id = ElementId::next();
+
+        // Register hit region if Div has background (clickable container)
+        if self.visual.background.is_some() {
+            cx.register_hit_region(
+                HitRegion::new(element_id, bounds, 0).with_cursor(CursorStyle::Arrow),
+            );
+        }
+
+        // Register accessibility node for this Div
+        if let Some(info) = self.accessibility() {
+            cx.register_a11y_node(AccessibilityNode {
+                id: element_id,
+                bounds,
+                info,
+                children: Vec::new(),
+            });
+        }
+
         // Prepaint children with their resolved bounds
         for (i, child) in self.children.iter_mut().enumerate() {
             if let Some(child_bounds) =
@@ -216,6 +239,13 @@ impl Element for Div {
                 child.paint(child_bounds, cx);
             }
         }
+    }
+
+    fn accessibility(&self) -> Option<AccessibilityInfo> {
+        Some(AccessibilityInfo {
+            role: AccessibilityRole::Group,
+            ..Default::default()
+        })
     }
 }
 

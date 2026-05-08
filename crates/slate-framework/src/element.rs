@@ -8,7 +8,7 @@
 //! `AnyElement` provides type erasure via `Box<dyn AnyElementDynamic>`.
 
 use crate::context::{LayoutCtx, PaintCtx, PrepaintCtx};
-use crate::types::{Bounds, LayoutId};
+use crate::types::{AccessibilityInfo, Bounds, LayoutId};
 
 /// Core trait for UI elements with three-phase lifecycle.
 ///
@@ -63,6 +63,26 @@ pub trait Element: 'static {
         paint_state: &mut Self::PaintState,
         cx: &mut PaintCtx,
     );
+
+    /// Return accessibility information for this element.
+    ///
+    /// Default returns `None` — element is invisible to screen readers.
+    /// Built-in elements (Div, Text, Button) provide meaningful a11y info.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// fn accessibility(&self) -> Option<AccessibilityInfo> {
+    ///     Some(AccessibilityInfo {
+    ///         role: AccessibilityRole::Button,
+    ///         label: Some(self.label.clone()),
+    ///         ..Default::default()
+    ///     })
+    /// }
+    /// ```
+    fn accessibility(&self) -> Option<AccessibilityInfo> {
+        None
+    }
 }
 
 /// Sealed trait marker for `IntoElement`.
@@ -122,6 +142,11 @@ impl AnyElement {
     pub fn paint(&mut self, bounds: Bounds, cx: &mut PaintCtx) {
         self.element.paint(bounds, cx);
     }
+
+    /// Get accessibility info for this element.
+    pub fn accessibility(&self) -> Option<AccessibilityInfo> {
+        self.element.accessibility()
+    }
 }
 
 /// Internal trait for type-erased element operations.
@@ -132,6 +157,7 @@ trait AnyElementDynamic: 'static {
     fn request_layout(&mut self, cx: &mut LayoutCtx) -> LayoutId;
     fn prepaint(&mut self, bounds: Bounds, cx: &mut PrepaintCtx);
     fn paint(&mut self, bounds: Bounds, cx: &mut PaintCtx);
+    fn accessibility(&self) -> Option<AccessibilityInfo>;
 }
 
 /// Internal wrapper storing element + per-phase state.
@@ -171,6 +197,10 @@ impl<E: Element> AnyElementDynamic for ElementState<E> {
             .as_mut()
             .expect("paint called before prepaint");
         self.element.paint(bounds, layout_state, paint_state, cx);
+    }
+
+    fn accessibility(&self) -> Option<AccessibilityInfo> {
+        self.element.accessibility()
     }
 }
 

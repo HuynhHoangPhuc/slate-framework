@@ -5,7 +5,7 @@
 use crate::types::FontId;
 use crate::{FontMetrics, ShapedGlyph, ShapedLine, TextError};
 use std::cell::RefCell;
-use std::sync::Arc;
+use std::rc::Rc;
 use windows::Win32::Graphics::DirectWrite::{
     DWRITE_GLYPH_RUN, DWRITE_GLYPH_RUN_DESCRIPTION, DWRITE_MATRIX, DWRITE_MEASURING_MODE,
     DWRITE_STRIKETHROUGH, DWRITE_UNDERLINE, IDWriteFactory5, IDWriteInlineObject,
@@ -14,7 +14,7 @@ use windows::Win32::Graphics::DirectWrite::{
 use windows::core::{BOOL, IUnknown, Ref, Result, implement};
 
 /// Shared glyph storage for renderer callback.
-type GlyphStore = Arc<RefCell<Vec<ShapedGlyph>>>;
+type GlyphStore = Rc<RefCell<Vec<ShapedGlyph>>>;
 
 /// Custom text renderer that collects shaped glyphs from DrawGlyphRun callbacks.
 #[implement(IDWriteTextRenderer)]
@@ -164,9 +164,9 @@ pub fn shape_line(
     let layout = unsafe { factory.CreateTextLayout(&wide, text_format, f32::MAX, f32::MAX) }
         .map_err(|e| TextError::ShapingFailed(format!("CreateTextLayout: {e}")))?;
 
-    // Arc<RefCell> shared state for glyph accumulation
-    let glyphs_store: GlyphStore = Arc::new(RefCell::new(Vec::new()));
-    let renderer = ShapingRenderer::new(Arc::clone(&glyphs_store));
+    // Rc<RefCell> shared state for glyph accumulation
+    let glyphs_store: GlyphStore = Rc::new(RefCell::new(Vec::new()));
+    let renderer = ShapingRenderer::new(Rc::clone(&glyphs_store));
     let renderer_iface: IDWriteTextRenderer = renderer.into();
 
     // Draw() invokes DrawGlyphRun callback(s)

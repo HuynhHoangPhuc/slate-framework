@@ -8,7 +8,10 @@ use taffy::prelude::*;
 use crate::context::{LayoutCtx, PaintCtx, PrepaintCtx};
 use crate::element::{Element, IntoElement, Sealed};
 use crate::text_system::PlatformFont;
-use crate::types::{Bounds, LayoutId, NodeContext};
+use crate::types::{
+    AccessibilityInfo, AccessibilityNode, AccessibilityRole, Bounds, ElementId, LayoutId,
+    NodeContext,
+};
 
 /// Text label element.
 ///
@@ -173,11 +176,20 @@ impl Element for Text {
 
     fn prepaint(
         &mut self,
-        _bounds: Bounds,
+        bounds: Bounds,
         _layout_state: &mut Self::LayoutState,
-        _cx: &mut PrepaintCtx,
+        cx: &mut PrepaintCtx,
     ) -> Self::PaintState {
-        // Text has no interactive regions (yet)
+        // Register accessibility node for this Text
+        if let Some(info) = self.accessibility() {
+            cx.register_a11y_node(AccessibilityNode {
+                id: ElementId::next(),
+                bounds,
+                info,
+                children: Vec::new(),
+            });
+        }
+
         TextPaintState
     }
 
@@ -218,6 +230,14 @@ impl Element for Text {
         for glyph in glyphs {
             cx.scene.push_glyph(glyph);
         }
+    }
+
+    fn accessibility(&self) -> Option<AccessibilityInfo> {
+        Some(AccessibilityInfo {
+            role: AccessibilityRole::Label,
+            label: Some(self.content.clone()),
+            ..Default::default()
+        })
     }
 }
 

@@ -171,21 +171,6 @@ impl ElementId {
     }
 }
 
-/// A rectangular region that can receive pointer events.
-///
-/// Full event dispatch logic added in Phase 6.
-#[derive(Clone, Debug)]
-pub struct HitRegion {
-    pub bounds: Bounds,
-    pub id: ElementId,
-}
-
-impl HitRegion {
-    pub fn new(bounds: Bounds, id: ElementId) -> Self {
-        Self { bounds, id }
-    }
-}
-
 /// Measure data attached to each Taffy node.
 ///
 /// Used by `compute_layout_with_measure` to drive the measure closure.
@@ -202,7 +187,7 @@ pub enum NodeContext {
 
 /// Accessibility role for an element.
 ///
-/// Subset of accesskit::Role for v1 widget set.
+/// Standard ARIA roles for v1 widget set. Maps to accesskit::Role.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum AccessibilityRole {
     #[default]
@@ -210,11 +195,29 @@ pub enum AccessibilityRole {
     Button,
     Checkbox,
     Dialog,
+    /// Container/grouping element (e.g., Div).
+    Group,
+    /// Heading with semantic level (1-6).
+    Heading { level: u8 },
+    Image,
     Label,
+    Link,
     List,
     ListItem,
+    Menu,
+    MenuItem,
+    ProgressBar,
+    RadioButton,
     ScrollView,
+    Slider,
+    Switch,
+    Tab,
+    TabPanel,
     TextInput,
+    Tooltip,
+    Window,
+    /// Element is not exposed to accessibility tree.
+    None,
 }
 
 impl From<AccessibilityRole> for accesskit::Role {
@@ -224,30 +227,78 @@ impl From<AccessibilityRole> for accesskit::Role {
             AccessibilityRole::Button => accesskit::Role::Button,
             AccessibilityRole::Checkbox => accesskit::Role::CheckBox,
             AccessibilityRole::Dialog => accesskit::Role::Dialog,
+            AccessibilityRole::Group => accesskit::Role::Group,
+            AccessibilityRole::Heading { .. } => accesskit::Role::Heading,
+            AccessibilityRole::Image => accesskit::Role::Image,
             AccessibilityRole::Label => accesskit::Role::Label,
+            AccessibilityRole::Link => accesskit::Role::Link,
             AccessibilityRole::List => accesskit::Role::List,
             AccessibilityRole::ListItem => accesskit::Role::ListItem,
+            AccessibilityRole::Menu => accesskit::Role::Menu,
+            AccessibilityRole::MenuItem => accesskit::Role::MenuItem,
+            AccessibilityRole::ProgressBar => accesskit::Role::ProgressIndicator,
+            AccessibilityRole::RadioButton => accesskit::Role::RadioButton,
             AccessibilityRole::ScrollView => accesskit::Role::ScrollView,
+            AccessibilityRole::Slider => accesskit::Role::Slider,
+            AccessibilityRole::Switch => accesskit::Role::Switch,
+            AccessibilityRole::Tab => accesskit::Role::Tab,
+            AccessibilityRole::TabPanel => accesskit::Role::TabPanel,
             AccessibilityRole::TextInput => accesskit::Role::TextInput,
+            AccessibilityRole::Tooltip => accesskit::Role::Tooltip,
+            AccessibilityRole::Window => accesskit::Role::Window,
+            AccessibilityRole::None => accesskit::Role::Unknown,
         }
     }
 }
 
-/// Accessibility info for an element (Phase 5).
-#[derive(Clone, Debug, Default)]
-pub struct AccessibilityInfo {
-    pub role: AccessibilityRole,
-    pub label: Option<String>,
-    pub description: Option<String>,
-    pub value: Option<String>,
+/// Live region announcement priority for dynamic content.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum LiveRegion {
+    /// Polite — announced after current speech finishes.
+    Polite,
+    /// Assertive — interrupts current speech immediately.
+    Assertive,
 }
 
-/// Accessibility node for the a11y tree (stub for PrepaintCtx).
+/// Accessibility info for an element.
+///
+/// Provides semantic information for screen readers and assistive technologies.
+/// Elements return this via `Element::accessibility()`.
+#[derive(Clone, Debug, Default)]
+pub struct AccessibilityInfo {
+    /// Semantic role of the element.
+    pub role: AccessibilityRole,
+    /// Human-readable label (e.g., button text, image alt text).
+    pub label: Option<String>,
+    /// Extended description for additional context.
+    pub description: Option<String>,
+    /// Current value (for sliders, text inputs, etc.).
+    pub value: Option<String>,
+    /// Whether the element is disabled (non-interactive).
+    pub is_disabled: bool,
+    /// Whether the element currently has keyboard focus.
+    pub is_focused: bool,
+    /// Whether a collapsible element is expanded (None if not collapsible).
+    pub is_expanded: Option<bool>,
+    /// Whether the element is selected (None if not selectable).
+    pub is_selected: Option<bool>,
+    /// Live region behavior for dynamic content updates.
+    pub live_region: Option<LiveRegion>,
+}
+
+/// Accessibility node for the a11y tree.
+///
+/// Built during `prepaint` phase, consumed by platform accessibility backends.
 #[derive(Clone, Debug)]
 pub struct AccessibilityNode {
+    /// Stable element identity.
     pub id: ElementId,
+    /// Screen bounds in physical pixels.
     pub bounds: Bounds,
+    /// Semantic accessibility information.
     pub info: AccessibilityInfo,
+    /// Child nodes (for hierarchical tree structure).
+    pub children: Vec<AccessibilityNode>,
 }
 
 #[cfg(test)]

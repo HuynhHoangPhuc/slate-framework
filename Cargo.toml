@@ -4,6 +4,7 @@ members = [
     "crates/slate-renderer",
     "crates/slate-text",
     "crates/slate-framework",
+    "examples/hello-element",
     "examples/hello-rect",
     "examples/primitive-gallery",
     "examples/win-dcomp-spike",

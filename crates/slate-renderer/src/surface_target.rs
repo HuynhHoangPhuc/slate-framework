@@ -5,7 +5,6 @@
 //! IDCompositionVisual (no DWM redirection bitmap).
 
 #[cfg(target_os = "windows")]
-use std::sync::Arc;
 use wgpu::{Device, TextureFormat, TextureView};
 
 /// A handle to one acquired frame.
@@ -25,7 +24,6 @@ pub(crate) enum AcquiredFrameInner {
     #[cfg(target_os = "windows")]
     Win {
         back_buffer_index: u32,
-        _texture: Arc<wgpu::Texture>,
     },
 }
 

@@ -32,6 +32,7 @@ bytemuck.workspace = true
 glam.workspace = true
 log.workspace = true
 thiserror.workspace = true
+pollster.workspace = true
 
 [features]
 default = []
