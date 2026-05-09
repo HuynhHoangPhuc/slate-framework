@@ -87,6 +87,7 @@ fn check_borrow_order(slot: u8) {
 fn reset_borrow_order() {}
 
 #[cfg(not(debug_assertions))]
+#[allow(dead_code)] // Infrastructure for future simultaneous-borrow detection
 fn check_borrow_order(_slot: u8) {}
 
 /// Application container.

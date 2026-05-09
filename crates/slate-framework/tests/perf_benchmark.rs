@@ -167,7 +167,8 @@ fn bench_cache_hit_rate() {
 
 #[test]
 fn bench_1000_element_tree() {
-    let mut app = headless_app_or_skip!(1920, 1080);
+    // Use smaller resolution for CI runners with limited GPU memory
+    let mut app = headless_app_or_skip!(800, 600);
 
     let times = measure_frame_times(&mut app, large_tree_1000, 3, 10);
 
@@ -185,7 +186,8 @@ fn bench_1000_element_tree() {
 
 #[test]
 fn bench_1000_element_cached() {
-    let mut app = headless_app_or_skip!(1920, 1080);
+    // Use smaller resolution for CI runners with limited GPU memory
+    let mut app = headless_app_or_skip!(800, 600);
 
     // Warmup: first render (all misses)
     let _ = app.render(large_tree_1000());
