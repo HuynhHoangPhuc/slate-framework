@@ -7,11 +7,11 @@
 
 use std::time::Duration;
 
+use slate_framework::reactive::Signal;
 use slate_framework::{
     AlignItems, AnyElement, App, AppContext, Color, Div, FlexDirection, IntoAny, JustifyContent,
     Text, Timer, View, WindowOptions,
 };
-use slate_framework::reactive::Signal;
 
 struct CounterView {
     count: Signal<u32>,

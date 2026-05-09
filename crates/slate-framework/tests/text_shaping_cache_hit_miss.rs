@@ -114,13 +114,17 @@ fn same_tree_position_replaces_cache_entry() {
 
     // Re-render second text (current cache content): hit
     let text2_again = Text::new("Second text").font_size(14.0);
-    let _img3 = app.render(AnyElement::new(text2_again)).expect("third render");
+    let _img3 = app
+        .render(AnyElement::new(text2_again))
+        .expect("third render");
 
     assert_eq!(app.text_shaping_cache_hits(), 1);
 
     // Re-render first text: miss (cache was overwritten)
     let text1_again = Text::new("First text").font_size(14.0);
-    let _img4 = app.render(AnyElement::new(text1_again)).expect("fourth render");
+    let _img4 = app
+        .render(AnyElement::new(text1_again))
+        .expect("fourth render");
 
     assert_eq!(app.text_shaping_cache_misses(), 3);
 }

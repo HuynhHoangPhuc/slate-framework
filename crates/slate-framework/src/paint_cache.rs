@@ -333,9 +333,7 @@ pub fn hash_f32<H: Hasher>(v: f32, h: &mut H) {
     let q = if v.is_nan() {
         0
     } else {
-        (v * 256.0)
-            .round()
-            .clamp(i32::MIN as f32, i32::MAX as f32) as i32
+        (v * 256.0).round().clamp(i32::MIN as f32, i32::MAX as f32) as i32
     };
     q.hash(h);
 }

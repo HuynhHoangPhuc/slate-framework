@@ -1,6 +1,6 @@
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use parking_lot::Mutex;
 
@@ -67,8 +67,8 @@ impl<T: Send + Sync + Clone + 'static> Memo<T> {
             self.inner.subscribers.lock().insert(observer);
         }
 
-        let needs_recompute = self.inner.cache.lock().is_none()
-            || self.inner.stale.swap(false, Ordering::AcqRel);
+        let needs_recompute =
+            self.inner.cache.lock().is_none() || self.inner.stale.swap(false, Ordering::AcqRel);
 
         if needs_recompute {
             if observer_stack_depth() > MAX_MEMO_DEPTH {

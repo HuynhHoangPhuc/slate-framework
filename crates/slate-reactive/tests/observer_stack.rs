@@ -1,4 +1,4 @@
-use slate_reactive::{current_observer, with_observer, ObserverId, Runtime};
+use slate_reactive::{ObserverId, Runtime, current_observer, with_observer};
 
 #[test]
 fn nested_observers_pop_order() {

@@ -3,21 +3,19 @@
 use std::ptr::NonNull;
 use std::sync::Arc;
 
+use objc2::MainThreadOnly;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
-use objc2::MainThreadOnly;
-use objc2_app_kit::{
-    NSBackingStoreType, NSView, NSWindow, NSWindowStyleMask,
-};
+use objc2_app_kit::{NSBackingStoreType, NSView, NSWindow, NSWindowStyleMask};
 use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize, NSString};
 use raw_window_handle::{
     AppKitDisplayHandle, AppKitWindowHandle, DisplayHandle, HandleError, HasDisplayHandle,
     HasWindowHandle, RawDisplayHandle, RawWindowHandle, WindowHandle,
 };
 
-use crate::{Window, WindowId, WindowOptions};
 use super::view::{MetalView, WindowDelegate};
 use super::{next_window_id, post_redraw_event};
+use crate::{Window, WindowId, WindowOptions};
 
 // ---------------------------------------------------------------------------
 // MacWindow — public window handle

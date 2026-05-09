@@ -18,7 +18,9 @@ use slate_text::CoreTextBackend;
 use slate_text::DirectWriteBackend;
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-compile_error!("slate-framework currently supports macOS and Windows only. Linux support is planned for a future release.");
+compile_error!(
+    "slate-framework currently supports macOS and Windows only. Linux support is planned for a future release."
+);
 
 /// Concrete text system wrapping the platform backend.
 ///

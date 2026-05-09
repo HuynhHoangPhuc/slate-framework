@@ -59,7 +59,9 @@ fn memory_proportional_to_text_length() {
 
     // Short text
     let short_text = Text::new("Hi").font_size(14.0);
-    let _img = app.render(AnyElement::new(short_text)).expect("render short");
+    let _img = app
+        .render(AnyElement::new(short_text))
+        .expect("render short");
     let short_memory = app.text_shaping_cache_memory();
 
     // Clear by GC
@@ -70,7 +72,8 @@ fn memory_proportional_to_text_length() {
     assert_eq!(app.text_shaping_cache_len(), 0);
 
     // Longer text
-    let long_text = Text::new("This is a much longer piece of text that should use more memory").font_size(14.0);
+    let long_text = Text::new("This is a much longer piece of text that should use more memory")
+        .font_size(14.0);
     let _img = app.render(AnyElement::new(long_text)).expect("render long");
     let long_memory = app.text_shaping_cache_memory();
 
@@ -78,7 +81,10 @@ fn memory_proportional_to_text_length() {
     assert!(
         long_memory > short_memory,
         "longer text ({} chars) should use more memory than shorter ({} chars): {} vs {}",
-        64, 2, long_memory, short_memory
+        64,
+        2,
+        long_memory,
+        short_memory
     );
 }
 
@@ -122,6 +128,7 @@ fn memory_updates_on_content_change() {
     assert!(
         memory_second > memory_first,
         "memory should increase with longer replacement: {} vs {}",
-        memory_first, memory_second
+        memory_first,
+        memory_second
     );
 }

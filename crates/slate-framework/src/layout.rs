@@ -5,8 +5,8 @@
 
 use taffy::prelude::*;
 
-use crate::element::AnyElement;
 use crate::context::LayoutCtx;
+use crate::element::AnyElement;
 use crate::types::{Bounds, LayoutId, NodeContext, Point, Size};
 
 /// Wrapper around Taffy's layout tree.
@@ -292,9 +292,7 @@ mod tests {
     fn layout_tree_clear() {
         let mut tree = LayoutTree::new();
 
-        let _node = tree
-            .new_leaf(taffy::Style::default())
-            .unwrap();
+        let _node = tree.new_leaf(taffy::Style::default()).unwrap();
 
         tree.clear();
 

@@ -8,8 +8,8 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use fxhash::{FxHashMap, FxHasher};
 use parking_lot::Mutex;
+use rustc_hash::{FxHashMap, FxHasher};
 
 use crate::{FontHandle, ShapedLine};
 

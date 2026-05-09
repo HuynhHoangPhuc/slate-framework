@@ -44,9 +44,9 @@ impl ReactiveOwner {
     /// Returns the current owner, if any.
     pub fn current() -> Option<ReactiveOwner> {
         OWNER_STACK.with(|s| {
-            s.borrow()
-                .last()
-                .map(|inner| ReactiveOwner { inner: inner.clone() })
+            s.borrow().last().map(|inner| ReactiveOwner {
+                inner: inner.clone(),
+            })
         })
     }
 

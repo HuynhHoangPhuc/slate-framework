@@ -7,6 +7,7 @@ use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
     RawWindowHandle, Win32WindowHandle, WindowHandle, WindowsDisplayHandle,
 };
+use windows::Win32::Foundation::RECT;
 use windows::Win32::Foundation::{HINSTANCE, HWND};
 use windows::Win32::Graphics::Gdi::InvalidateRect;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
@@ -14,13 +15,12 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CW_USEDEFAULT, CreateWindowExW, DestroyWindow, GetClientRect, SetWindowTextW,
     WS_EX_NOREDIRECTIONBITMAP, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
 };
-use windows::Win32::Foundation::RECT;
 use windows::core::PCWSTR;
 
-use crate::{Window, WindowId, WindowOptions};
 use super::message_loop::WinWindowInner;
 use super::platform::CLASS_NAME;
 use super::{next_window_id, register_wake_hwnd, to_wide};
+use crate::{Window, WindowId, WindowOptions};
 
 // ---------------------------------------------------------------------------
 // WinWindow — public window handle (thin Arc wrapper)

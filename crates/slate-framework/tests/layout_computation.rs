@@ -1,6 +1,6 @@
 //! Integration tests for Taffy layout computation and bounds resolution.
 
-use slate_framework::layout::{resolve_bounds, LayoutTree};
+use slate_framework::layout::{LayoutTree, resolve_bounds};
 use slate_framework::types::{LayoutId, NodeContext};
 use taffy::prelude::*;
 
@@ -197,7 +197,10 @@ fn node_context_text() {
         height_lpx: 20.0,
     };
     match ctx {
-        NodeContext::Text { width_lpx, height_lpx } => {
+        NodeContext::Text {
+            width_lpx,
+            height_lpx,
+        } => {
             assert_eq!(width_lpx, 100.0);
             assert_eq!(height_lpx, 20.0);
         }
@@ -212,7 +215,10 @@ fn node_context_image() {
         height_lpx: 150.0,
     };
     match ctx {
-        NodeContext::Image { width_lpx, height_lpx } => {
+        NodeContext::Image {
+            width_lpx,
+            height_lpx,
+        } => {
             assert_eq!(width_lpx, 200.0);
             assert_eq!(height_lpx, 150.0);
         }

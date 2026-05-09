@@ -166,10 +166,7 @@ impl ElementBuilder {
 
     fn end_tag(&mut self, tag: TagEnd) {
         match tag {
-            TagEnd::Heading(_)
-            | TagEnd::Paragraph
-            | TagEnd::BlockQuote(_)
-            | TagEnd::CodeBlock => {
+            TagEnd::Heading(_) | TagEnd::Paragraph | TagEnd::BlockQuote(_) | TagEnd::CodeBlock => {
                 self.flush_text();
                 self.pop_container();
             }
@@ -287,13 +284,12 @@ impl ElementBuilder {
 
             ContainerKind::BlockQuote => build_div_with_children(
                 |s| {
-                    s.flex_direction(FlexDirection::Column)
-                        .padding(Edges {
-                            left: Length::Px(16.0),
-                            top: Length::Px(8.0),
-                            bottom: Length::Px(8.0),
-                            right: Length::Px(8.0),
-                        })
+                    s.flex_direction(FlexDirection::Column).padding(Edges {
+                        left: Length::Px(16.0),
+                        top: Length::Px(8.0),
+                        bottom: Length::Px(8.0),
+                        right: Length::Px(8.0),
+                    })
                 },
                 Some(hex_color("#252540")),
                 4.0,
@@ -325,9 +321,7 @@ impl ElementBuilder {
             .into_any(),
 
             ContainerKind::ListItem => {
-                let bullet = Text::new("•")
-                    .font_size(14.0)
-                    .color(hex_color("#666688"));
+                let bullet = Text::new("•").font_size(14.0).color(hex_color("#666688"));
 
                 let content = build_div_with_children(
                     |s| s.flex_direction(FlexDirection::Column).flex_grow(1.0),

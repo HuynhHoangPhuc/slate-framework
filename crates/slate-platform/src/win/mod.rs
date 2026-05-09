@@ -66,12 +66,7 @@ pub(crate) fn register_wake_hwnd(hwnd: HWND) {
 ///
 /// Called when a window is destroyed to prevent posting to a dead HWND.
 pub(crate) fn clear_wake_hwnd(hwnd: HWND) {
-    let _ = WAKE_HWND.compare_exchange(
-        hwnd.0 as isize,
-        0,
-        Ordering::AcqRel,
-        Ordering::Relaxed,
-    );
+    let _ = WAKE_HWND.compare_exchange(hwnd.0 as isize, 0, Ordering::AcqRel, Ordering::Relaxed);
 }
 
 /// Wake the main run loop from a background thread.

@@ -504,8 +504,8 @@ impl Element for Text {
     /// Hashes: content, font_size, color (quantized), bounds (quantized).
     /// Font family is not hashed since the loaded font handle is per-element.
     fn paint_input_hash(&self, bounds: crate::types::Bounds) -> u64 {
-        use std::hash::{Hash, Hasher};
         use crate::paint_cache::{hash_bounds, hash_color};
+        use std::hash::{Hash, Hasher};
 
         let mut h = std::collections::hash_map::DefaultHasher::new();
         self.content.hash(&mut h);

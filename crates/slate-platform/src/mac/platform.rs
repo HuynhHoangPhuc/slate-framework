@@ -12,10 +12,10 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{MainThreadMarker, NSNotification, NSObject, NSObjectProtocol, NSPoint};
 
-use crate::{Event, Platform, WindowOptions};
 use super::window::MacWindow;
-use super::{dispatch_event, ffi_boundary, HANDLER, REDRAW_EVENT_SUBTYPE, WAKE_EVENT_SUBTYPE};
+use super::{HANDLER, REDRAW_EVENT_SUBTYPE, WAKE_EVENT_SUBTYPE, dispatch_event, ffi_boundary};
 use crate::WindowId;
+use crate::{Event, Platform, WindowOptions};
 
 // ---------------------------------------------------------------------------
 // SlateApplication — custom NSApplication subclass to intercept synthetic events

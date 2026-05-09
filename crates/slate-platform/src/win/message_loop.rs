@@ -6,14 +6,14 @@ use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::ValidateRect;
 use windows::Win32::UI::WindowsAndMessaging::{
     CREATESTRUCTW, DefWindowProcW, GWLP_USERDATA, GetWindowLongPtrW, KillTimer, MINMAXINFO, MSG,
-    PM_REMOVE, PeekMessageW, PostQuitMessage, SWP_NOACTIVATE, SWP_NOZORDER, SetTimer,
-    SetWindowLongPtrW, SetWindowPos, USER_TIMER_MINIMUM, WM_CLOSE, WM_DESTROY, WM_DPICHANGED,
-    WM_ENTERSIZEMOVE, WM_ERASEBKGND, WM_EXITSIZEMOVE, WM_GETMINMAXINFO, WM_NCCREATE, WM_NCDESTROY,
-    WM_PAINT, WM_SIZE, WM_TIMER, SIZE_MINIMIZED,
+    PM_REMOVE, PeekMessageW, PostQuitMessage, SIZE_MINIMIZED, SWP_NOACTIVATE, SWP_NOZORDER,
+    SetTimer, SetWindowLongPtrW, SetWindowPos, USER_TIMER_MINIMUM, WM_CLOSE, WM_DESTROY,
+    WM_DPICHANGED, WM_ENTERSIZEMOVE, WM_ERASEBKGND, WM_EXITSIZEMOVE, WM_GETMINMAXINFO, WM_NCCREATE,
+    WM_NCDESTROY, WM_PAINT, WM_SIZE, WM_TIMER,
 };
 
+use super::{IN_SIZE_MOVE, SIZE_MOVE_TIMER_ID, WM_APP_WAKE, clear_wake_hwnd, dispatch_event};
 use crate::{Event, WindowId};
-use super::{clear_wake_hwnd, dispatch_event, IN_SIZE_MOVE, SIZE_MOVE_TIMER_ID, WM_APP_WAKE};
 
 // ---------------------------------------------------------------------------
 // WinWindowInner — actual HWND state (Arc'd, OS holds raw ptr via GWLP_USERDATA)
@@ -28,7 +28,13 @@ pub struct WinWindowInner {
 
 impl WinWindowInner {
     /// Translate a Win32 message into a Slate [`Event`] and dispatch it.
-    pub(crate) fn handle_message(&self, hwnd: HWND, msg: u32, _wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    pub(crate) fn handle_message(
+        &self,
+        hwnd: HWND,
+        msg: u32,
+        _wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
         match msg {
             WM_CLOSE => {
                 dispatch_event(Event::WindowCloseRequested { window: self.id });
@@ -66,9 +72,7 @@ impl WinWindowInner {
                 let _ = unsafe { ValidateRect(Some(hwnd), None) };
                 LRESULT(0)
             }
-            WM_ERASEBKGND => {
-                LRESULT(1)
-            }
+            WM_ERASEBKGND => LRESULT(1),
             WM_PAINT => {
                 dispatch_event(Event::WindowRedrawRequested { window: self.id });
                 let _ = unsafe { ValidateRect(Some(hwnd), None) };

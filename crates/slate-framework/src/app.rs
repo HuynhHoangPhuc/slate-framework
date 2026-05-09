@@ -7,14 +7,14 @@ use std::cell::RefCell;
 use std::sync::Arc;
 
 use slate_platform::{
-    wake_run_loop, DefaultPlatform, DefaultWindow, Event, Platform, Window, WindowOptions,
+    DefaultPlatform, DefaultWindow, Event, Platform, Window, WindowOptions, wake_run_loop,
 };
 use slate_renderer::{Renderer, Scene};
 
 use crate::context::{LayoutCtx, PaintCtx, PrepaintCtx};
 use crate::executor::{BackgroundExecutor, Executor, RedrawRequester};
 use crate::hit_test::HitTestList;
-use crate::layout::{compute_layout, resolve_bounds, LayoutTree};
+use crate::layout::{LayoutTree, compute_layout, resolve_bounds};
 use crate::reactive_state::StateRegistry;
 use crate::text_system::TextSystem;
 use crate::types::{AccessibilityNode, Size};
@@ -260,11 +260,7 @@ impl App {
                         scale_factor,
                     );
 
-                    compute_layout(
-                        &mut root,
-                        &mut cx,
-                        Size::new(w as f32, h as f32),
-                    )
+                    compute_layout(&mut root, &mut cx, Size::new(w as f32, h as f32))
                 };
 
                 let Some(root_id) = root_id else {

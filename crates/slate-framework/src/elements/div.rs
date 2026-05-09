@@ -14,7 +14,9 @@ use crate::element::{AnyElement, Element, IntoElement, Sealed};
 use crate::hit_test::{CursorStyle, HitRegion};
 use crate::layout::resolve_child_bounds;
 use crate::style::Style;
-use crate::types::{AccessibilityInfo, AccessibilityRole, Bounds, ElementId, LayoutId, NodeContext};
+use crate::types::{
+    AccessibilityInfo, AccessibilityRole, Bounds, ElementId, LayoutId, NodeContext,
+};
 
 /// Flexbox container element.
 ///
@@ -309,4 +311,3 @@ impl IntoElement for Div {
         self
     }
 }
-

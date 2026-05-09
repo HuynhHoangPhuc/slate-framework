@@ -14,10 +14,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{PCWSTR, w};
 
-use crate::{Event, Platform, WindowOptions};
 use super::message_loop::wnd_proc_trampoline;
 use super::window::WinWindow;
-use super::{dispatch_event, HANDLER};
+use super::{HANDLER, dispatch_event};
+use crate::{Event, Platform, WindowOptions};
 
 // ---------------------------------------------------------------------------
 // Window class name (compile-time wide literal)

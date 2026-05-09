@@ -57,4 +57,4 @@ pub use shadow_pipeline::ShadowPipeline;
 pub use scene::{GlyphInstance, ImageInstance, Layer, RectInstance, Scene, ShadowInstance};
 
 // Re-exports from renderer
-pub use renderer::{Renderer, RendererError, RenderError};
+pub use renderer::{RenderError, Renderer, RendererError};

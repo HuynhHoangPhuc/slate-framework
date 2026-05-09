@@ -28,19 +28,19 @@ use wgpu::{
 use std::sync::Arc;
 
 use slate_reactive::{ObserverId, Runtime};
+use slate_renderer::Scene;
 use slate_renderer::atlas::{Atlas, Format};
 use slate_renderer::glyph_pipeline::GlyphPipeline;
 use slate_renderer::image_pipeline::ImagePipeline;
 use slate_renderer::instanced_rect_pipeline::InstancedRectPipeline;
 use slate_renderer::pipeline_shared::{self, ViewportUniform};
 use slate_renderer::shadow_pipeline::ShadowPipeline;
-use slate_renderer::Scene;
 
 use crate::context::{LayoutCtx, PaintCtx, PrepaintCtx};
 use crate::element::AnyElement;
 use crate::executor::{Executor, RedrawRequester};
 use crate::hit_test::HitTestList;
-use crate::layout::{compute_layout, resolve_bounds, LayoutTree};
+use crate::layout::{LayoutTree, compute_layout, resolve_bounds};
 use crate::reactive_state::StateRegistry;
 use crate::text_system::TextSystem;
 use crate::types::{AccessibilityNode, Size};
@@ -146,16 +146,18 @@ impl HeadlessApp {
             adapter.get_info()
         );
 
-        let (device, queue) = pollster::block_on(adapter.request_device(&DeviceDescriptor {
-            label: Some("slate-headless-device"),
-            required_features: Features::empty(),
-            required_limits: Limits::downlevel_defaults()
-                .using_resolution(adapter.limits())
-                .using_alignment(adapter.limits()),
-            memory_hints: MemoryHints::Performance,
-            trace: Trace::Off,
-            experimental_features: ExperimentalFeatures::disabled(),
-        }))?;
+        let (device, queue) = pollster::block_on(
+            adapter.request_device(&DeviceDescriptor {
+                label: Some("slate-headless-device"),
+                required_features: Features::empty(),
+                required_limits: Limits::downlevel_defaults()
+                    .using_resolution(adapter.limits())
+                    .using_alignment(adapter.limits()),
+                memory_hints: MemoryHints::Performance,
+                trace: Trace::Off,
+                experimental_features: ExperimentalFeatures::disabled(),
+            }),
+        )?;
 
         let format = TextureFormat::Rgba8UnormSrgb;
 

@@ -14,6 +14,18 @@ use slate_reactive::{Runtime, Signal};
 const WARMUP_FRAMES: usize = 5;
 const MEASURE_FRAMES: usize = 20;
 
+macro_rules! headless_app_or_skip {
+    ($width:expr, $height:expr) => {
+        match HeadlessApp::new($width, $height) {
+            Ok(app) => app,
+            Err(e) => {
+                eprintln!("Skipping benchmark (no GPU): {}", e);
+                return;
+            }
+        }
+    };
+}
+
 fn measure_frame_times<F>(
     app: &mut HeadlessApp,
     build_element: F,
@@ -61,11 +73,7 @@ fn p99_duration(durations: &[Duration]) -> Duration {
 fn counter_app_tree() -> AnyElement {
     Div::new()
         .background(Color::from_hex("#1e1e2e").unwrap_or(Color::BLACK).into())
-        .style(|s| {
-            s.flex_grow(1.0)
-                .padding_all(32.0)
-                .gap(16.0)
-        })
+        .style(|s| s.flex_grow(1.0).padding_all(32.0).gap(16.0))
         .child(
             Text::new("Reactive Counter")
                 .font_size(24.0)
@@ -109,7 +117,7 @@ fn large_tree_1000() -> AnyElement {
 
 #[test]
 fn bench_idle_frame_time() {
-    let mut app = HeadlessApp::new(400, 300).expect("headless app");
+    let mut app = headless_app_or_skip!(400, 300);
 
     let times = measure_frame_times(&mut app, counter_app_tree, WARMUP_FRAMES, MEASURE_FRAMES);
 
@@ -131,7 +139,7 @@ fn bench_idle_frame_time() {
 
 #[test]
 fn bench_cache_hit_rate() {
-    let mut app = HeadlessApp::new(400, 300).expect("headless app");
+    let mut app = headless_app_or_skip!(400, 300);
 
     // Render 100 frames with same content
     for _ in 0..100 {
@@ -159,7 +167,7 @@ fn bench_cache_hit_rate() {
 
 #[test]
 fn bench_1000_element_tree() {
-    let mut app = HeadlessApp::new(1920, 1080).expect("headless app");
+    let mut app = headless_app_or_skip!(1920, 1080);
 
     let times = measure_frame_times(&mut app, large_tree_1000, 3, 10);
 
@@ -177,7 +185,7 @@ fn bench_1000_element_tree() {
 
 #[test]
 fn bench_1000_element_cached() {
-    let mut app = HeadlessApp::new(1920, 1080).expect("headless app");
+    let mut app = headless_app_or_skip!(1920, 1080);
 
     // Warmup: first render (all misses)
     let _ = app.render(large_tree_1000());
@@ -212,7 +220,7 @@ fn bench_1000_element_cached() {
 
 #[test]
 fn bench_set_driven_frame() {
-    let mut app = HeadlessApp::new(400, 300).expect("headless app");
+    let mut app = headless_app_or_skip!(400, 300);
     let rt = Runtime::new();
     let signal = Signal::new(rt.clone(), 0u32);
 

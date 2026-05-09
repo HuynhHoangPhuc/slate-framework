@@ -16,7 +16,11 @@ struct DiffStats {
     max_channel_diff: u8,
 }
 
-fn pixel_diff(actual: &DynamicImage, expected: &DynamicImage, tolerance: u8) -> Result<DiffStats, String> {
+fn pixel_diff(
+    actual: &DynamicImage,
+    expected: &DynamicImage,
+    tolerance: u8,
+) -> Result<DiffStats, String> {
     if actual.dimensions() != expected.dimensions() {
         return Err(format!(
             "dimension mismatch: actual={:?} expected={:?}",
@@ -128,7 +132,10 @@ fn main() {
 
     println!("PNG Diff Results:");
     println!("  Total pixels: {}", stats.total_pixels);
-    println!("  Differing pixels: {} ({:.4}%)", stats.differing_pixels, diff_percent);
+    println!(
+        "  Differing pixels: {} ({:.4}%)",
+        stats.differing_pixels, diff_percent
+    );
     println!("  Max channel diff: {}", stats.max_channel_diff);
     println!("  Tolerance: {}", TOLERANCE);
     println!("  Threshold: {}%", THRESHOLD_PERCENT);
@@ -142,7 +149,10 @@ fn main() {
             println!("  Diff image saved to: {}", diff_path.display());
         }
 
-        eprintln!("\nFAILED: Image diff exceeds threshold ({:.4}% > {}%)", diff_percent, THRESHOLD_PERCENT);
+        eprintln!(
+            "\nFAILED: Image diff exceeds threshold ({:.4}% > {}%)",
+            diff_percent, THRESHOLD_PERCENT
+        );
         process::exit(1);
     }
 

@@ -1,4 +1,4 @@
-use slate_reactive::{with_observer, Runtime, Signal};
+use slate_reactive::{Runtime, Signal, with_observer};
 
 #[test]
 fn get_set_untracked() {

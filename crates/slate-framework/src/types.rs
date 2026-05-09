@@ -216,7 +216,9 @@ pub enum AccessibilityRole {
     /// Container/grouping element (e.g., Div).
     Group,
     /// Heading with semantic level (1-6).
-    Heading { level: u8 },
+    Heading {
+        level: u8,
+    },
     Image,
     Label,
     Link,

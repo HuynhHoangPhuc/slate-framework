@@ -1,7 +1,9 @@
 //! Integration tests for async executor infrastructure.
 //! Includes trybuild compile-fail driver for !Send assertions.
 
-use slate_framework::executor::{BackgroundExecutor, Executor, ForegroundExecutor, RedrawRequester};
+use slate_framework::executor::{
+    BackgroundExecutor, Executor, ForegroundExecutor, RedrawRequester,
+};
 
 #[test]
 fn redraw_requester_noop() {
@@ -11,8 +13,8 @@ fn redraw_requester_noop() {
 
 #[test]
 fn redraw_requester_with_callback() {
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     let called = Arc::new(AtomicBool::new(false));
     let called_clone = called.clone();

@@ -5,12 +5,12 @@
 //! for i in {1..10}; do cargo test -p slate-framework concurrency_stress --release; done
 //! ```
 
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use slate_reactive::{with_observer, Runtime, Signal};
+use slate_reactive::{Runtime, Signal, with_observer};
 
 /// 10 threads × 1000 `set()` calls each with concurrent UI-thread render simulation.
 ///
@@ -70,7 +70,9 @@ fn ten_threads_thousand_sets_with_render_loop() {
     }
 
     // Wait for render thread
-    render_handle.join().expect("render thread should not panic");
+    render_handle
+        .join()
+        .expect("render thread should not panic");
 
     // Verify dirty bit was set at least once
     assert!(

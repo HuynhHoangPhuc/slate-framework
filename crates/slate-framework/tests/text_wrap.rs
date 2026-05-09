@@ -1,7 +1,7 @@
 //! Integration tests for TextWrap::Wrap (Phase 3 C6 validation).
 
-use slate_framework::elements::{TextAlign, TextWrap};
 use slate_framework::Text;
+use slate_framework::elements::{TextAlign, TextWrap};
 
 #[test]
 fn text_wrap_none_default() {

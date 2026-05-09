@@ -48,8 +48,8 @@ pub use slate_text;
 
 // Re-export core types
 pub use app::{App, AppContext};
-pub use headless::{HeadlessApp, HeadlessError};
 pub use color::Color;
+pub use headless::{HeadlessApp, HeadlessError};
 
 /// Reactive primitives for building reactive UIs.
 ///
@@ -67,20 +67,20 @@ pub mod reactive {
 }
 
 // Re-export smol::Timer for async timing (Phase 5: F1)
-pub use smol::Timer;
 pub use context::{LayoutCtx, PaintCtx, PrepaintCtx};
 pub use element::{AnyElement, Element, IntoElement};
 pub use elements::{Div, Text, TextAlign, TextWrap};
-pub use view::{IntoAny, View};
 pub use executor::{BackgroundExecutor, Executor, ForegroundExecutor, RedrawRequester};
 pub use hit_test::{CursorStyle, HitRegion, HitTestList, HitTestResult};
-pub use layout::{compute_layout, resolve_bounds, resolve_child_bounds, LayoutTree};
+pub use layout::{LayoutTree, compute_layout, resolve_bounds, resolve_child_bounds};
+pub use smol::Timer;
 pub use style::{DisplayMode, Length, Overflow, Position, SizeConstraint, Style};
 pub use text_system::{PlatformFont, TextSystem};
 pub use types::{
     AccessibilityInfo, AccessibilityNode, AccessibilityRole, Bounds, Edges, ElementId, LayoutId,
     LiveRegion, NodeContext, Point, Size,
 };
+pub use view::{IntoAny, View};
 
 // Note: TaffyTree is NOT re-exported — internal modules import taffy::TaffyTree directly.
 // This hides the layout tree implementation from external consumers.

@@ -112,9 +112,9 @@ pub enum Event {
 #[cfg(target_os = "macos")]
 mod mac;
 #[cfg(target_os = "macos")]
-pub use mac::{wake_run_loop, MacPlatform as DefaultPlatform, MacWindow as DefaultWindow};
+pub use mac::{MacPlatform as DefaultPlatform, MacWindow as DefaultWindow, wake_run_loop};
 
 #[cfg(target_os = "windows")]
 mod win;
 #[cfg(target_os = "windows")]
-pub use win::{wake_run_loop, WinPlatform as DefaultPlatform, WinWindow as DefaultWindow};
+pub use win::{WinPlatform as DefaultPlatform, WinWindow as DefaultWindow, wake_run_loop};

@@ -3,8 +3,8 @@
 //! Caches `GlyphBounds` keyed by `(FontHandle, glyph_id)` — not variant/dilation,
 //! since bounds are invariant across sub-pixel offsets.
 
-use fxhash::FxHashMap;
 use parking_lot::RwLock;
+use rustc_hash::FxHashMap;
 
 use crate::font_handle::FontHandle;
 use crate::types::GlyphBounds;

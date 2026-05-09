@@ -54,7 +54,10 @@ fn accessibility_role_to_accesskit_mapping() {
     assert_eq!(AkRole::from(AccessibilityRole::Button), AkRole::Button);
     assert_eq!(AkRole::from(AccessibilityRole::Group), AkRole::Group);
     assert_eq!(AkRole::from(AccessibilityRole::Label), AkRole::Label);
-    assert_eq!(AkRole::from(AccessibilityRole::TextInput), AkRole::TextInput);
+    assert_eq!(
+        AkRole::from(AccessibilityRole::TextInput),
+        AkRole::TextInput
+    );
     assert_eq!(AkRole::from(AccessibilityRole::Checkbox), AkRole::CheckBox);
     assert_eq!(AkRole::from(AccessibilityRole::Slider), AkRole::Slider);
 }

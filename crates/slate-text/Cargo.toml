@@ -9,12 +9,12 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
-slate-renderer = { path = "../slate-renderer" }
+slate-renderer = { path = "../slate-renderer", version = "0.0.2" }
 thiserror.workspace = true
 log.workspace = true
 wgpu.workspace = true
 parking_lot = "0.12"
-fxhash = "0.2"
+rustc-hash = "2"
 ttf-parser = "0.25"
 memmap2 = "0.9"
 

@@ -21,9 +21,7 @@ pub(crate) enum AcquiredFrameInner {
     #[cfg(target_os = "macos")]
     Mac(wgpu::SurfaceTexture),
     #[cfg(target_os = "windows")]
-    Win {
-        back_buffer_index: u32,
-    },
+    Win { back_buffer_index: u32 },
 }
 
 pub trait CompositionTarget {

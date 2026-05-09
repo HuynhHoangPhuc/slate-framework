@@ -401,9 +401,6 @@ mod tests {
 
         assert_eq!(taffy_style.display, Display::Flex);
         // Check padding conversion
-        assert_eq!(
-            taffy_style.padding.left,
-            LengthPercentage::length(10.0)
-        );
+        assert_eq!(taffy_style.padding.left, LengthPercentage::length(10.0));
     }
 }

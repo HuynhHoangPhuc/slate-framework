@@ -145,7 +145,10 @@ fn conditional_render_one_frame_gap_survives() {
 
     // Frame 2: re-access — same signal
     let s2 = reg.use_state(id, || 999u32);
-    assert!(s1.ptr_eq(&s2), "same Signal should be returned after 1-frame gap");
+    assert!(
+        s1.ptr_eq(&s2),
+        "same Signal should be returned after 1-frame gap"
+    );
     assert_eq!(s2.get_untracked(), 100, "value preserved");
 }
 

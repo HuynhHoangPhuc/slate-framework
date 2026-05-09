@@ -6,14 +6,12 @@ use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{NSView, NSWindow, NSWindowDelegate};
-use objc2_foundation::{
-    MainThreadMarker, NSNotification, NSObject, NSObjectProtocol, NSRect,
-};
+use objc2_foundation::{MainThreadMarker, NSNotification, NSObject, NSObjectProtocol, NSRect};
 use objc2_quartz_core::CAMetalLayer;
 
-use crate::WindowId;
 use super::{dispatch_event, ffi_boundary, post_redraw_event};
 use crate::Event;
+use crate::WindowId;
 
 // ---------------------------------------------------------------------------
 // MetalView — custom NSView backed by CAMetalLayer
