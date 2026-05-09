@@ -7,6 +7,6 @@ license.workspace = true
 publish = false
 
 [dependencies]
-slate-framework = { path = "../../crates/slate-framework" }
+slate-framework = { path = "../../crates/slate-framework", version = "0.0.2" }
 env_logger.workspace = true
 log.workspace = true

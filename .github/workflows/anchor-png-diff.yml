@@ -44,14 +44,14 @@ jobs:
         run: |
           cargo run --release -p anchor-md-to-png --bin anchor-md-to-png -- \
             examples/anchor-md-to-png/inputs/sample.md \
-            ${{ runner.temp }}/actual.png
+            "${{ runner.temp }}/actual.png"
 
       - name: Diff against baseline
         if: steps.check-baseline.outputs.exists == 'true'
         shell: bash
         run: |
           cargo run --release -p anchor-md-to-png --bin diff -- \
-            ${{ runner.temp }}/actual.png \
+            "${{ runner.temp }}/actual.png" \
             examples/anchor-md-to-png/expected/${{ matrix.baseline }}
 
       - name: Upload artifacts on failure

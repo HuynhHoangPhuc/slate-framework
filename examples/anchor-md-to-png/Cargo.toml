@@ -18,7 +18,7 @@ name = "diff"
 path = "src/bin/diff.rs"
 
 [dependencies]
-slate-framework = { path = "../../crates/slate-framework" }
+slate-framework = { path = "../../crates/slate-framework", version = "0.0.2" }
 pulldown-cmark = "0.13"
 image.workspace = true
 log.workspace = true
