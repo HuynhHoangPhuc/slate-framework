@@ -69,9 +69,9 @@ fn redraw_requester_is_send_sync() {
 }
 
 // Trybuild compile-fail tests
-// Skip on Windows: error message formatting differs between platforms
+// Only run on Linux: error message formatting differs between platforms (macOS/Windows)
 #[test]
-#[cfg_attr(target_os = "windows", ignore)]
+#[cfg(target_os = "linux")]
 fn compile_fail_tests() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/compile_fail/*.rs");

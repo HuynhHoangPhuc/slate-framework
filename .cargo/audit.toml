@@ -1,0 +1,6 @@
+[advisories]
+ignore = [
+    # paste is unmaintained but is a transitive dependency via image/rav1e
+    # No direct alternative available without large dep changes
+    "RUSTSEC-2024-0436",
+]
