@@ -24,7 +24,7 @@ authors = ["Phuc Huynh <huynhhoangphuc@proton.me>"]
 
 [workspace.dependencies]
 # Workspace internal crates
-slate-reactive = { path = "crates/slate-reactive" }
+slate-reactive = { path = "crates/slate-reactive", version = "0.0.2" }
 # All deps pinned to latest stable as of 2026-05-04.
 # Bump deliberately; record reason in commit message.
 # wgpu pinned to exact patch (Phase 1 prereq, red-team P0-5): wgpu pre-1.0
