@@ -166,6 +166,7 @@ fn bench_cache_hit_rate() {
 }
 
 #[test]
+#[cfg_attr(target_os = "windows", ignore)] // Windows CI lacks GPU resources for large trees
 fn bench_1000_element_tree() {
     // Use smaller resolution for CI runners with limited GPU memory
     let mut app = headless_app_or_skip!(800, 600);
@@ -185,6 +186,7 @@ fn bench_1000_element_tree() {
 }
 
 #[test]
+#[cfg_attr(target_os = "windows", ignore)] // Windows CI lacks GPU resources for large trees
 fn bench_1000_element_cached() {
     // Use smaller resolution for CI runners with limited GPU memory
     let mut app = headless_app_or_skip!(800, 600);
