@@ -95,6 +95,7 @@ impl Effect {
 
     /// Returns the observer ID for this effect (for testing).
     #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn observer_id(&self) -> ObserverId {
         self._handle.id
     }

@@ -84,7 +84,9 @@ fn cache_entry_survives_across_frames() {
     // Render 5 times with same content
     for i in 0..5 {
         let text = Text::new("Stable content").font_size(14.0);
-        let _img = app.render(AnyElement::new(text)).expect(&format!("render {}", i));
+        let _img = app
+            .render(AnyElement::new(text))
+            .unwrap_or_else(|_| panic!("render {}", i));
     }
 
     // First was a miss, rest were hits

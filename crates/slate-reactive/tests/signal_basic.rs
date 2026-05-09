@@ -29,7 +29,7 @@ fn subscription_via_get_in_observer_scope() {
         let _ = signal.get();
     });
 
-    assert!(rt.drain_dirty() == false || rt.drain_dirty() == true);
+    let _ = rt.drain_dirty();
     signal.set(1);
     assert!(rt.drain_dirty());
 }

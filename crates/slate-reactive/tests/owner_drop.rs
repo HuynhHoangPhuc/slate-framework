@@ -68,7 +68,7 @@ fn nested_owners_with_effects() {
 
 #[test]
 fn owner_scope_isolation() {
-    let rt = Runtime::new();
+    let _rt = Runtime::new();
 
     assert!(ReactiveOwner::current().is_none());
 

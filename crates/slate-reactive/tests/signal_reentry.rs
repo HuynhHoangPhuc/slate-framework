@@ -70,6 +70,6 @@ fn update_during_redraw() {
     signal.update(|v| v[0] = 10);
 
     let final_value = signal.get_untracked();
-    assert!(final_value.len() >= 1);
+    assert!(!final_value.is_empty());
     assert_eq!(final_value[0], 10);
 }
