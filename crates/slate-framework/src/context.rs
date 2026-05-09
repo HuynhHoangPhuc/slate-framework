@@ -8,10 +8,13 @@
 //! All contexts are `!Send + !Sync` because they hold `&mut TextSystem`
 //! which carries `PhantomData<*const ()>`.
 
+use std::collections::HashMap;
+
 use slate_renderer::atlas::Atlas;
 use slate_renderer::scene::Scene;
 use taffy::TaffyTree;
 
+use crate::event::Handlers;
 use crate::executor::ForegroundExecutor;
 use crate::hit_test::{HitRegion, HitTestList};
 use crate::paint_cache::TextShapingCache;
@@ -103,6 +106,12 @@ pub struct PrepaintCtx<'a> {
     // --- Hierarchical a11y tree building ---
     /// In-progress a11y node builders; `last_mut()` is the current node accumulating children.
     pub(crate) a11y_stack: Vec<AccessibilityNode>,
+
+    // --- Event handler collection (Phase 5a) ---
+    /// Collected event handlers per element (populated during prepaint).
+    pub(crate) handler_map: &'a mut HashMap<ElementId, Handlers>,
+    /// Parent map for ancestor iteration during event dispatch.
+    pub(crate) parent_map: &'a mut HashMap<ElementId, ElementId>,
 }
 
 impl<'a> PrepaintCtx<'a> {
@@ -125,6 +134,8 @@ impl<'a> PrepaintCtx<'a> {
         scale_factor: f64,
         state_registry: &'a mut StateRegistry,
         text_shaping_cache: &'a mut TextShapingCache,
+        handler_map: &'a mut HashMap<ElementId, Handlers>,
+        parent_map: &'a mut HashMap<ElementId, ElementId>,
     ) -> Self {
         Self {
             taffy,
@@ -139,6 +150,8 @@ impl<'a> PrepaintCtx<'a> {
             child_counters: Vec::new(),
             next_key: None,
             a11y_stack: Vec::new(),
+            handler_map,
+            parent_map,
         }
     }
 
@@ -185,9 +198,28 @@ impl<'a> PrepaintCtx<'a> {
     /// Push a frame: the given `id` becomes parent for descended children.
     ///
     /// Call after `allocate_id` for container elements, before recursing into children.
+    /// Records the parent relationship for event dispatch ancestor walking.
     pub fn push_frame(&mut self, id: ElementId) {
+        // Record parent relationship for event dispatch
+        if let Some(&parent) = self
+            .id_stack
+            .last()
+            .filter(|&&p| p != ElementId::root())
+        {
+            self.parent_map.insert(id, parent);
+        }
         self.id_stack.push(id);
         self.child_counters.push(0);
+    }
+
+    /// Register event handlers for an element.
+    ///
+    /// Call during prepaint after allocating the element ID.
+    /// Only elements with handlers need to call this.
+    pub(crate) fn register_handlers(&mut self, id: ElementId, handlers: Handlers) {
+        if handlers.has_any() {
+            self.handler_map.insert(id, handlers);
+        }
     }
 
     /// Pop the current frame after recursing children.

@@ -1,17 +1,62 @@
 //! MetalView and WindowDelegate — AppKit view and delegate callbacks.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
-use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send};
-use objc2_app_kit::{NSView, NSWindow, NSWindowDelegate};
+use objc2::{AnyThread, DefinedClass, MainThreadOnly, define_class, msg_send};
+use objc2_app_kit::{
+    NSEvent, NSEventModifierFlags, NSTrackingArea, NSTrackingAreaOptions, NSView, NSWindow,
+    NSWindowDelegate,
+};
 use objc2_foundation::{MainThreadMarker, NSNotification, NSObject, NSObjectProtocol, NSRect};
 use objc2_quartz_core::CAMetalLayer;
 
 use super::{dispatch_event, ffi_boundary, post_redraw_event};
-use crate::Event;
-use crate::WindowId;
+use crate::{Event, Modifiers, MouseButton, WindowId};
+
+// ---------------------------------------------------------------------------
+// Mouse event decode helpers
+// ---------------------------------------------------------------------------
+
+/// Decode position from NSEvent, flipping Y to top-left origin.
+/// Returns logical position in view coordinates.
+fn decode_position(view: &MetalView, event: &NSEvent) -> (f32, f32) {
+    let loc_in_window = event.locationInWindow();
+    let bounds = view.bounds();
+    let bounds_height = bounds.size.height as f32;
+
+    let scale = view
+        .window()
+        .map(|w| w.backingScaleFactor() as f32)
+        .unwrap_or(1.0);
+
+    let view_pt = view.convertPoint_fromView(loc_in_window, None);
+    let x = view_pt.x as f32 / scale;
+    let y = (bounds_height - view_pt.y as f32) / scale;
+    (x, y)
+}
+
+/// Decode modifier flags from NSEvent.
+fn decode_modifiers(flags: NSEventModifierFlags) -> Modifiers {
+    Modifiers {
+        shift: flags.contains(NSEventModifierFlags::Shift),
+        ctrl: flags.contains(NSEventModifierFlags::Control),
+        alt: flags.contains(NSEventModifierFlags::Option),
+        meta: flags.contains(NSEventModifierFlags::Command),
+    }
+}
+
+/// Decode button number to MouseButton. Returns None for unsupported buttons.
+fn decode_button(button_number: isize) -> Option<MouseButton> {
+    match button_number {
+        0 => Some(MouseButton::Left),
+        1 => Some(MouseButton::Right),
+        2 => Some(MouseButton::Middle),
+        3..=7 => Some(MouseButton::Other((button_number - 3) as u8)),
+        _ => None,
+    }
+}
 
 // ---------------------------------------------------------------------------
 // MetalView — custom NSView backed by CAMetalLayer
@@ -19,6 +64,8 @@ use crate::WindowId;
 
 pub struct MetalViewIvars {
     pub(crate) window_id: Cell<WindowId>,
+    /// Current tracking area for mouse move/enter/exit events.
+    tracking_area: RefCell<Option<Retained<NSTrackingArea>>>,
 }
 
 define_class!(
@@ -64,6 +111,238 @@ define_class!(
                 dispatch_event(Event::WindowRedrawRequested { window: id });
             });
         }
+
+        // -----------------------------------------------------------------------
+        // Mouse event selectors (Phase 5a)
+        // -----------------------------------------------------------------------
+
+        #[unsafe(method(mouseDown:))]
+        fn mouse_down(&self, event: &NSEvent) {
+            let id = self.ivars().window_id.get();
+            ffi_boundary(|| {
+                let position = decode_position(self, event);
+                let modifiers = decode_modifiers(event.modifierFlags());
+                dispatch_event(Event::MouseDown {
+                    window: id,
+                    position,
+                    button: MouseButton::Left,
+                    modifiers,
+                });
+            });
+        }
+
+        #[unsafe(method(mouseUp:))]
+        fn mouse_up(&self, event: &NSEvent) {
+            let id = self.ivars().window_id.get();
+            ffi_boundary(|| {
+                let position = decode_position(self, event);
+                let modifiers = decode_modifiers(event.modifierFlags());
+                dispatch_event(Event::MouseUp {
+                    window: id,
+                    position,
+                    button: MouseButton::Left,
+                    modifiers,
+                });
+            });
+        }
+
+        #[unsafe(method(mouseDragged:))]
+        fn mouse_dragged(&self, event: &NSEvent) {
+            let id = self.ivars().window_id.get();
+            ffi_boundary(|| {
+                let position = decode_position(self, event);
+                let modifiers = decode_modifiers(event.modifierFlags());
+                dispatch_event(Event::MouseMoved {
+                    window: id,
+                    position,
+                    modifiers,
+                });
+            });
+        }
+
+        #[unsafe(method(rightMouseDown:))]
+        fn right_mouse_down(&self, event: &NSEvent) {
+            let id = self.ivars().window_id.get();
+            ffi_boundary(|| {
+                let position = decode_position(self, event);
+                let modifiers = decode_modifiers(event.modifierFlags());
+                dispatch_event(Event::MouseDown {
+                    window: id,
+                    position,
+                    button: MouseButton::Right,
+                    modifiers,
+                });
+            });
+        }
+
+        #[unsafe(method(rightMouseUp:))]
+        fn right_mouse_up(&self, event: &NSEvent) {
+            let id = self.ivars().window_id.get();
+            ffi_boundary(|| {
+                let position = decode_position(self, event);
+                let modifiers = decode_modifiers(event.modifierFlags());
+                dispatch_event(Event::MouseUp {
+                    window: id,
+                    position,
+                    button: MouseButton::Right,
+                    modifiers,
+                });
+            });
+        }
+
+        #[unsafe(method(rightMouseDragged:))]
+        fn right_mouse_dragged(&self, event: &NSEvent) {
+            let id = self.ivars().window_id.get();
+            ffi_boundary(|| {
+                let position = decode_position(self, event);
+                let modifiers = decode_modifiers(event.modifierFlags());
+                dispatch_event(Event::MouseMoved {
+                    window: id,
+                    position,
+                    modifiers,
+                });
+            });
+        }
+
+        #[unsafe(method(otherMouseDown:))]
+        fn other_mouse_down(&self, event: &NSEvent) {
+            let id = self.ivars().window_id.get();
+            ffi_boundary(|| {
+                let button_num = event.buttonNumber();
+                let Some(button) = decode_button(button_num) else {
+                    return;
+                };
+                let position = decode_position(self, event);
+                let modifiers = decode_modifiers(event.modifierFlags());
+                dispatch_event(Event::MouseDown {
+                    window: id,
+                    position,
+                    button,
+                    modifiers,
+                });
+            });
+        }
+
+        #[unsafe(method(otherMouseUp:))]
+        fn other_mouse_up(&self, event: &NSEvent) {
+            let id = self.ivars().window_id.get();
+            ffi_boundary(|| {
+                let button_num = event.buttonNumber();
+                let Some(button) = decode_button(button_num) else {
+                    return;
+                };
+                let position = decode_position(self, event);
+                let modifiers = decode_modifiers(event.modifierFlags());
+                dispatch_event(Event::MouseUp {
+                    window: id,
+                    position,
+                    button,
+                    modifiers,
+                });
+            });
+        }
+
+        #[unsafe(method(otherMouseDragged:))]
+        fn other_mouse_dragged(&self, event: &NSEvent) {
+            let id = self.ivars().window_id.get();
+            ffi_boundary(|| {
+                let position = decode_position(self, event);
+                let modifiers = decode_modifiers(event.modifierFlags());
+                dispatch_event(Event::MouseMoved {
+                    window: id,
+                    position,
+                    modifiers,
+                });
+            });
+        }
+
+        #[unsafe(method(mouseMoved:))]
+        fn mouse_moved(&self, event: &NSEvent) {
+            let id = self.ivars().window_id.get();
+            ffi_boundary(|| {
+                let position = decode_position(self, event);
+                let modifiers = decode_modifiers(event.modifierFlags());
+                dispatch_event(Event::MouseMoved {
+                    window: id,
+                    position,
+                    modifiers,
+                });
+            });
+        }
+
+        /// Receive but drop — framework synthesizes Enter from hit-test diff.
+        #[unsafe(method(mouseEntered:))]
+        fn mouse_entered(&self, _event: &NSEvent) {
+            // Intentionally empty; prevents responder chain walk.
+        }
+
+        #[unsafe(method(mouseExited:))]
+        fn mouse_exited(&self, _event: &NSEvent) {
+            let id = self.ivars().window_id.get();
+            ffi_boundary(|| {
+                dispatch_event(Event::MouseExited { window: id });
+            });
+        }
+
+        #[unsafe(method(scrollWheel:))]
+        fn scroll_wheel(&self, event: &NSEvent) {
+            let id = self.ivars().window_id.get();
+            ffi_boundary(|| {
+                let position = decode_position(self, event);
+                let modifiers = decode_modifiers(event.modifierFlags());
+                let precise = event.hasPreciseScrollingDeltas();
+                let (delta_x, delta_y) = if precise {
+                    (
+                        event.scrollingDeltaX() as f32,
+                        event.scrollingDeltaY() as f32,
+                    )
+                } else {
+                    (event.deltaX() as f32, event.deltaY() as f32)
+                };
+                dispatch_event(Event::MouseScrolled {
+                    window: id,
+                    position,
+                    delta_x,
+                    delta_y,
+                    precise,
+                    modifiers,
+                });
+            });
+        }
+
+        /// Called by AppKit when view bounds change. Reinstall tracking area.
+        #[unsafe(method(updateTrackingAreas))]
+        fn update_tracking_areas(&self) {
+            // Call super first
+            let _: () = unsafe { msg_send![super(self), updateTrackingAreas] };
+
+            // Remove old tracking area if present
+            {
+                let mut ta = self.ivars().tracking_area.borrow_mut();
+                if let Some(old) = ta.take() {
+                    self.removeTrackingArea(&old);
+                }
+            }
+
+            // Install new tracking area covering current bounds
+            let bounds = self.bounds();
+            let options = NSTrackingAreaOptions::ActiveAlways
+                | NSTrackingAreaOptions::MouseMoved
+                | NSTrackingAreaOptions::MouseEnteredAndExited
+                | NSTrackingAreaOptions::InVisibleRect;
+
+            let tracking_area = unsafe {
+                NSTrackingArea::initWithRect_options_owner_userInfo(
+                    NSTrackingArea::alloc(),
+                    bounds,
+                    options,
+                    Some(self),
+                    None,
+                )
+            };
+            self.addTrackingArea(&tracking_area);
+            *self.ivars().tracking_area.borrow_mut() = Some(tracking_area);
+        }
     }
 );
 
@@ -71,6 +350,7 @@ impl MetalView {
     pub(crate) fn new(mtm: MainThreadMarker, window_id: WindowId) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(MetalViewIvars {
             window_id: Cell::new(window_id),
+            tracking_area: RefCell::new(None),
         });
         // SAFETY: `NSView`'s designated initializer `initWithFrame:` takes an
         // `NSRect` and returns `Retained<NSView>`. The super-call signature matches.
@@ -81,6 +361,16 @@ impl MetalView {
         view.setWantsLayer(true);
 
         view
+    }
+
+    /// Install initial tracking area for mouse move/enter/exit events.
+    ///
+    /// Call this after the view is added to a window (so bounds are valid).
+    /// Without this, hover events may not fire until the first layout change.
+    pub(crate) fn install_tracking_area(&self) {
+        // Trigger updateTrackingAreas to install initial tracking area.
+        // SAFETY: updateTrackingAreas is a standard NSView method.
+        let _: () = unsafe { msg_send![self, updateTrackingAreas] };
     }
 
     /// Returns the raw Obj-C pointer to this view for `HasWindowHandle`.

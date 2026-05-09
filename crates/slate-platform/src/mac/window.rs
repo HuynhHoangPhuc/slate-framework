@@ -75,6 +75,10 @@ impl MacWindow {
         let ns_view_ref: &NSView = &view;
         ns_window.setContentView(Some(ns_view_ref));
 
+        // Install tracking area for mouse move/enter/exit events immediately.
+        // Without this, hover events may not fire until the first layout change.
+        view.install_tracking_area();
+
         // Sync the CAMetalLayer's contentsScale to the window's backing factor.
         // Must happen after attaching the view (so `backingScaleFactor` is valid).
         let scale = ns_window.backingScaleFactor();
@@ -85,6 +89,9 @@ impl MacWindow {
         // Attach the window delegate.
         let delegate = WindowDelegate::new(mtm, id);
         ns_window.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
+
+        // Enable mouse-moved events for the window (required for mouseMoved: to fire).
+        ns_window.setAcceptsMouseMovedEvents(true);
 
         ns_window.center();
         ns_window.makeKeyAndOrderFront(None);

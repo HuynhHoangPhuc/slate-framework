@@ -86,6 +86,25 @@ impl Default for WindowOptions {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct WindowId(pub u64);
 
+/// Mouse button identifier.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum MouseButton {
+    Left,
+    Right,
+    Middle,
+    /// Additional buttons (X1=0, X2=1, etc.). Values beyond 4 are clamped.
+    Other(u8),
+}
+
+/// Modifier key state at event time.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct Modifiers {
+    pub shift: bool,
+    pub ctrl: bool,
+    pub alt: bool,
+    pub meta: bool,
+}
+
 #[derive(Debug, Clone)]
 pub enum Event {
     /// Sent once after platform init, before the first paint.
@@ -107,6 +126,47 @@ pub enum Event {
     Wake,
     /// Sent immediately before `run` returns.
     Exiting,
+    // -------------------------------------------------------------------------
+    // Mouse events (Phase 5a)
+    // -------------------------------------------------------------------------
+    MouseDown {
+        window: WindowId,
+        /// Logical position in view coordinates (top-left origin).
+        position: (f32, f32),
+        button: MouseButton,
+        modifiers: Modifiers,
+    },
+    MouseUp {
+        window: WindowId,
+        position: (f32, f32),
+        button: MouseButton,
+        modifiers: Modifiers,
+    },
+    MouseMoved {
+        window: WindowId,
+        position: (f32, f32),
+        modifiers: Modifiers,
+    },
+    /// Scroll wheel or trackpad scroll gesture.
+    /// Positive delta_y = scroll up (content moves down, wheel rolled away).
+    MouseScrolled {
+        window: WindowId,
+        position: (f32, f32),
+        delta_x: f32,
+        delta_y: f32,
+        /// True for trackpad/Magic Mouse (pixel precision), false for discrete wheel (line-based).
+        precise: bool,
+        modifiers: Modifiers,
+    },
+    /// Cursor exited the window bounds. Framework synthesizes Enter from hit-test diff.
+    MouseExited {
+        window: WindowId,
+    },
+    /// Windows-only: system stole mouse capture (e.g. Alt-Tab, another app took focus).
+    /// Framework should clear its capture_target state when this fires.
+    CaptureLost {
+        window: WindowId,
+    },
 }
 
 #[cfg(target_os = "macos")]

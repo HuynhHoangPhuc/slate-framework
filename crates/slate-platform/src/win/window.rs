@@ -1,5 +1,6 @@
 //! WinWindow — native Win32 window handle.
 
+use std::cell::Cell;
 use std::num::NonZeroIsize;
 use std::sync::Arc;
 
@@ -44,6 +45,8 @@ impl WinWindow {
             hinstance,
             id,
             min_size: opts.min_size,
+            captured_buttons: Cell::new(0),
+            is_tracking_hover: Cell::new(false),
         });
 
         let inner_ptr = Arc::as_ptr(&inner);

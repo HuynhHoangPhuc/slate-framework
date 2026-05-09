@@ -6,6 +6,7 @@ members = [
     "crates/slate-text",
     "crates/slate-framework",
     "examples/anchor-md-to-png",
+    "examples/click-counter",
     "examples/hello-element",
     "examples/hello-rect",
     "examples/primitive-gallery",

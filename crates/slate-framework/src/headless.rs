@@ -12,6 +12,7 @@
 //! image.save("output.png")?;
 //! ```
 
+use std::collections::HashMap;
 use std::num::NonZeroU32;
 
 use image::RgbaImage;
@@ -38,12 +39,13 @@ use slate_renderer::shadow_pipeline::ShadowPipeline;
 
 use crate::context::{LayoutCtx, PaintCtx, PrepaintCtx};
 use crate::element::AnyElement;
+use crate::event::Handlers;
 use crate::executor::{Executor, RedrawRequester};
 use crate::hit_test::HitTestList;
 use crate::layout::{LayoutTree, compute_layout, resolve_bounds};
 use crate::reactive_state::StateRegistry;
 use crate::text_system::TextSystem;
-use crate::types::{AccessibilityNode, Size};
+use crate::types::{AccessibilityNode, ElementId, Size};
 use crate::view::View;
 
 /// Headless application for offscreen rendering.
@@ -94,6 +96,10 @@ pub struct HeadlessApp {
 
     // Phase 6: TextShapingCache for text shaping optimization
     text_shaping_cache: crate::paint_cache::TextShapingCache,
+
+    // Phase 5a: Event handler collection (for headless testing parity)
+    handler_map: HashMap<ElementId, Handlers>,
+    parent_map: HashMap<ElementId, ElementId>,
 }
 
 /// Error creating or rendering with HeadlessApp.
@@ -245,6 +251,10 @@ impl HeadlessApp {
         // Phase 6: TextShapingCache for text shaping optimization
         let text_shaping_cache = crate::paint_cache::TextShapingCache::new();
 
+        // Phase 5a: Event handler collection (for headless testing parity)
+        let handler_map = HashMap::new();
+        let parent_map = HashMap::new();
+
         Ok(Self {
             device,
             queue,
@@ -273,6 +283,8 @@ impl HeadlessApp {
             observer_id,
             state_registry,
             text_shaping_cache,
+            handler_map,
+            parent_map,
         })
     }
 
@@ -319,6 +331,8 @@ impl HeadlessApp {
         // 3. Prepaint pass
         self.hit_test_list.clear();
         self.a11y_nodes.clear();
+        self.handler_map.clear();
+        self.parent_map.clear();
         {
             let mut cx = PrepaintCtx::new(
                 self.layout_tree.inner(),
@@ -329,6 +343,8 @@ impl HeadlessApp {
                 self.scale_factor,
                 &mut self.state_registry,
                 &mut self.text_shaping_cache,
+                &mut self.handler_map,
+                &mut self.parent_map,
             );
 
             // Initialize tree-position keying for stable ElementIds

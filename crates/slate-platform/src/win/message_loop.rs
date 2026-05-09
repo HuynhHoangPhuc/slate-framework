@@ -1,19 +1,70 @@
 //! Win32 message loop — wndproc trampoline and WinWindowInner message handling.
 
+use std::cell::Cell;
 use std::sync::Arc;
 
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
-use windows::Win32::Graphics::Gdi::ValidateRect;
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
+use windows::Win32::Graphics::Gdi::{ScreenToClient, ValidateRect};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    GetKeyState, ReleaseCapture, SetCapture, TrackMouseEvent, MK_CONTROL, MK_SHIFT, TME_LEAVE,
+    TRACKMOUSEEVENT, VK_LWIN, VK_MENU, VK_RWIN,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CREATESTRUCTW, DefWindowProcW, GWLP_USERDATA, GetWindowLongPtrW, KillTimer, MINMAXINFO, MSG,
-    PM_REMOVE, PeekMessageW, PostQuitMessage, SIZE_MINIMIZED, SWP_NOACTIVATE, SWP_NOZORDER,
-    SetTimer, SetWindowLongPtrW, SetWindowPos, USER_TIMER_MINIMUM, WM_CLOSE, WM_DESTROY,
-    WM_DPICHANGED, WM_ENTERSIZEMOVE, WM_ERASEBKGND, WM_EXITSIZEMOVE, WM_GETMINMAXINFO, WM_NCCREATE,
-    WM_NCDESTROY, WM_PAINT, WM_SIZE, WM_TIMER,
+    CREATESTRUCTW, DefWindowProcW, GWLP_USERDATA, GetWindowLongPtrW, HOVER_DEFAULT, KillTimer,
+    MINMAXINFO, MSG, PM_REMOVE, PeekMessageW, PostQuitMessage, SIZE_MINIMIZED, SWP_NOACTIVATE,
+    SWP_NOZORDER, SetTimer, SetWindowLongPtrW, SetWindowPos, USER_TIMER_MINIMUM, WM_CAPTURECHANGED,
+    WM_CLOSE, WM_DESTROY, WM_DPICHANGED, WM_ENTERSIZEMOVE, WM_ERASEBKGND, WM_EXITSIZEMOVE,
+    WM_GETMINMAXINFO, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDBLCLK,
+    WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSELEAVE, WM_MOUSEMOVE, WM_MOUSEWHEEL,
+    WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE,
+    WM_TIMER, WM_XBUTTONDBLCLK, WM_XBUTTONDOWN, WM_XBUTTONUP,
 };
 
 use super::{IN_SIZE_MOVE, SIZE_MOVE_TIMER_ID, WM_APP_WAKE, clear_wake_hwnd, dispatch_event};
-use crate::{Event, WindowId};
+use crate::{Event, Modifiers, MouseButton, WindowId};
+
+// ---------------------------------------------------------------------------
+// Mouse event decode helpers
+// ---------------------------------------------------------------------------
+
+/// Decode mouse position from lparam with i16 sign extension.
+/// Divide by scale to get logical coordinates.
+fn decode_pos(lparam: LPARAM, scale: f32) -> (f32, f32) {
+    let raw = lparam.0 as i32 as u32;
+    let x = (raw & 0xFFFF) as i16 as f32 / scale;
+    let y = ((raw >> 16) & 0xFFFF) as i16 as f32 / scale;
+    (x, y)
+}
+
+/// Decode modifier keys from wparam and GetKeyState.
+fn decode_modifiers(wparam: WPARAM) -> Modifiers {
+    let w = wparam.0 as u32;
+    Modifiers {
+        shift: w & MK_SHIFT.0 != 0,
+        ctrl: w & MK_CONTROL.0 != 0,
+        alt: unsafe { GetKeyState(VK_MENU.0 as i32) } < 0,
+        meta: unsafe { GetKeyState(VK_LWIN.0 as i32) } < 0
+            || unsafe { GetKeyState(VK_RWIN.0 as i32) } < 0,
+    }
+}
+
+/// Button bit positions for capture tracking.
+const BUTTON_BIT_LEFT: u8 = 1 << 0;
+const BUTTON_BIT_RIGHT: u8 = 1 << 1;
+const BUTTON_BIT_MIDDLE: u8 = 1 << 2;
+const BUTTON_BIT_X1: u8 = 1 << 3;
+const BUTTON_BIT_X2: u8 = 1 << 4;
+
+fn button_to_bit(button: MouseButton) -> u8 {
+    match button {
+        MouseButton::Left => BUTTON_BIT_LEFT,
+        MouseButton::Right => BUTTON_BIT_RIGHT,
+        MouseButton::Middle => BUTTON_BIT_MIDDLE,
+        MouseButton::Other(0) => BUTTON_BIT_X1,
+        MouseButton::Other(1) => BUTTON_BIT_X2,
+        MouseButton::Other(_) => 0,
+    }
+}
 
 // ---------------------------------------------------------------------------
 // WinWindowInner — actual HWND state (Arc'd, OS holds raw ptr via GWLP_USERDATA)
@@ -24,6 +75,10 @@ pub struct WinWindowInner {
     pub(crate) hinstance: windows::Win32::Foundation::HINSTANCE,
     pub(crate) id: WindowId,
     pub(crate) min_size: Option<(u32, u32)>,
+    /// Bitmask of currently captured mouse buttons.
+    pub(crate) captured_buttons: Cell<u8>,
+    /// True if TrackMouseEvent is armed for WM_MOUSELEAVE.
+    pub(crate) is_tracking_hover: Cell<bool>,
 }
 
 impl WinWindowInner {
@@ -136,6 +191,135 @@ impl WinWindowInner {
                 }
                 LRESULT(0)
             }
+            // -----------------------------------------------------------------
+            // Mouse events (Phase 5a)
+            // -----------------------------------------------------------------
+            WM_LBUTTONDOWN | WM_LBUTTONDBLCLK => {
+                self.handle_button_down(hwnd, _wparam, lparam, MouseButton::Left);
+                LRESULT(0)
+            }
+            WM_LBUTTONUP => {
+                self.handle_button_up(hwnd, _wparam, lparam, MouseButton::Left);
+                LRESULT(0)
+            }
+            WM_RBUTTONDOWN | WM_RBUTTONDBLCLK => {
+                self.handle_button_down(hwnd, _wparam, lparam, MouseButton::Right);
+                LRESULT(0)
+            }
+            WM_RBUTTONUP => {
+                self.handle_button_up(hwnd, _wparam, lparam, MouseButton::Right);
+                LRESULT(0)
+            }
+            WM_MBUTTONDOWN | WM_MBUTTONDBLCLK => {
+                self.handle_button_down(hwnd, _wparam, lparam, MouseButton::Middle);
+                LRESULT(0)
+            }
+            WM_MBUTTONUP => {
+                self.handle_button_up(hwnd, _wparam, lparam, MouseButton::Middle);
+                LRESULT(0)
+            }
+            WM_XBUTTONDOWN | WM_XBUTTONDBLCLK => {
+                let xbutton = ((_wparam.0 >> 16) & 0xFFFF) as u16;
+                let button = if xbutton == 1 {
+                    MouseButton::Other(0)
+                } else {
+                    MouseButton::Other(1)
+                };
+                self.handle_button_down(hwnd, _wparam, lparam, button);
+                LRESULT(1) // X-button messages must return TRUE
+            }
+            WM_XBUTTONUP => {
+                let xbutton = ((_wparam.0 >> 16) & 0xFFFF) as u16;
+                let button = if xbutton == 1 {
+                    MouseButton::Other(0)
+                } else {
+                    MouseButton::Other(1)
+                };
+                self.handle_button_up(hwnd, _wparam, lparam, button);
+                LRESULT(1) // X-button messages must return TRUE
+            }
+            WM_MOUSEMOVE => {
+                let scale = self.get_dpi_scale(hwnd);
+                let position = decode_pos(lparam, scale);
+                let modifiers = decode_modifiers(_wparam);
+                // Arm TrackMouseEvent if not already tracking
+                if !self.is_tracking_hover.get() {
+                    let mut tme = TRACKMOUSEEVENT {
+                        cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
+                        dwFlags: TME_LEAVE,
+                        hwndTrack: hwnd,
+                        dwHoverTime: HOVER_DEFAULT,
+                    };
+                    let _ = unsafe { TrackMouseEvent(&mut tme) };
+                    self.is_tracking_hover.set(true);
+                }
+                dispatch_event(Event::MouseMoved {
+                    window: self.id,
+                    position,
+                    modifiers,
+                });
+                LRESULT(0)
+            }
+            WM_MOUSEWHEEL => {
+                let scale = self.get_dpi_scale(hwnd);
+                // lparam is in screen coords for wheel events
+                let x_screen = (lparam.0 as i32 as u32 & 0xFFFF) as i16 as i32;
+                let y_screen = ((lparam.0 as i32 as u32 >> 16) & 0xFFFF) as i16 as i32;
+                let mut pt = POINT {
+                    x: x_screen,
+                    y: y_screen,
+                };
+                let _ = unsafe { ScreenToClient(hwnd, &mut pt) };
+                let position = (pt.x as f32 / scale, pt.y as f32 / scale);
+                let wheel_delta = ((_wparam.0 >> 16) as i16 as f32) / 120.0;
+                let modifiers = decode_modifiers(_wparam);
+                dispatch_event(Event::MouseScrolled {
+                    window: self.id,
+                    position,
+                    delta_x: 0.0,
+                    delta_y: wheel_delta,
+                    precise: false,
+                    modifiers,
+                });
+                LRESULT(0)
+            }
+            WM_MOUSEHWHEEL => {
+                let scale = self.get_dpi_scale(hwnd);
+                // lparam is in screen coords for wheel events
+                let x_screen = (lparam.0 as i32 as u32 & 0xFFFF) as i16 as i32;
+                let y_screen = ((lparam.0 as i32 as u32 >> 16) & 0xFFFF) as i16 as i32;
+                let mut pt = POINT {
+                    x: x_screen,
+                    y: y_screen,
+                };
+                let _ = unsafe { ScreenToClient(hwnd, &mut pt) };
+                let position = (pt.x as f32 / scale, pt.y as f32 / scale);
+                let wheel_delta = ((_wparam.0 >> 16) as i16 as f32) / 120.0;
+                let modifiers = decode_modifiers(_wparam);
+                dispatch_event(Event::MouseScrolled {
+                    window: self.id,
+                    position,
+                    delta_x: wheel_delta,
+                    delta_y: 0.0,
+                    precise: false,
+                    modifiers,
+                });
+                LRESULT(0)
+            }
+            WM_MOUSELEAVE => {
+                self.is_tracking_hover.set(false);
+                dispatch_event(Event::MouseExited { window: self.id });
+                LRESULT(0)
+            }
+            WM_CAPTURECHANGED => {
+                // If capture was stolen by another window, clear our state
+                if lparam.0 != hwnd.0 as isize {
+                    self.captured_buttons.set(0);
+                    self.is_tracking_hover.set(false);
+                    dispatch_event(Event::CaptureLost { window: self.id });
+                }
+                LRESULT(0)
+            }
             _ if msg == WM_APP_WAKE => {
                 dispatch_event(Event::Wake);
                 LRESULT(0)
@@ -145,6 +329,70 @@ impl WinWindowInner {
                 unsafe { DefWindowProcW(hwnd, msg, _wparam, lparam) }
             }
         }
+    }
+
+    /// Get DPI scale factor for coordinate conversion.
+    fn get_dpi_scale(&self, hwnd: HWND) -> f32 {
+        use windows::Win32::UI::HiDpi::GetDpiForWindow;
+        let dpi = unsafe { GetDpiForWindow(hwnd) };
+        dpi as f32 / 96.0
+    }
+
+    /// Handle mouse button down: acquire capture, emit MouseDown.
+    fn handle_button_down(
+        &self,
+        hwnd: HWND,
+        wparam: WPARAM,
+        lparam: LPARAM,
+        button: MouseButton,
+    ) {
+        let scale = self.get_dpi_scale(hwnd);
+        let position = decode_pos(lparam, scale);
+        let modifiers = decode_modifiers(wparam);
+
+        // Acquire capture on first button down
+        let bit = button_to_bit(button);
+        let old = self.captured_buttons.get();
+        if old == 0 {
+            let _ = unsafe { SetCapture(hwnd) };
+        }
+        self.captured_buttons.set(old | bit);
+
+        dispatch_event(Event::MouseDown {
+            window: self.id,
+            position,
+            button,
+            modifiers,
+        });
+    }
+
+    /// Handle mouse button up: release capture if all buttons up, emit MouseUp.
+    fn handle_button_up(
+        &self,
+        hwnd: HWND,
+        wparam: WPARAM,
+        lparam: LPARAM,
+        button: MouseButton,
+    ) {
+        let scale = self.get_dpi_scale(hwnd);
+        let position = decode_pos(lparam, scale);
+        let modifiers = decode_modifiers(wparam);
+
+        // Release capture when all buttons are up
+        let bit = button_to_bit(button);
+        let old = self.captured_buttons.get();
+        let new = old & !bit;
+        self.captured_buttons.set(new);
+        if new == 0 && old != 0 {
+            let _ = unsafe { ReleaseCapture() };
+        }
+
+        dispatch_event(Event::MouseUp {
+            window: self.id,
+            position,
+            button,
+            modifiers,
+        });
     }
 }
 

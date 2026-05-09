@@ -6,11 +6,17 @@
 //! - Padding and margin
 //! - Child elements
 
+use std::sync::Arc;
+
 use slate_renderer::scene::RectInstance;
 use taffy::prelude::*;
 
 use crate::context::{LayoutCtx, PaintCtx, PrepaintCtx};
 use crate::element::{AnyElement, Element, IntoElement, Sealed};
+use crate::event::{
+    EventCtx, Handlers, MouseEvent, MouseHandler, PointerEvent, PointerHandler, ScrollEvent,
+    ScrollHandler,
+};
 use crate::hit_test::{CursorStyle, HitRegion};
 use crate::layout::resolve_child_bounds;
 use crate::style::Style;
@@ -38,6 +44,25 @@ pub struct Div {
     user_key: Option<String>,
     /// Stable ElementId allocated during prepaint (available after prepaint).
     last_id: Option<ElementId>,
+    // -------------------------------------------------------------------------
+    // Event handlers (Phase 5a)
+    // -------------------------------------------------------------------------
+    /// Handler for synthesized click events (down+up on same target).
+    pub(crate) on_click: Option<MouseHandler>,
+    /// Handler for mouse button down events.
+    pub(crate) on_mouse_down: Option<MouseHandler>,
+    /// Handler for mouse button up events.
+    pub(crate) on_mouse_up: Option<MouseHandler>,
+    /// Handler for mouse move events (coalesced, one per frame).
+    pub(crate) on_mouse_move: Option<MouseHandler>,
+    /// Handler for scroll wheel/trackpad events.
+    pub(crate) on_mouse_scrolled: Option<ScrollHandler>,
+    /// Handler for raw pointer events (no coalescing).
+    pub(crate) on_pointer_event: Option<PointerHandler>,
+    /// Handler for pointer enter events.
+    pub(crate) on_pointer_enter: Option<PointerHandler>,
+    /// Handler for pointer leave events.
+    pub(crate) on_pointer_leave: Option<PointerHandler>,
 }
 
 /// Visual styling for a Div (non-layout properties).
@@ -66,6 +91,14 @@ impl Div {
             visual: DivVisual::default(),
             user_key: None,
             last_id: None,
+            on_click: None,
+            on_mouse_down: None,
+            on_mouse_up: None,
+            on_mouse_move: None,
+            on_mouse_scrolled: None,
+            on_pointer_event: None,
+            on_pointer_enter: None,
+            on_pointer_leave: None,
         }
     }
 
@@ -156,6 +189,109 @@ impl Div {
         self.layout_style.gap = gap;
         self
     }
+
+    // -------------------------------------------------------------------------
+    // Event handler builders (Phase 5a)
+    // -------------------------------------------------------------------------
+
+    /// Register a click handler (fires when mouse down+up lands on same target).
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let count = Signal::new(cx.runtime(), 0);
+    /// Div::new().on_click(move |_, _| count.set(count.get() + 1))
+    /// ```
+    pub fn on_click<F>(mut self, handler: F) -> Self
+    where
+        F: Fn(&MouseEvent, &mut EventCtx) + Send + Sync + 'static,
+    {
+        self.on_click = Some(Arc::new(handler));
+        self
+    }
+
+    /// Register a mouse down handler.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// Div::new().on_mouse_down(|event, ctx| {
+    ///     println!("Down at {:?}", event.position);
+    ///     ctx.stop_propagation();
+    /// })
+    /// ```
+    pub fn on_mouse_down<F>(mut self, handler: F) -> Self
+    where
+        F: Fn(&MouseEvent, &mut EventCtx) + Send + Sync + 'static,
+    {
+        self.on_mouse_down = Some(Arc::new(handler));
+        self
+    }
+
+    /// Register a mouse up handler.
+    pub fn on_mouse_up<F>(mut self, handler: F) -> Self
+    where
+        F: Fn(&MouseEvent, &mut EventCtx) + Send + Sync + 'static,
+    {
+        self.on_mouse_up = Some(Arc::new(handler));
+        self
+    }
+
+    /// Register a mouse move handler (coalesced, one call per frame).
+    pub fn on_mouse_move<F>(mut self, handler: F) -> Self
+    where
+        F: Fn(&MouseEvent, &mut EventCtx) + Send + Sync + 'static,
+    {
+        self.on_mouse_move = Some(Arc::new(handler));
+        self
+    }
+
+    /// Register a scroll wheel/trackpad handler.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// Div::new().on_mouse_scrolled(|event, _| {
+    ///     let scale = if event.precise { 1.0 } else { 12.0 };
+    ///     scroll_offset.set(scroll_offset.get() + event.delta_y * scale);
+    /// })
+    /// ```
+    pub fn on_mouse_scrolled<F>(mut self, handler: F) -> Self
+    where
+        F: Fn(&ScrollEvent, &mut EventCtx) + Send + Sync + 'static,
+    {
+        self.on_mouse_scrolled = Some(Arc::new(handler));
+        self
+    }
+
+    /// Register a raw pointer event handler (no coalescing).
+    ///
+    /// Receives all pointer events (down, up, move, enter, leave) in order.
+    pub fn on_pointer_event<F>(mut self, handler: F) -> Self
+    where
+        F: Fn(&PointerEvent, &mut EventCtx) + Send + Sync + 'static,
+    {
+        self.on_pointer_event = Some(Arc::new(handler));
+        self
+    }
+
+    /// Register a pointer enter handler.
+    pub fn on_pointer_enter<F>(mut self, handler: F) -> Self
+    where
+        F: Fn(&PointerEvent, &mut EventCtx) + Send + Sync + 'static,
+    {
+        self.on_pointer_enter = Some(Arc::new(handler));
+        self
+    }
+
+    /// Register a pointer leave handler.
+    pub fn on_pointer_leave<F>(mut self, handler: F) -> Self
+    where
+        F: Fn(&PointerEvent, &mut EventCtx) + Send + Sync + 'static,
+    {
+        self.on_pointer_leave = Some(Arc::new(handler));
+        self
+    }
 }
 
 impl Default for Div {
@@ -215,6 +351,21 @@ impl Element for Div {
         }
         let element_id = cx.allocate_id::<Div>();
         self.last_id = Some(element_id);
+
+        // Register event handlers for dispatch (Phase 5a)
+        cx.register_handlers(
+            element_id,
+            Handlers {
+                on_click: self.on_click.clone(),
+                on_mouse_down: self.on_mouse_down.clone(),
+                on_mouse_up: self.on_mouse_up.clone(),
+                on_mouse_move: self.on_mouse_move.clone(),
+                on_mouse_scrolled: self.on_mouse_scrolled.clone(),
+                on_pointer_event: self.on_pointer_event.clone(),
+                on_pointer_enter: self.on_pointer_enter.clone(),
+                on_pointer_leave: self.on_pointer_leave.clone(),
+            },
+        );
 
         // Register hit region if Div has background (clickable container)
         if self.visual.background.is_some() {
