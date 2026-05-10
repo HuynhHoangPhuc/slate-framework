@@ -118,7 +118,7 @@ impl Renderer {
             })
             .await?;
 
-        let (w, h) = window.size();
+        let (w, h) = window.physical_size();
         let mut target = build_target(&instance, &adapter, &device, Arc::clone(&window))?;
         target.configure(&device, w.max(1), h.max(1));
         let format = target.format();
@@ -228,7 +228,7 @@ impl Renderer {
         let frame = match self.target.acquire_frame() {
             Ok(f) => f,
             Err(FrameAcquireError::Outdated) => {
-                let (w, h) = self._window.size();
+                let (w, h) = self._window.physical_size();
                 self.target.configure(&self.device, w.max(1), h.max(1));
                 return Ok(());
             }
@@ -334,7 +334,7 @@ impl Renderer {
         let frame = match self.target.acquire_frame() {
             Ok(f) => f,
             Err(FrameAcquireError::Outdated) => {
-                let (w, h) = self._window.size();
+                let (w, h) = self._window.physical_size();
                 self.target.configure(&self.device, w.max(1), h.max(1));
                 return Ok(());
             }

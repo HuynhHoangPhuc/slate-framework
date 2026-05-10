@@ -110,7 +110,15 @@ impl MacWindow {
 }
 
 impl Window for MacWindow {
-    fn size(&self) -> (u32, u32) {
+    fn logical_size(&self) -> (u32, u32) {
+        let frame = self.view.frame();
+        (
+            frame.size.width.round() as u32,
+            frame.size.height.round() as u32,
+        )
+    }
+
+    fn physical_size(&self) -> (u32, u32) {
         // Physical pixels = logical content size × backing scale. Round to the
         // nearest integer so a 1.5× display reports 600 px for a 400 pt frame
         // instead of truncating to 599.

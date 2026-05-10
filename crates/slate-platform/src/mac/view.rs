@@ -20,20 +20,26 @@ use crate::{Event, Modifiers, MouseButton, WindowId};
 // ---------------------------------------------------------------------------
 
 /// Decode position from NSEvent, flipping Y to top-left origin.
-/// Returns logical position in view coordinates.
+/// Returns logical position in view coordinates (no scale division).
 fn decode_position(view: &MetalView, event: &NSEvent) -> (f32, f32) {
     let loc_in_window = event.locationInWindow();
     let bounds = view.bounds();
     let bounds_height = bounds.size.height as f32;
 
-    let scale = view
-        .window()
-        .map(|w| w.backingScaleFactor() as f32)
-        .unwrap_or(1.0);
-
     let view_pt = view.convertPoint_fromView(loc_in_window, None);
-    let x = view_pt.x as f32 / scale;
-    let y = (bounds_height - view_pt.y as f32) / scale;
+    // Post-Phase-3: coords are already logical from NSView; just flip Y.
+    let x = view_pt.x as f32;
+    let y = bounds_height - view_pt.y as f32;
+    (x, y)
+}
+
+/// Pure decode_position logic for unit testing.
+/// Takes (x, y) in window coords (Y-up), bounds_height, and scale.
+/// Post-Phase-3: scale is ignored (coords are already logical from NSView).
+#[cfg(test)]
+pub(crate) fn decode_position_pure(loc_in_window: (f32, f32), bounds_height: f32, _scale: f32) -> (f32, f32) {
+    let x = loc_in_window.0;
+    let y = bounds_height - loc_in_window.1;
     (x, y)
 }
 
@@ -93,8 +99,6 @@ define_class!(
         #[unsafe(method_id(makeBackingLayer))]
         fn make_backing_layer(&self) -> Retained<objc2_quartz_core::CALayer> {
             let metal_layer = CAMetalLayer::new();
-            // Sync Metal present with AppKit compositor — eliminates resize tearing.
-            metal_layer.setPresentsWithTransaction(true);
             // Redraw when bounds change during live resize.
             metal_layer.setNeedsDisplayOnBoundsChange(true);
             // Never block waiting for drawable — prevents UI stalls during resize.
@@ -414,11 +418,15 @@ define_class!(
                 {
                     let frame = win.contentView().map(|v| v.frame()).unwrap_or(NSRect::ZERO);
                     let scale = win.backingScaleFactor();
-                    let w = (frame.size.width * scale).round() as u32;
-                    let h = (frame.size.height * scale).round() as u32;
+                    let lw = frame.size.width.round() as u32;
+                    let lh = frame.size.height.round() as u32;
+                    let pw = (frame.size.width * scale).round() as u32;
+                    let ph = (frame.size.height * scale).round() as u32;
                     dispatch_event(Event::WindowResized {
                         window: id,
-                        size: (w, h),
+                        logical_size: (lw, lh),
+                        physical_size: (pw, ph),
+                        scale_factor: scale,
                     });
                 }
             });
@@ -469,11 +477,15 @@ define_class!(
                     }
                     // Drawable size in physical pixels follows the new scale.
                     let frame = view.frame();
-                    let w = (frame.size.width * scale).round() as u32;
-                    let h = (frame.size.height * scale).round() as u32;
+                    let lw = frame.size.width.round() as u32;
+                    let lh = frame.size.height.round() as u32;
+                    let pw = (frame.size.width * scale).round() as u32;
+                    let ph = (frame.size.height * scale).round() as u32;
                     dispatch_event(Event::WindowResized {
                         window: id,
-                        size: (w, h),
+                        logical_size: (lw, lh),
+                        physical_size: (pw, ph),
+                        scale_factor: scale,
                     });
                 }
             });
@@ -500,5 +512,32 @@ impl WindowDelegate {
         });
         // SAFETY: `NSObject`'s `init` has no additional requirements.
         unsafe { msg_send![super(this), init] }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decode_position_does_not_divide_by_scale() {
+        // bounds 400 high, click at logical (300, 100) from window-origin (Y-up)
+        // Pre-fix: returned (300/2, (400-100)/2) = (150, 150) — bug
+        // Post-fix: returns (300, 300) — Y-flip only, no scale division
+        assert_eq!(
+            decode_position_pure((300.0, 100.0), 400.0, 2.0),
+            (300.0, 300.0)
+        );
+    }
+
+    #[test]
+    fn decode_position_flips_y_correctly() {
+        // At scale=1.0 (no division anyway), verify Y flip.
+        // Click at (50, 50) in Y-up coords with bounds_height=100
+        // Expected: (50, 100-50) = (50, 50)
+        assert_eq!(decode_position_pure((50.0, 50.0), 100.0, 1.0), (50.0, 50.0));
+        // Click at (50, 0) in Y-up coords (bottom of view)
+        // Expected: (50, 100-0) = (50, 100)
+        assert_eq!(decode_position_pure((50.0, 0.0), 100.0, 1.0), (50.0, 100.0));
     }
 }

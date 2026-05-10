@@ -87,7 +87,19 @@ impl WinWindow {
 }
 
 impl Window for WinWindow {
-    fn size(&self) -> (u32, u32) {
+    fn logical_size(&self) -> (u32, u32) {
+        // GetClientRect returns physical pixels on Per-Monitor-Aware-V2; divide by scale.
+        let mut rect = RECT::default();
+        // SAFETY: hwnd is valid; rect is a valid output pointer.
+        let _ = unsafe { GetClientRect(self.inner.hwnd, &mut rect) };
+        let scale = self.scale_factor();
+        (
+            ((rect.right - rect.left) as f64 / scale).round() as u32,
+            ((rect.bottom - rect.top) as f64 / scale).round() as u32,
+        )
+    }
+
+    fn physical_size(&self) -> (u32, u32) {
         let mut rect = RECT::default();
         // SAFETY: hwnd is valid; rect is a valid output pointer.
         let _ = unsafe { GetClientRect(self.inner.hwnd, &mut rect) };

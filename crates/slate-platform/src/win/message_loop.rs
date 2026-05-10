@@ -4,7 +4,8 @@ use std::cell::Cell;
 use std::sync::Arc;
 
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
-use windows::Win32::Graphics::Gdi::{ScreenToClient, ValidateRect};
+use windows::Win32::Graphics::Gdi::{GetClientRect, ScreenToClient, ValidateRect};
+use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, ReleaseCapture, SetCapture, TrackMouseEvent, MK_CONTROL, MK_SHIFT, TME_LEAVE,
     TRACKMOUSEEVENT, VK_LWIN, VK_MENU, VK_RWIN,
@@ -108,14 +109,22 @@ impl WinWindowInner {
                 if _wparam.0 == SIZE_MINIMIZED as usize {
                     return LRESULT(0);
                 }
+                // lParam carries physical client size under PMv2.
                 let lp = lparam.0 as u32;
-                let w = (lp & 0xFFFF).max(1);
-                let h = ((lp >> 16) & 0xFFFF).max(1);
+                let pw = (lp & 0xFFFF).max(1);
+                let ph = ((lp >> 16) & 0xFFFF).max(1);
+                // SAFETY: hwnd is valid.
+                let dpi = unsafe { GetDpiForWindow(hwnd) };
+                let scale = dpi as f64 / 96.0;
+                let lw = (pw as f64 / scale).round() as u32;
+                let lh = (ph as f64 / scale).round() as u32;
                 let in_size_move = IN_SIZE_MOVE.with(|f| f.get());
-                log::trace!(target: "slate::win", "WM_SIZE w={w} h={h} in_size_move={in_size_move}");
+                log::trace!(target: "slate::win", "WM_SIZE pw={pw} ph={ph} in_size_move={in_size_move}");
                 dispatch_event(Event::WindowResized {
                     window: self.id,
-                    size: (w, h),
+                    logical_size: (lw, lh),
+                    physical_size: (pw, ph),
+                    scale_factor: scale,
                 });
                 if !in_size_move {
                     dispatch_event(Event::WindowRedrawRequested { window: self.id });
@@ -173,11 +182,21 @@ impl WinWindowInner {
                     )
                 };
                 if !IN_SIZE_MOVE.with(|f| f.get()) {
-                    let w = (suggested.right - suggested.left) as u32;
-                    let h = (suggested.bottom - suggested.top) as u32;
+                    // Suggested RECT is frame coords; use GetClientRect for client size.
+                    let mut rect = RECT::default();
+                    let _ = unsafe { GetClientRect(hwnd, &mut rect) };
+                    let pw = (rect.right - rect.left) as u32;
+                    let ph = (rect.bottom - rect.top) as u32;
+                    // SAFETY: hwnd is valid.
+                    let dpi = unsafe { GetDpiForWindow(hwnd) };
+                    let scale = dpi as f64 / 96.0;
+                    let lw = (pw as f64 / scale).round() as u32;
+                    let lh = (ph as f64 / scale).round() as u32;
                     dispatch_event(Event::WindowResized {
                         window: self.id,
-                        size: (w, h),
+                        logical_size: (lw, lh),
+                        physical_size: (pw, ph),
+                        scale_factor: scale,
                     });
                 }
                 LRESULT(0)

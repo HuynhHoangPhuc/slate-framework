@@ -231,3 +231,59 @@ fn node_context_none_default() {
     let ctx = NodeContext::default();
     assert!(matches!(ctx, NodeContext::None));
 }
+
+#[test]
+fn layout_viewport_is_logical_points() {
+    // Verify that layout computation uses logical viewport dimensions.
+    // A 200×100 child centered in an 800×600 viewport should be at:
+    //   x = (800 - 200) / 2 = 300
+    //   y = (600 - 100) / 2 = 250
+    // This is independent of scale_factor (which only affects paint).
+    let mut tree = LayoutTree::new();
+
+    let child = tree
+        .inner_mut()
+        .new_leaf(taffy::Style {
+            size: taffy::Size {
+                width: Dimension::length(200.0),
+                height: Dimension::length(100.0),
+            },
+            ..Default::default()
+        })
+        .unwrap();
+
+    let parent = tree
+        .inner_mut()
+        .new_with_children(
+            taffy::Style {
+                display: Display::Flex,
+                justify_content: Some(JustifyContent::Center),
+                align_items: Some(AlignItems::Center),
+                size: taffy::Size {
+                    width: Dimension::length(800.0),
+                    height: Dimension::length(600.0),
+                },
+                ..Default::default()
+            },
+            &[child],
+        )
+        .unwrap();
+
+    // Simulate logical viewport 800×600 (as if scale_factor=2.0 with physical=1600×1200)
+    tree.inner_mut()
+        .compute_layout(
+            parent,
+            taffy::Size {
+                width: AvailableSpace::Definite(800.0),
+                height: AvailableSpace::Definite(600.0),
+            },
+        )
+        .unwrap();
+
+    let bounds = resolve_bounds(tree.inner(), LayoutId(child)).unwrap();
+    // Child should be centered in logical coordinates
+    assert_eq!(bounds.origin.x, 300.0); // (800-200)/2
+    assert_eq!(bounds.origin.y, 250.0); // (600-100)/2
+    assert_eq!(bounds.size.width, 200.0);
+    assert_eq!(bounds.size.height, 100.0);
+}

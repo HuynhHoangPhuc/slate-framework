@@ -42,9 +42,9 @@ fn main() {
             *renderer.borrow_mut() = Some(r);
         }
 
-        Event::WindowResized { size, .. } => {
+        Event::WindowResized { physical_size, .. } => {
             if let Some(r) = renderer.borrow_mut().as_mut() {
-                r.resize(size);
+                r.resize(physical_size);
             }
         }
 
@@ -53,7 +53,7 @@ fn main() {
                 return;
             }
 
-            let (w, h) = window_ref.size();
+            let (w, h) = window_ref.physical_size();
             let scale = window_ref.scale_factor() as f32;
 
             let mut s = scene.borrow_mut();

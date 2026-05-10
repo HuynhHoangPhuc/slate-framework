@@ -2,7 +2,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// A point in 2D space (physical pixels).
+/// A point in 2D space (logical points).
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub struct Point {
     pub x: f32,
@@ -17,7 +17,7 @@ impl Point {
     }
 }
 
-/// A 2D size (physical pixels).
+/// A 2D size (logical points).
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub struct Size {
     pub width: f32,
@@ -35,7 +35,7 @@ impl Size {
     }
 }
 
-/// A rectangular region in physical pixels.
+/// A rectangular region in logical points.
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub struct Bounds {
     pub origin: Point,
@@ -313,7 +313,7 @@ pub struct AccessibilityInfo {
 pub struct AccessibilityNode {
     /// Stable element identity.
     pub id: ElementId,
-    /// Screen bounds in physical pixels.
+    /// Screen bounds in logical points.
     pub bounds: Bounds,
     /// Semantic accessibility information.
     pub info: AccessibilityInfo,

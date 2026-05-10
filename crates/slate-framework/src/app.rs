@@ -426,10 +426,14 @@ impl App {
                 window_ref.request_redraw();
             }
 
-            Event::WindowResized { size, .. } => {
+            Event::WindowResized { physical_size, .. } => {
                 if let Some(r) = renderer.borrow_mut().as_mut() {
-                    r.resize(size);
+                    r.resize(physical_size);
                 }
+                // macOS: request_redraw ensures new layout is painted immediately after resize.
+                // Windows already dispatches WindowRedrawRequested from WM_SIZE.
+                #[cfg(target_os = "macos")]
+                window_ref.request_redraw();
             }
 
             Event::WindowRedrawRequested { .. } => {
@@ -450,7 +454,8 @@ impl App {
                     return;
                 }
 
-                let (w, h) = window_ref.size();
+                // Read logical size fresh each frame — robust to ordering surprises on resize.
+                let (lw, lh) = window_ref.logical_size();
                 let scale_factor = window_ref.scale_factor();
 
                 // Phase 5: Drain dirty bit and effects before render
@@ -464,7 +469,7 @@ impl App {
                     slate_reactive::with_observer(view_observer_id, || v.render())
                 };
 
-                // 2. Layout pass
+                // 2. Layout pass (viewport in logical points)
                 let root_id = {
                     let mut tree = layout_tree.borrow_mut();
                     tree.clear();
@@ -479,7 +484,7 @@ impl App {
                         scale_factor,
                     );
 
-                    compute_layout(&mut root, &mut cx, Size::new(w as f32, h as f32))
+                    compute_layout(&mut root, &mut cx, Size::new(lw as f32, lh as f32))
                 };
 
                 let Some(root_id) = root_id else {

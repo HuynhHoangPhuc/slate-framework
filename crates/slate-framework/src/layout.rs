@@ -153,7 +153,7 @@ pub fn compute_layout(
 ///
 /// # Returns
 ///
-/// The computed `Bounds` in physical pixels, or `None` if node not found.
+/// The computed `Bounds` in logical points, or `None` if node not found.
 pub fn resolve_bounds(taffy: &TaffyTree<NodeContext>, node: LayoutId) -> Option<Bounds> {
     let layout = taffy.layout(node.0).ok()?;
 

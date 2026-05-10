@@ -367,8 +367,17 @@ impl Element for Div {
             },
         );
 
-        // Register hit region if Div has background (clickable container)
-        if self.visual.background.is_some() {
+        // Register hit region if Div has background OR any mouse handler.
+        // Bug D fix: transparent divs with handlers still need hit regions.
+        let has_any_handler = self.on_click.is_some()
+            || self.on_mouse_down.is_some()
+            || self.on_mouse_up.is_some()
+            || self.on_mouse_move.is_some()
+            || self.on_mouse_scrolled.is_some()
+            || self.on_pointer_event.is_some()
+            || self.on_pointer_enter.is_some()
+            || self.on_pointer_leave.is_some();
+        if self.visual.background.is_some() || has_any_handler {
             cx.register_hit_region(
                 HitRegion::new(element_id, bounds, 0).with_cursor(CursorStyle::Arrow),
             );

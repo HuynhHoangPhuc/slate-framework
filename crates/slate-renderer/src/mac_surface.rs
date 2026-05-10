@@ -52,7 +52,7 @@ impl MacSurface {
             .find(|f| *f == TextureFormat::Bgra8UnormSrgb)
             .unwrap_or(caps.formats[0]);
 
-        let (w, h) = window.size();
+        let (w, h) = window.physical_size();
         let config = SurfaceConfiguration {
             usage: TextureUsages::RENDER_ATTACHMENT,
             format,

@@ -48,8 +48,10 @@ pub trait Platform: 'static {
 /// requests must travel through the (future) event channel rather than
 /// a shared `&Window` reference.
 pub trait Window: HasWindowHandle + HasDisplayHandle + 'static {
+    /// Logical size of the drawable area in points.
+    fn logical_size(&self) -> (u32, u32);
     /// Physical pixel size of the drawable area.
-    fn size(&self) -> (u32, u32);
+    fn physical_size(&self) -> (u32, u32);
     /// Backing scale factor (1.0 standard, 2.0 Retina, etc.).
     fn scale_factor(&self) -> f64;
     /// Schedule a redraw. The next `Event::WindowRedrawRequested` for
@@ -111,7 +113,9 @@ pub enum Event {
     Resumed,
     WindowResized {
         window: WindowId,
-        size: (u32, u32),
+        logical_size: (u32, u32),
+        physical_size: (u32, u32),
+        scale_factor: f64,
     },
     WindowCloseRequested {
         window: WindowId,

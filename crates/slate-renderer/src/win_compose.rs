@@ -74,7 +74,7 @@ pub(crate) struct WinCompose {
 impl WinCompose {
     pub fn new(device: &Device, window: Arc<dyn Window>) -> Result<Self, RendererError> {
         let hwnd = extract_hwnd(&*window)?;
-        let (w, h) = window.size();
+        let (w, h) = window.physical_size();
 
         let (raw_device, raw_queue) = unsafe {
             let hal_device_guard = device
