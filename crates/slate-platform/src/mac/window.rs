@@ -13,6 +13,7 @@ use raw_window_handle::{
     HasWindowHandle, RawDisplayHandle, RawWindowHandle, WindowHandle,
 };
 
+use super::display_link::DisplayLink;
 use super::view::{MetalView, WindowDelegate};
 use super::{next_window_id, post_redraw_event};
 use crate::{Window, WindowId, WindowOptions};
@@ -30,6 +31,9 @@ pub struct MacWindow {
     view: Retained<MetalView>,
     /// Keeps the delegate alive for the window's full lifetime.
     _delegate: Retained<WindowDelegate>,
+    /// CVDisplayLink for vsync-synchronized rendering. Ensures rendering continues
+    /// during live resize when the main run loop is in NSEventTrackingRunLoopMode.
+    _display_link: Option<DisplayLink>,
 }
 
 impl MacWindow {
@@ -96,6 +100,13 @@ impl MacWindow {
         ns_window.center();
         ns_window.makeKeyAndOrderFront(None);
 
+        // Create and start the display link for vsync-synchronized rendering.
+        // This ensures smooth rendering during live resize.
+        let display_link = DisplayLink::new(id);
+        if let Some(ref link) = display_link {
+            link.start();
+        }
+
         // The `Platform` trait mandates `Arc<Self::Window>`; `MacWindow` is
         // intentionally not Send+Sync (main-thread-only), so suppress the
         // arc_with_non_send_sync lint rather than changing the trait contract.
@@ -105,6 +116,7 @@ impl MacWindow {
             ns_window,
             view,
             _delegate: delegate,
+            _display_link: display_link,
         })
     }
 }

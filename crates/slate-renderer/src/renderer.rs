@@ -184,13 +184,7 @@ impl Renderer {
     pub fn resize(&mut self, new_size: (u32, u32)) {
         let max = self.device.limits().max_texture_dimension_2d;
         let (w, h) = (new_size.0.max(1).min(max), new_size.1.max(1).min(max));
-        let old = self.target.size();
-        let noop = old == (w, h);
-        eprintln!(
-            "[trace-resize] resize old=({},{}) new=({},{}) noop={}",
-            old.0, old.1, w, h, noop
-        );
-        if noop {
+        if self.target.size() == (w, h) {
             return;
         }
         self.target.configure(&self.device, w, h);
@@ -234,25 +228,13 @@ impl Renderer {
         let frame = {
             let mut last_outdated = false;
             let mut acquired = None;
-            for attempt in 0..2 {
+            for _attempt in 0..2 {
                 match self.target.acquire_frame() {
                     Ok(f) => {
-                        let cfg = self.target.size();
-                        let win = self._window.physical_size();
-                        eprintln!(
-                            "[trace-resize] acquire result=Success cfg=({},{}) win=({},{})",
-                            cfg.0, cfg.1, win.0, win.1
-                        );
                         acquired = Some(f);
                         break;
                     }
                     Err(FrameAcquireError::Outdated) => {
-                        let cfg = self.target.size();
-                        let win = self._window.physical_size();
-                        eprintln!(
-                            "[trace-resize] acquire result=Outdated cfg=({},{}) win=({},{}) attempt={}",
-                            cfg.0, cfg.1, win.0, win.1, attempt
-                        );
                         let (w, h) = self._window.physical_size();
                         self.target.configure(&self.device, w.max(1), h.max(1));
                         last_outdated = true;

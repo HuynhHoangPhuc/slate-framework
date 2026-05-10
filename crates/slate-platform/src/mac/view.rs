@@ -12,7 +12,7 @@ use objc2_app_kit::{
 use objc2_foundation::{MainThreadMarker, NSNotification, NSObject, NSObjectProtocol, NSRect};
 use objc2_quartz_core::CAMetalLayer;
 
-use super::{dispatch_event, elapsed_ns, ffi_boundary, post_redraw_event};
+use super::{dispatch_event, ffi_boundary, post_redraw_event};
 use crate::{Event, Modifiers, MouseButton, WindowId};
 
 // ---------------------------------------------------------------------------
@@ -114,12 +114,6 @@ define_class!(
         #[unsafe(method(drawRect:))]
         fn draw_rect(&self, _rect: NSRect) {
             let id = self.ivars().window_id.get();
-            let bounds = self.bounds();
-            let live = self.inLiveResize();
-            eprintln!(
-                "[trace-resize] drawRect bounds=({:.1},{:.1}) liveResize={} t={}",
-                bounds.size.width, bounds.size.height, live, elapsed_ns()
-            );
             ffi_boundary(|| {
                 dispatch_event(Event::WindowRedrawRequested { window: id });
             });
@@ -431,18 +425,13 @@ define_class!(
                     let lh = frame.size.height.round() as u32;
                     let pw = (frame.size.width * scale).round() as u32;
                     let ph = (frame.size.height * scale).round() as u32;
-                    eprintln!(
-                        "[trace-resize] windowDidResize frame=({:.1},{:.1}) scale={:.2} phys=({},{}) t={}",
-                        frame.size.width, frame.size.height, scale, pw, ph, elapsed_ns()
-                    );
                     dispatch_event(Event::WindowResized {
                         window: id,
                         logical_size: (lw, lh),
                         physical_size: (pw, ph),
                         scale_factor: scale,
                     });
-                    // Ensure redraw after resize — setNeedsDisplayOnBoundsChange alone
-                    // doesn't reliably trigger drawRect: during live resize.
+                    // Ensure redraw is scheduled after resize.
                     post_redraw_event(id);
                 }
             });
@@ -503,7 +492,7 @@ define_class!(
                         physical_size: (pw, ph),
                         scale_factor: scale,
                     });
-                    // Ensure redraw after scale change.
+                    // Ensure redraw is scheduled after scale change.
                     post_redraw_event(id);
                 }
             });

@@ -67,6 +67,7 @@ objc2-quartz-core = { version = "0.3", features = [
 objc2-core-text = "0.3.2"
 objc2-core-graphics = "0.3.2"
 objc2-core-foundation = "0.3.2"
+dispatch = "0.2"
 # Windows-only deps (target.'cfg(target_os = "windows")')
 windows = { version = "0.62", features = [
     "Win32_Foundation",

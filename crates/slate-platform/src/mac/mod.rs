@@ -13,6 +13,7 @@
 //! `run` returns, so the raw pointer can never outlive the closure.
 //! See the SAFETY comment in `run` for the full argument.
 
+mod display_link;
 mod platform;
 mod view;
 mod window;
@@ -22,8 +23,6 @@ pub use window::MacWindow;
 
 use std::cell::Cell;
 use std::panic::AssertUnwindSafe;
-use std::sync::OnceLock;
-use std::time::Instant;
 
 use objc2_app_kit::{NSApplication, NSEvent, NSEventModifierFlags, NSEventType};
 use objc2_foundation::{MainThreadMarker, NSPoint};
@@ -122,12 +121,6 @@ pub(crate) fn ffi_boundary(f: impl FnOnce()) {
         log::error!("slate: Rust panic crossed AppKit FFI boundary — aborting");
         std::process::abort();
     }
-}
-
-/// Nanoseconds elapsed since process start (for resize trace logging).
-pub(crate) fn elapsed_ns() -> u128 {
-    static START: OnceLock<Instant> = OnceLock::new();
-    START.get_or_init(Instant::now).elapsed().as_nanos()
 }
 
 // ---------------------------------------------------------------------------
