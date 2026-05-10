@@ -7,6 +7,7 @@ use objc2::MainThreadOnly;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2_app_kit::{NSBackingStoreType, NSView, NSWindow, NSWindowStyleMask};
+use objc2_quartz_core::kCAGravityTopLeft;
 use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize, NSString};
 use raw_window_handle::{
     AppKitDisplayHandle, AppKitWindowHandle, DisplayHandle, HandleError, HasDisplayHandle,
@@ -88,6 +89,10 @@ impl MacWindow {
         let scale = ns_window.backingScaleFactor();
         if let Some(layer) = view.layer() {
             layer.setContentsScale(scale);
+            // Anchor stale contents to top-left during live resize. Right/bottom
+            // drag exposes a transparent strip for ~1 vsync instead of bilinear-
+            // stretching the old texture to fit the new bounds.
+            layer.setContentsGravity(unsafe { kCAGravityTopLeft });
         }
 
         // Attach the window delegate.
