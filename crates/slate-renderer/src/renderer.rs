@@ -230,39 +230,55 @@ impl Renderer {
         self.glyph_pipeline
             .prepare(&self.device, &self.queue, &scene.glyphs);
 
-        // Phase B: RECORD — immutable iteration into a single pass.
-        let frame = match self.target.acquire_frame() {
-            Ok(f) => {
-                let cfg = self.target.size();
-                let win = self._window.physical_size();
-                eprintln!(
-                    "[trace-resize] acquire result=Success cfg=({},{}) win=({},{})",
-                    cfg.0, cfg.1, win.0, win.1
-                );
-                f
+        // Phase B: RECORD — try acquire, with one retry if Outdated.
+        let frame = {
+            let mut last_outdated = false;
+            let mut acquired = None;
+            for attempt in 0..2 {
+                match self.target.acquire_frame() {
+                    Ok(f) => {
+                        let cfg = self.target.size();
+                        let win = self._window.physical_size();
+                        eprintln!(
+                            "[trace-resize] acquire result=Success cfg=({},{}) win=({},{})",
+                            cfg.0, cfg.1, win.0, win.1
+                        );
+                        acquired = Some(f);
+                        break;
+                    }
+                    Err(FrameAcquireError::Outdated) => {
+                        let cfg = self.target.size();
+                        let win = self._window.physical_size();
+                        eprintln!(
+                            "[trace-resize] acquire result=Outdated cfg=({},{}) win=({},{}) attempt={}",
+                            cfg.0, cfg.1, win.0, win.1, attempt
+                        );
+                        let (w, h) = self._window.physical_size();
+                        self.target.configure(&self.device, w.max(1), h.max(1));
+                        last_outdated = true;
+                    }
+                    Err(
+                        FrameAcquireError::Occluded
+                        | FrameAcquireError::Minimized
+                        | FrameAcquireError::Timeout,
+                    ) => {
+                        return Ok(());
+                    }
+                    Err(FrameAcquireError::DeviceLost(reason)) => {
+                        return Err(RenderError::DeviceLost(reason));
+                    }
+                    Err(other) => return Err(RenderError::AcquireFailed(other.to_string())),
+                }
             }
-            Err(FrameAcquireError::Outdated) => {
-                let cfg = self.target.size();
-                let win = self._window.physical_size();
-                eprintln!(
-                    "[trace-resize] acquire result=Outdated cfg=({},{}) win=({},{})",
-                    cfg.0, cfg.1, win.0, win.1
-                );
-                let (w, h) = self._window.physical_size();
-                self.target.configure(&self.device, w.max(1), h.max(1));
-                return Ok(());
+            match acquired {
+                Some(f) => f,
+                None => {
+                    if last_outdated {
+                        log::warn!("renderer: surface still Outdated after retry");
+                    }
+                    return Ok(());
+                }
             }
-            Err(
-                FrameAcquireError::Occluded
-                | FrameAcquireError::Minimized
-                | FrameAcquireError::Timeout,
-            ) => {
-                return Ok(());
-            }
-            Err(FrameAcquireError::DeviceLost(reason)) => {
-                return Err(RenderError::DeviceLost(reason));
-            }
-            Err(other) => return Err(RenderError::AcquireFailed(other.to_string())),
         };
         let view = &frame.view;
         let mut encoder = self
@@ -351,24 +367,43 @@ impl Renderer {
     /// Stub clear-only path — use [`Renderer::render_scene`] for Scene-driven
     /// rendering.
     pub fn render(&mut self) -> Result<(), RenderError> {
-        let frame = match self.target.acquire_frame() {
-            Ok(f) => f,
-            Err(FrameAcquireError::Outdated) => {
-                let (w, h) = self._window.physical_size();
-                self.target.configure(&self.device, w.max(1), h.max(1));
-                return Ok(());
+        // Try acquire with one retry if Outdated.
+        let frame = {
+            let mut last_outdated = false;
+            let mut acquired = None;
+            for _attempt in 0..2 {
+                match self.target.acquire_frame() {
+                    Ok(f) => {
+                        acquired = Some(f);
+                        break;
+                    }
+                    Err(FrameAcquireError::Outdated) => {
+                        let (w, h) = self._window.physical_size();
+                        self.target.configure(&self.device, w.max(1), h.max(1));
+                        last_outdated = true;
+                    }
+                    Err(
+                        FrameAcquireError::Occluded
+                        | FrameAcquireError::Minimized
+                        | FrameAcquireError::Timeout,
+                    ) => {
+                        return Ok(());
+                    }
+                    Err(FrameAcquireError::DeviceLost(reason)) => {
+                        return Err(RenderError::DeviceLost(reason));
+                    }
+                    Err(other) => return Err(RenderError::AcquireFailed(other.to_string())),
+                }
             }
-            Err(
-                FrameAcquireError::Occluded
-                | FrameAcquireError::Minimized
-                | FrameAcquireError::Timeout,
-            ) => {
-                return Ok(());
+            match acquired {
+                Some(f) => f,
+                None => {
+                    if last_outdated {
+                        log::warn!("renderer: surface still Outdated after retry");
+                    }
+                    return Ok(());
+                }
             }
-            Err(FrameAcquireError::DeviceLost(reason)) => {
-                return Err(RenderError::DeviceLost(reason));
-            }
-            Err(other) => return Err(RenderError::AcquireFailed(other.to_string())),
         };
         self.draw_clear_pass(&frame.view);
         self.target.present(frame);

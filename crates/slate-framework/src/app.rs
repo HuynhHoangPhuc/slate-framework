@@ -430,10 +430,8 @@ impl App {
                 if let Some(r) = renderer.borrow_mut().as_mut() {
                     r.resize(physical_size);
                 }
-                // macOS: request_redraw ensures new layout is painted immediately after resize.
-                // Windows already dispatches WindowRedrawRequested from WM_SIZE.
-                #[cfg(target_os = "macos")]
-                window_ref.request_redraw();
+                // Redraw is now triggered by platform layer (mac/view.rs windowDidResize:
+                // calls post_redraw_event; Windows dispatches WindowRedrawRequested from WM_SIZE).
             }
 
             Event::WindowRedrawRequested { .. } => {

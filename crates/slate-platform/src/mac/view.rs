@@ -99,6 +99,9 @@ define_class!(
         #[unsafe(method_id(makeBackingLayer))]
         fn make_backing_layer(&self) -> Retained<objc2_quartz_core::CALayer> {
             let metal_layer = CAMetalLayer::new();
+            // Synchronize Metal present with AppKit's CATransaction commit.
+            // Without this, async present causes compositor to scale stale drawables.
+            metal_layer.setPresentsWithTransaction(true);
             // Redraw when bounds change during live resize.
             metal_layer.setNeedsDisplayOnBoundsChange(true);
             // Never block waiting for drawable — prevents UI stalls during resize.
@@ -438,6 +441,9 @@ define_class!(
                         physical_size: (pw, ph),
                         scale_factor: scale,
                     });
+                    // Ensure redraw after resize — setNeedsDisplayOnBoundsChange alone
+                    // doesn't reliably trigger drawRect: during live resize.
+                    post_redraw_event(id);
                 }
             });
         }
@@ -497,6 +503,8 @@ define_class!(
                         physical_size: (pw, ph),
                         scale_factor: scale,
                     });
+                    // Ensure redraw after scale change.
+                    post_redraw_event(id);
                 }
             });
         }
