@@ -7,6 +7,7 @@
 //! a running `NSApplication` (CAMetalLayer attachment + `mainScreen` lookups).
 //! Constructing before `Platform::run` returns will panic or produce a null surface.
 
+use std::cell::Cell;
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
@@ -26,7 +27,9 @@ use crate::instanced_rect_pipeline::InstancedRectPipeline;
 use crate::pipeline_shared::{self, ViewportUniform};
 use crate::scene::Scene;
 use crate::shadow_pipeline::ShadowPipeline;
-use crate::surface_target::{CompositionTarget, FrameAcquireError};
+use crate::surface_target::{
+    CompositionTarget, ConfigureError, FrameAcquireError,
+};
 
 #[cfg(target_os = "macos")]
 use crate::mac_surface;
@@ -60,6 +63,9 @@ pub struct Renderer {
     shadow_pipeline: ShadowPipeline,
     image_pipeline: ImagePipeline,
     glyph_pipeline: GlyphPipeline,
+
+    // Device-lost state (Phase 4 detection).
+    device_lost: Cell<bool>,
 }
 
 impl Renderer {
@@ -120,7 +126,9 @@ impl Renderer {
 
         let (w, h) = window.physical_size();
         let mut target = build_target(&instance, &adapter, &device, Arc::clone(&window))?;
-        target.configure(&device, w.max(1), h.max(1));
+        target
+            .configure(&device, w.max(1), h.max(1))
+            .map_err(|e| RendererError::Configure(format!("{:?}", e)))?;
         let format = target.format();
 
         // --- Shared resources (Phase 7) ---
@@ -176,12 +184,43 @@ impl Renderer {
             shadow_pipeline,
             image_pipeline,
             glyph_pipeline,
+            device_lost: Cell::new(false),
         })
+    }
+
+    /// Returns true if the GPU device has been lost (e.g., due to driver reset,
+    /// monitor topology change, or TDR). Once true, rendering will fail until
+    /// the device is recovered (Phase 5).
+    pub fn is_device_lost(&self) -> bool {
+        self.device_lost.get()
+    }
+
+    /// Check if an HRESULT indicates device-lost state. If so, sets the flag
+    /// and returns true. Called by internal error handlers.
+    fn check_hr_for_device_lost(&self, hr: i32) -> bool {
+        // Canonical DXGI device-lost codes
+        const DXGI_ERROR_DEVICE_REMOVED: i32 = 0x887A0005_u32 as i32;
+        const DXGI_ERROR_DEVICE_RESET: i32 = 0x887A0007_u32 as i32;
+        const DXGI_ERROR_DEVICE_HUNG: i32 = 0x887A0006_u32 as i32;
+
+        if hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET || hr == DXGI_ERROR_DEVICE_HUNG {
+            log::warn!(target: "slate::resize", "Device lost detected: HRESULT 0x{:08X}", hr as u32);
+            self.device_lost.set(true);
+            true
+        } else {
+            false
+        }
     }
 
     /// Resize the surface. `new_size` is in physical pixels, matching
     /// the `(u32, u32)` payload of `Event::WindowResized`.
     pub fn resize(&mut self, new_size: (u32, u32)) {
+        // Early-return if device is lost - no point attempting resize
+        if self.device_lost.get() {
+            log::trace!(target: "slate::resize", "Renderer::resize skipped: device lost");
+            return;
+        }
+
         let max = self.device.limits().max_texture_dimension_2d;
         let (w, h) = (new_size.0.max(1).min(max), new_size.1.max(1).min(max));
         log::trace!(target: "slate::resize", "Renderer::resize called: {:?} -> {}x{} (target currently: {:?})", new_size, w, h, self.target.size());
@@ -189,7 +228,18 @@ impl Renderer {
             log::trace!(target: "slate::resize", "Renderer::resize: no change needed");
             return;
         }
-        self.target.configure(&self.device, w, h);
+
+        // Handle configure errors - check for device-lost
+        if let Err(e) = self.target.configure(&self.device, w, h) {
+            match &e {
+                ConfigureError::ResizeBuffersFailed(hr) | ConfigureError::BackBufferFailed(hr) => {
+                    self.check_hr_for_device_lost(*hr);
+                }
+            }
+            log::warn!(target: "slate::resize", "configure failed: {:?}", e);
+            // Continue with old size - viewport uniform will match target.size()
+        }
+
         // Use actual target size for viewport uniform - if ResizeBuffers failed,
         // target.size() will be the old size, keeping viewport/render-target in sync.
         let (actual_w, actual_h) = self.target.size();
@@ -242,7 +292,16 @@ impl Renderer {
                     }
                     Err(FrameAcquireError::Outdated) => {
                         let (w, h) = self._window.physical_size();
-                        self.target.configure(&self.device, w.max(1), h.max(1));
+                        if let Err(e) = self.target.configure(&self.device, w.max(1), h.max(1)) {
+                            match &e {
+                                ConfigureError::ResizeBuffersFailed(hr)
+                                | ConfigureError::BackBufferFailed(hr) => {
+                                    if self.check_hr_for_device_lost(*hr) {
+                                        return Err(RenderError::DeviceLost(format!("{:?}", e)));
+                                    }
+                                }
+                            }
+                        }
                         last_outdated = true;
                     }
                     Err(
@@ -253,6 +312,7 @@ impl Renderer {
                         return Ok(());
                     }
                     Err(FrameAcquireError::DeviceLost(reason)) => {
+                        self.device_lost.set(true);
                         return Err(RenderError::DeviceLost(reason));
                     }
                     Err(other) => return Err(RenderError::AcquireFailed(other.to_string())),
@@ -321,7 +381,14 @@ impl Renderer {
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
-        self.target.present(frame);
+
+        // Handle present errors - check for device-lost
+        if let Err(e) = self.target.present(frame) {
+            if self.check_hr_for_device_lost(e.hr()) {
+                return Err(RenderError::DeviceLost(format!("present failed: {:?}", e)));
+            }
+            log::warn!(target: "slate::render", "present failed: {:?}", e);
+        }
         Ok(())
     }
 
@@ -367,7 +434,16 @@ impl Renderer {
                     }
                     Err(FrameAcquireError::Outdated) => {
                         let (w, h) = self._window.physical_size();
-                        self.target.configure(&self.device, w.max(1), h.max(1));
+                        if let Err(e) = self.target.configure(&self.device, w.max(1), h.max(1)) {
+                            match &e {
+                                ConfigureError::ResizeBuffersFailed(hr)
+                                | ConfigureError::BackBufferFailed(hr) => {
+                                    if self.check_hr_for_device_lost(*hr) {
+                                        return Err(RenderError::DeviceLost(format!("{:?}", e)));
+                                    }
+                                }
+                            }
+                        }
                         last_outdated = true;
                     }
                     Err(
@@ -378,6 +454,7 @@ impl Renderer {
                         return Ok(());
                     }
                     Err(FrameAcquireError::DeviceLost(reason)) => {
+                        self.device_lost.set(true);
                         return Err(RenderError::DeviceLost(reason));
                     }
                     Err(other) => return Err(RenderError::AcquireFailed(other.to_string())),
@@ -394,7 +471,14 @@ impl Renderer {
             }
         };
         self.draw_clear_pass(&frame.view);
-        self.target.present(frame);
+
+        // Handle present errors - check for device-lost
+        if let Err(e) = self.target.present(frame) {
+            if self.check_hr_for_device_lost(e.hr()) {
+                return Err(RenderError::DeviceLost(format!("present failed: {:?}", e)));
+            }
+            log::warn!(target: "slate::render", "present failed: {:?}", e);
+        }
         Ok(())
     }
 
@@ -460,6 +544,8 @@ pub enum RendererError {
     Device(#[from] RequestDeviceError),
     #[error("raw window handle error: {0}")]
     RawHandle(String),
+    #[error("failed to configure surface: {0}")]
+    Configure(String),
 }
 
 /// Error occurring during [`Renderer::render`].
