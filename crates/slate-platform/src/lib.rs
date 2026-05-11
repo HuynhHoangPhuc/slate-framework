@@ -108,6 +108,7 @@ pub struct Modifiers {
 }
 
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum Event {
     /// Sent once after platform init, before the first paint.
     Resumed,
@@ -169,6 +170,19 @@ pub enum Event {
     /// Windows-only: system stole mouse capture (e.g. Alt-Tab, another app took focus).
     /// Framework should clear its capture_target state when this fires.
     CaptureLost {
+        window: WindowId,
+    },
+    // -------------------------------------------------------------------------
+    // Device recovery events (Phase 5)
+    // -------------------------------------------------------------------------
+    /// GPU device was lost (driver reset, TDR, adapter change).
+    /// If `fatal: true`, recovery failed after max attempts - app should close window.
+    DeviceLost {
+        window: WindowId,
+        fatal: bool,
+    },
+    /// GPU device was successfully recovered after a device-lost event.
+    DeviceRestored {
         window: WindowId,
     },
 }

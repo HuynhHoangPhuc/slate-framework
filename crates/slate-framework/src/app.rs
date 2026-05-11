@@ -384,6 +384,10 @@ impl App {
         let text_shaping_cache: RefCell<crate::paint_cache::TextShapingCache> =
             RefCell::new(crate::paint_cache::TextShapingCache::new());
 
+        // Phase 5 device recovery: track attempts across renderer recreations
+        const MAX_RECOVERY_ATTEMPTS: u32 = 3;
+        let recovery_attempts: RefCell<u32> = RefCell::new(0);
+
         // AppContext for view factory
         let cx = AppContext {
             runtime: runtime.clone(),
@@ -434,7 +438,7 @@ impl App {
                 // calls post_redraw_event; Windows dispatches WindowRedrawRequested from WM_SIZE).
             }
 
-            Event::WindowRedrawRequested { .. } => {
+            Event::WindowRedrawRequested { window: _window_id } => {
                 // BORROW ORDER (do not reorder; see ADR-001 in plans/260508-1245-*):
                 // 1. view  2. layout_tree  3. text_system  4. hit_test_list
                 // 5. a11y_nodes  6. scene  7. renderer
@@ -449,6 +453,50 @@ impl App {
 
                 // Skip if not initialized
                 if renderer.borrow().is_none() {
+                    return;
+                }
+
+                // Phase 5: Device-lost recovery check
+                let device_lost = {
+                    let r = renderer.borrow();
+                    r.as_ref().map(|r| r.is_device_lost()).unwrap_or(false)
+                };
+
+                if device_lost {
+                    let attempts = *recovery_attempts.borrow();
+                    if attempts >= MAX_RECOVERY_ATTEMPTS {
+                        log::error!("GPU device recovery failed after {} attempts", attempts);
+                        // Emit fatal device-lost event - handler will quit
+                        // (We can't call dispatch_event here, so quit directly)
+                        platform_ref.quit();
+                        return;
+                    }
+
+                    *recovery_attempts.borrow_mut() += 1;
+                    log::info!(
+                        "Attempting GPU device recovery (attempt {}/{})",
+                        attempts + 1,
+                        MAX_RECOVERY_ATTEMPTS
+                    );
+
+                    // Drop old renderer
+                    *renderer.borrow_mut() = None;
+
+                    // Recreate renderer
+                    match pollster::block_on(Renderer::new(window_ref.clone())) {
+                        Ok(new_renderer) => {
+                            log::info!("GPU device recovered successfully");
+                            *renderer.borrow_mut() = Some(new_renderer);
+                            *recovery_attempts.borrow_mut() = 0; // Reset on success
+                            // Request another redraw to render with new device
+                            window_ref.request_redraw();
+                        }
+                        Err(e) => {
+                            log::error!("GPU device recovery failed: {e}");
+                            // Will retry on next redraw request
+                            window_ref.request_redraw();
+                        }
+                    }
                     return;
                 }
 
@@ -930,6 +978,23 @@ impl App {
                 // Clear capture state — handlers see up events stop arriving
                 *capture_target.borrow_mut() = None;
                 *button_state.borrow_mut() = 0;
+            }
+
+            // -----------------------------------------------------------------
+            // Device recovery events (Phase 5)
+            // -----------------------------------------------------------------
+            Event::DeviceLost { fatal, .. } => {
+                if fatal {
+                    log::error!("GPU device lost (fatal) - recovery failed after max attempts");
+                    platform_ref.quit();
+                } else {
+                    log::warn!("GPU device lost - recovery will be attempted");
+                }
+            }
+
+            Event::DeviceRestored { .. } => {
+                log::info!("GPU device restored - rendering resumed");
+                window_ref.request_redraw();
             }
 
             _ => {}
