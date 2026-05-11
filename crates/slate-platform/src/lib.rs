@@ -114,6 +114,9 @@ pub struct Modifiers {
 pub enum Event {
     /// Sent once after platform init, before the first paint.
     Resumed,
+    /// Fired after a resize completes. Not a request to render — the platform
+    /// layer drives rendering synchronously inside the resize callback
+    /// (`WM_NCCALCSIZE` on Windows, `setFrameSize:` on macOS).
     WindowResized {
         window: WindowId,
         logical_size: (u32, u32),

@@ -49,8 +49,6 @@ thread_local! {
     static RESIZE_SYNC_CALLBACK: ResizeCallback = const { std::cell::RefCell::new(None) };
 }
 
-pub(crate) const SIZE_MOVE_TIMER_ID: usize = 0x5_1A_7E;
-
 /// Custom message for wake events from background threads.
 pub(crate) const WM_APP_WAKE: u32 = WM_APP + 1;
 

@@ -13,18 +13,18 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     VK_MENU, VK_RWIN,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CREATESTRUCTW, DefWindowProcW, GWLP_USERDATA, GetClientRect, GetWindowLongPtrW, KillTimer,
-    MINMAXINFO, MSG, PM_REMOVE, PeekMessageW, PostQuitMessage, SIZE_MINIMIZED, SWP_NOACTIVATE,
-    SWP_NOZORDER, SetTimer, SetWindowLongPtrW, SetWindowPos, USER_TIMER_MINIMUM, WM_CAPTURECHANGED,
-    WM_CLOSE, WM_DESTROY, WM_DPICHANGED, WM_ENTERSIZEMOVE, WM_ERASEBKGND, WM_EXITSIZEMOVE,
-    WM_GETMINMAXINFO, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDBLCLK,
-    WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCREATE,
-    WM_NCDESTROY, WM_PAINT, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE, WM_TIMER,
+    CREATESTRUCTW, DefWindowProcW, GWLP_USERDATA, GetClientRect, GetWindowLongPtrW, MINMAXINFO,
+    MSG, NCCALCSIZE_PARAMS, PM_REMOVE, PeekMessageW, PostQuitMessage, SIZE_MINIMIZED,
+    SWP_NOACTIVATE, SWP_NOZORDER, SetWindowLongPtrW, SetWindowPos, WM_CAPTURECHANGED, WM_CLOSE,
+    WM_DESTROY, WM_DPICHANGED, WM_ENTERSIZEMOVE, WM_ERASEBKGND, WM_EXITSIZEMOVE, WM_GETMINMAXINFO,
+    WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP,
+    WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCALCSIZE, WM_NCCREATE, WM_NCDESTROY,
+    WM_PAINT, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE, WM_TIMER,
     WM_XBUTTONDBLCLK, WM_XBUTTONDOWN, WM_XBUTTONUP,
 };
 
-use super::{IN_SIZE_MOVE, SIZE_MOVE_TIMER_ID, WM_APP_WAKE, clear_wake_hwnd, dispatch_event};
-use crate::{Event, Modifiers, MouseButton, WindowId};
+use super::{IN_SIZE_MOVE, WM_APP_WAKE, clear_wake_hwnd, dispatch_event};
+use crate::{Event, Modifiers, MouseButton, PhysicalSize, WindowId};
 
 // ---------------------------------------------------------------------------
 // Mouse event decode helpers
@@ -82,6 +82,8 @@ pub struct WinWindowInner {
     pub(crate) captured_buttons: Cell<u8>,
     /// True if TrackMouseEvent is armed for WM_MOUSELEAVE.
     pub(crate) is_tracking_hover: Cell<bool>,
+    /// Tracked size for skip-if-same-size guard in WM_NCCALCSIZE/WM_SIZE.
+    pub(crate) current_size: Cell<PhysicalSize>,
 }
 
 impl WinWindowInner {
@@ -104,6 +106,34 @@ impl WinWindowInner {
                 // SAFETY: PostQuitMessage is always safe to call from a WM_DESTROY handler.
                 unsafe { PostQuitMessage(0) };
                 LRESULT(0)
+            }
+            WM_NCCALCSIZE => {
+                // Phase 4: Proactive sync resize — render BEFORE DWM commits new bounds.
+                // wparam != 0 means lparam is NCCALCSIZE_PARAMS* (resize case).
+                // wparam == 0 means lparam is RECT* (non-resize NC calculations) — must defer.
+                if _wparam.0 != 0 {
+                    // SAFETY: Win32 guarantees lparam is a valid *const NCCALCSIZE_PARAMS
+                    // when wparam != 0 for WM_NCCALCSIZE.
+                    let params = lparam.0 as *const NCCALCSIZE_PARAMS;
+                    let rect = unsafe { (*params).rgrc[0] };
+                    let new_size = PhysicalSize {
+                        width: (rect.right - rect.left).max(1) as u32,
+                        height: (rect.bottom - rect.top).max(1) as u32,
+                    };
+                    let current = self.current_size.get();
+                    if current != new_size {
+                        log::trace!(target: "slate::win", "WM_NCCALCSIZE sync resize: {:?} -> {:?}", current, new_size);
+                        crate::win::dispatch_resize_sync(self.id, new_size);
+                        self.current_size.set(new_size);
+                    }
+                    // Return 0 without calling DefWindowProcW: tells Windows NC area = 0,
+                    // client area = entire window. Correct for WS_EX_NOREDIRECTIONBITMAP
+                    // windows using DirectComposition (no system-drawn decorations).
+                    LRESULT(0)
+                } else {
+                    // Non-resize NC calculations (menu, style, theme) — defer to default.
+                    unsafe { DefWindowProcW(hwnd, msg, _wparam, lparam) }
+                }
             }
             WM_SIZE => {
                 // Ignore minimize: lparam carries (0, 0) which would stage a
@@ -128,25 +158,15 @@ impl WinWindowInner {
                     physical_size: (pw, ph),
                     scale_factor: scale,
                 });
-                // Sync resize: run layout + render inline before DWM commits.
-                crate::win::dispatch_resize_sync(
-                    self.id,
-                    crate::PhysicalSize { width: pw, height: ph },
-                );
+                // Phase 4: Skip sync render if WM_NCCALCSIZE already handled it.
+                let physical = PhysicalSize { width: pw, height: ph };
+                if self.current_size.get() != physical {
+                    crate::win::dispatch_resize_sync(self.id, physical);
+                    self.current_size.set(physical);
+                }
                 if !in_size_move {
                     dispatch_event(Event::WindowRedrawRequested { window: self.id });
                 }
-                LRESULT(0)
-            }
-            // Phase 5: delete — replaced by WM_SIZE → dispatch_resize_sync.
-            // WM_TIMER if _wparam.0 == SIZE_MOVE_TIMER_ID && IN_SIZE_MOVE.with(|f| f.get()) => {
-            //     dispatch_event(Event::WindowRedrawRequested { window: self.id });
-            //     let _ = unsafe { ValidateRect(Some(hwnd), None) };
-            //     LRESULT(0)
-            // }
-            WM_TIMER if _wparam.0 == SIZE_MOVE_TIMER_ID => {
-                // Stub: timer still fires but we rely on dispatch_resize_sync now.
-                let _ = unsafe { ValidateRect(Some(hwnd), None) };
                 LRESULT(0)
             }
             WM_ERASEBKGND => LRESULT(1),
@@ -157,26 +177,15 @@ impl WinWindowInner {
             }
             WM_ENTERSIZEMOVE => {
                 IN_SIZE_MOVE.with(|f| f.set(true));
-                let id =
-                    unsafe { SetTimer(Some(hwnd), SIZE_MOVE_TIMER_ID, USER_TIMER_MINIMUM, None) };
-                if id == 0 {
-                    log::error!(
-                        "SetTimer failed for size-move loop; live-resize rendering disabled this drag"
-                    );
-                }
                 LRESULT(0)
             }
             WM_EXITSIZEMOVE => {
                 IN_SIZE_MOVE.with(|f| f.set(false));
-                let _ = unsafe { KillTimer(Some(hwnd), SIZE_MOVE_TIMER_ID) };
-
+                // Drain any leftover timer messages from old code paths.
                 let mut msg = MSG::default();
                 while unsafe {
                     PeekMessageW(&mut msg, Some(hwnd), WM_TIMER, WM_TIMER, PM_REMOVE).as_bool()
-                } {
-                    // discard
-                }
-
+                } {}
                 dispatch_event(Event::WindowRedrawRequested { window: self.id });
                 LRESULT(0)
             }
