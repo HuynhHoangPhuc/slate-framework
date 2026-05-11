@@ -128,13 +128,24 @@ impl WinWindowInner {
                     physical_size: (pw, ph),
                     scale_factor: scale,
                 });
+                // Sync resize: run layout + render inline before DWM commits.
+                crate::win::dispatch_resize_sync(
+                    self.id,
+                    crate::PhysicalSize { width: pw, height: ph },
+                );
                 if !in_size_move {
                     dispatch_event(Event::WindowRedrawRequested { window: self.id });
                 }
                 LRESULT(0)
             }
-            WM_TIMER if _wparam.0 == SIZE_MOVE_TIMER_ID && IN_SIZE_MOVE.with(|f| f.get()) => {
-                dispatch_event(Event::WindowRedrawRequested { window: self.id });
+            // Phase 5: delete — replaced by WM_SIZE → dispatch_resize_sync.
+            // WM_TIMER if _wparam.0 == SIZE_MOVE_TIMER_ID && IN_SIZE_MOVE.with(|f| f.get()) => {
+            //     dispatch_event(Event::WindowRedrawRequested { window: self.id });
+            //     let _ = unsafe { ValidateRect(Some(hwnd), None) };
+            //     LRESULT(0)
+            // }
+            WM_TIMER if _wparam.0 == SIZE_MOVE_TIMER_ID => {
+                // Stub: timer still fires but we rely on dispatch_resize_sync now.
                 let _ = unsafe { ValidateRect(Some(hwnd), None) };
                 LRESULT(0)
             }

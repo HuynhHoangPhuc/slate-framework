@@ -72,6 +72,9 @@ pub struct MetalViewIvars {
     pub(crate) window_id: Cell<WindowId>,
     /// Current tracking area for mouse move/enter/exit events.
     tracking_area: RefCell<Option<Retained<NSTrackingArea>>>,
+    /// True while live resize is in progress (between viewWillStartLiveResize
+    /// and viewDidEndLiveResize). Used to gate sync resize callback.
+    live_resize: Cell<bool>,
 }
 
 define_class!(
@@ -350,6 +353,48 @@ define_class!(
             self.addTrackingArea(&tracking_area);
             *self.ivars().tracking_area.borrow_mut() = Some(tracking_area);
         }
+
+        // -----------------------------------------------------------------------
+        // Live resize handling (Phase 2)
+        // -----------------------------------------------------------------------
+
+        /// Called when live resize begins (user starts dragging window edge).
+        #[unsafe(method(viewWillStartLiveResize))]
+        fn view_will_start_live_resize(&self) {
+            ffi_boundary(|| {
+                self.ivars().live_resize.set(true);
+            });
+        }
+
+        /// Called when live resize ends (user releases mouse).
+        #[unsafe(method(viewDidEndLiveResize))]
+        fn view_did_end_live_resize(&self) {
+            ffi_boundary(|| {
+                self.ivars().live_resize.set(false);
+            });
+        }
+
+        /// Called when view frame size changes. During live resize, we run
+        /// the layout + GPU pipeline synchronously before AppKit commits.
+        #[unsafe(method(setFrameSize:))]
+        fn set_frame_size(&self, size: objc2_foundation::NSSize) {
+            // Call super first
+            let _: () = unsafe { msg_send![super(self), setFrameSize: size] };
+
+            ffi_boundary(|| {
+                if !self.ivars().live_resize.get() {
+                    return;
+                }
+                let id = self.ivars().window_id.get();
+                let scale = self.window().map(|w| w.backingScaleFactor()).unwrap_or(1.0);
+                let pw = (size.width * scale).round() as u32;
+                let ph = (size.height * scale).round() as u32;
+                crate::mac::dispatch_resize_sync(
+                    id,
+                    crate::PhysicalSize { width: pw, height: ph },
+                );
+            });
+        }
     }
 );
 
@@ -358,6 +403,7 @@ impl MetalView {
         let this = Self::alloc(mtm).set_ivars(MetalViewIvars {
             window_id: Cell::new(window_id),
             tracking_area: RefCell::new(None),
+            live_resize: Cell::new(false),
         });
         // SAFETY: `NSView`'s designated initializer `initWithFrame:` takes an
         // `NSRect` and returns `Retained<NSView>`. The super-call signature matches.

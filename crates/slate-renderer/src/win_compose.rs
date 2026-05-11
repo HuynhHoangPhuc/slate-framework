@@ -21,7 +21,8 @@ use windows::Win32::Graphics::Direct3D12::{
     ID3D12CommandQueue, ID3D12Device, ID3D12Fence, ID3D12GraphicsCommandList, ID3D12Resource,
 };
 use windows::Win32::Graphics::DirectComposition::{
-    DCompositionCreateDevice, IDCompositionDevice, IDCompositionTarget, IDCompositionVisual,
+    DCompositionCreateDevice, IDCompositionDevice, IDCompositionRectangleClip,
+    IDCompositionTarget, IDCompositionVisual,
 };
 use windows::Win32::Graphics::Dxgi::Common::{
     DXGI_ALPHA_MODE_PREMULTIPLIED, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC,
@@ -273,6 +274,25 @@ impl WinCompose {
         let v = self.signal_next();
         self.wait_for_fence_value(v);
     }
+
+    /// Apply a DComp clip matching the new buffer bounds.
+    /// Called after ResizeBuffers to atomically commit the new bounds to DWM.
+    fn apply_clip(&self, width: u32, height: u32) -> windows::core::Result<()> {
+        if width == 0 || height == 0 {
+            return Ok(());
+        }
+        unsafe {
+            let clip: IDCompositionRectangleClip = self.comp_device.CreateRectangleClip()?;
+            // Use *2 variants for static scalar values (non-animated)
+            clip.SetLeft2(0.0)?;
+            clip.SetTop2(0.0)?;
+            clip.SetRight2(width as f32)?;
+            clip.SetBottom2(height as f32)?;
+            self.comp_visual.SetClip(&clip)?;
+            self.comp_device.Commit()?;
+        }
+        Ok(())
+    }
 }
 
 impl CompositionTarget for WinCompose {
@@ -325,6 +345,11 @@ impl CompositionTarget for WinCompose {
         self.height = h;
         self.acquire_back_buffers(device);
         self.fence_values = [0; BUFFER_COUNT as usize];
+
+        // Apply DComp clip after buffer resize for atomic commit to DWM.
+        if let Err(e) = self.apply_clip(w, h) {
+            log::warn!("apply_clip failed: {:?}", e);
+        }
     }
 
     fn acquire_frame(&mut self) -> Result<AcquiredFrame, FrameAcquireError> {
