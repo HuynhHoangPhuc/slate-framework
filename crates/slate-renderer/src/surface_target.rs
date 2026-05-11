@@ -28,7 +28,11 @@ pub trait CompositionTarget {
     /// Configure (or reconfigure on resize). Width/height are physical pixels.
     /// Implementations MUST drop any cached views/textures before calling
     /// `ResizeBuffers`/`surface.configure` and rebuild them after.
-    fn configure(&mut self, device: &Device, width: u32, height: u32);
+    ///
+    /// Returns `Ok(())` on success, or `Err` with an HRESULT if resize failed
+    /// (Windows only — macOS always returns `Ok`). Caller should check for
+    /// device-lost HRESULTs and handle recovery.
+    fn configure(&mut self, device: &Device, width: u32, height: u32) -> Result<(), ConfigureError>;
 
     /// Acquire the next frame's render target. Caller renders into `view`,
     /// then calls `present`. On Windows, this drives the resource-state
@@ -38,7 +42,11 @@ pub trait CompositionTarget {
     /// Present the previously acquired frame. Consumes `frame`. On Windows
     /// this issues the trailing RENDER_TARGET → PRESENT barrier and
     /// `IDXGISwapChain::Present(1, 0)`. No-op when the window is minimized.
-    fn present(&mut self, frame: AcquiredFrame);
+    ///
+    /// Returns `Ok(())` on success, or `Err` with an HRESULT if Present failed
+    /// (Windows only — macOS always returns `Ok`). Caller should check for
+    /// device-lost HRESULTs.
+    fn present(&mut self, frame: AcquiredFrame) -> Result<(), PresentError>;
 
     /// The texture format used for rendering (Bgra8UnormSrgb on macOS,
     /// Bgra8Unorm on Windows). Renderer pipelines are built against this.
@@ -50,6 +58,31 @@ pub trait CompositionTarget {
     /// Tell the impl whether the window is currently minimized. When true,
     /// `present` becomes a no-op (skip barrier work + Present call).
     fn set_minimized(&mut self, minimized: bool);
+}
+
+/// Error from `configure` — typically a failed `ResizeBuffers` on Windows.
+#[derive(Debug, thiserror::Error)]
+pub enum ConfigureError {
+    #[error("resize buffers failed: {0}")]
+    ResizeBuffersFailed(i32),
+    #[error("back buffer acquisition failed: {0}")]
+    BackBufferFailed(i32),
+}
+
+/// Error from `present` — typically a failed `IDXGISwapChain::Present` on Windows.
+#[derive(Debug, thiserror::Error)]
+pub enum PresentError {
+    #[error("present failed: {0}")]
+    PresentFailed(i32),
+}
+
+impl PresentError {
+    /// Extract the HRESULT code for device-lost checking.
+    pub fn hr(&self) -> i32 {
+        match self {
+            PresentError::PresentFailed(hr) => *hr,
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

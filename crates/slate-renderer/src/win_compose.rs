@@ -36,8 +36,10 @@ use windows::core::Interface;
 
 use crate::RendererError;
 use crate::surface_target::{
-    AcquiredFrame, AcquiredFrameInner, CompositionTarget, FrameAcquireError,
+    AcquiredFrame, AcquiredFrameInner, CompositionTarget, ConfigureError, FrameAcquireError,
+    PresentError,
 };
+
 
 const BUFFER_COUNT: u32 = 3;
 
@@ -187,14 +189,18 @@ impl WinCompose {
             _window: window,
         };
         // Acquire back buffers immediately so configure() with same size is a no-op
-        this.acquire_back_buffers(device);
+        this.acquire_back_buffers(device)
+            .map_err(|e| RendererError::RawHandle(format!("acquire_back_buffers: {:?}", e)))?;
         Ok(this)
     }
 
-    fn acquire_back_buffers(&mut self, device: &Device) {
+    fn acquire_back_buffers(&mut self, device: &Device) -> Result<(), ConfigureError> {
         for i in 0..BUFFER_COUNT {
-            let buffer: ID3D12Resource =
-                unsafe { self.swap_chain.GetBuffer(i).expect("GetBuffer failed") };
+            let buffer: ID3D12Resource = unsafe {
+                self.swap_chain
+                    .GetBuffer(i)
+                    .map_err(|e| ConfigureError::BackBufferFailed(e.code().0))?
+            };
 
             let hal_tex = unsafe {
                 wgpu::hal::dx12::Device::texture_from_raw(
@@ -231,6 +237,7 @@ impl WinCompose {
             self.back_buffer_textures[i as usize] = Some(wgpu_tex);
         }
         self.is_first_use = [true; BUFFER_COUNT as usize];
+        Ok(())
     }
 
     fn release_back_buffers(&mut self, _device: &Device) {
@@ -276,13 +283,13 @@ impl WinCompose {
 }
 
 impl CompositionTarget for WinCompose {
-    fn configure(&mut self, device: &Device, width: u32, height: u32) {
+    fn configure(&mut self, device: &Device, width: u32, height: u32) -> Result<(), ConfigureError> {
         let w = width.max(1);
         let h = height.max(1);
         log::trace!(target: "slate::resize", "configure requested: {}x{} (current: {}x{})", w, h, self.width, self.height);
         if self.width == w && self.height == h && self.back_buffer_textures[0].is_some() {
             log::trace!(target: "slate::resize", "configure: no change needed");
-            return;
+            return Ok(());
         }
 
         // Match win-dcomp-spike resize flow: poll → wait_for_gpu → release → poll
@@ -337,18 +344,20 @@ impl CompositionTarget for WinCompose {
             };
 
             if let Err(e2) = retry_result {
-                // Both attempts failed - continue with old size.
+                // Both attempts failed - return error for device-lost detection
                 log::warn!(target: "slate::resize", "ResizeBuffers FAILED after retry: {:?} - keeping {}x{}", e2, self.width, self.height);
-                self.acquire_back_buffers(device);
-                return;
+                // Still try to acquire back buffers with old size
+                let _ = self.acquire_back_buffers(device);
+                return Err(ConfigureError::ResizeBuffersFailed(e2.code().0));
             }
         }
 
         log::trace!(target: "slate::resize", "ResizeBuffers SUCCESS: {}x{} -> {}x{}", self.width, self.height, w, h);
         self.width = w;
         self.height = h;
-        self.acquire_back_buffers(device);
+        self.acquire_back_buffers(device)?;
         self.fence_values = [0; BUFFER_COUNT as usize];
+        Ok(())
     }
 
     fn acquire_frame(&mut self) -> Result<AcquiredFrame, FrameAcquireError> {
@@ -409,9 +418,9 @@ impl CompositionTarget for WinCompose {
         })
     }
 
-    fn present(&mut self, frame: AcquiredFrame) {
+    fn present(&mut self, frame: AcquiredFrame) -> Result<(), PresentError> {
         if self.is_minimized {
-            return;
+            return Ok(());
         }
 
         let idx = match frame.inner {
@@ -424,10 +433,10 @@ impl CompositionTarget for WinCompose {
 
         let back_buffer = match self.back_buffer_resources[idx].as_ref() {
             Some(b) => b,
-            None => return,
+            None => return Ok(()),
         };
 
-        unsafe {
+        let present_result = unsafe {
             self.barrier_cmd_alloc.Reset().ok();
             self.barrier_cmd_list
                 .Reset(&self.barrier_cmd_alloc, None)
@@ -442,14 +451,23 @@ impl CompositionTarget for WinCompose {
             self.barrier_cmd_list.Close().ok();
             let command_lists = [Some(self.barrier_cmd_list.cast().unwrap())];
             self.raw_queue.ExecuteCommandLists(&command_lists);
-            let _ = self.swap_chain.Present(1, DXGI_PRESENT(0));
+            let result = self.swap_chain.Present(1, DXGI_PRESENT(0));
             std::mem::ManuallyDrop::drop(&mut barrier.Anonymous.Transition);
-        }
+            result
+        };
+
         // Signal and immediately wait for fence - ensures GPU is idle after each frame.
         // This is required for reliable ResizeBuffers on composition swap chains.
         let fence_val = self.signal_next();
         self.wait_for_fence_value(fence_val);
         self.fence_values[idx] = fence_val;
+
+        // Check Present result - capture HRESULT for device-lost detection
+        if present_result.is_err() {
+            Err(PresentError::PresentFailed(present_result.0))
+        } else {
+            Ok(())
+        }
     }
 
     fn format(&self) -> TextureFormat {

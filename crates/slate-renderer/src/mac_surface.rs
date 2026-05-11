@@ -13,7 +13,8 @@ use wgpu::{
 
 use crate::RendererError;
 use crate::surface_target::{
-    AcquiredFrame, AcquiredFrameInner, CompositionTarget, FrameAcquireError,
+    AcquiredFrame, AcquiredFrameInner, CompositionTarget, ConfigureError, FrameAcquireError,
+    PresentError,
 };
 
 pub(crate) struct MacSurface {
@@ -73,10 +74,11 @@ impl MacSurface {
 }
 
 impl CompositionTarget for MacSurface {
-    fn configure(&mut self, device: &Device, width: u32, height: u32) {
+    fn configure(&mut self, device: &Device, width: u32, height: u32) -> Result<(), ConfigureError> {
         self.config.width = width.max(1);
         self.config.height = height.max(1);
         self.surface.configure(device, &self.config);
+        Ok(())
     }
 
     fn acquire_frame(&mut self) -> Result<AcquiredFrame, FrameAcquireError> {
@@ -101,12 +103,13 @@ impl CompositionTarget for MacSurface {
         }
     }
 
-    fn present(&mut self, frame: AcquiredFrame) {
+    fn present(&mut self, frame: AcquiredFrame) -> Result<(), PresentError> {
         match frame.inner {
             AcquiredFrameInner::Mac(tex) => tex.present(),
             #[cfg(target_os = "windows")]
             AcquiredFrameInner::Win { .. } => unreachable!(),
         }
+        Ok(())
     }
 
     fn format(&self) -> TextureFormat {

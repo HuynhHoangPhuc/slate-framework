@@ -195,6 +195,12 @@ impl Renderer {
         self.device_lost.get()
     }
 
+    /// Explicitly mark the device as lost. Called by app_state when
+    /// RendererError::DeviceLost is returned from render operations.
+    pub fn mark_device_lost(&self) {
+        self.device_lost.set(true);
+    }
+
     /// Check if an HRESULT indicates device-lost state. If so, sets the flag
     /// and returns true. Called by internal error handlers.
     fn check_hr_for_device_lost(&self, hr: i32) -> bool {
@@ -202,8 +208,13 @@ impl Renderer {
         const DXGI_ERROR_DEVICE_REMOVED: i32 = 0x887A0005_u32 as i32;
         const DXGI_ERROR_DEVICE_RESET: i32 = 0x887A0007_u32 as i32;
         const DXGI_ERROR_DEVICE_HUNG: i32 = 0x887A0006_u32 as i32;
+        const DXGI_ERROR_DRIVER_INTERNAL_ERROR: i32 = 0x887A0020_u32 as i32;
 
-        if hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET || hr == DXGI_ERROR_DEVICE_HUNG {
+        if hr == DXGI_ERROR_DEVICE_REMOVED
+            || hr == DXGI_ERROR_DEVICE_RESET
+            || hr == DXGI_ERROR_DEVICE_HUNG
+            || hr == DXGI_ERROR_DRIVER_INTERNAL_ERROR
+        {
             log::warn!(target: "slate::resize", "Device lost detected: HRESULT 0x{:08X}", hr as u32);
             self.device_lost.set(true);
             true
