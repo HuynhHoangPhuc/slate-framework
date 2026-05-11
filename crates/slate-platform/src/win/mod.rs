@@ -33,18 +33,20 @@ use std::sync::atomic::{AtomicIsize, Ordering};
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_APP};
 
-use crate::{Event, WindowId};
+use crate::{Event, PhysicalSize, ResizeSyncCallback, WindowId};
 
 // ---------------------------------------------------------------------------
 // Thread-local event handler storage (lifetime-erasure pattern — mirrors mac.rs)
 // ---------------------------------------------------------------------------
 
 type EventHandler = std::cell::RefCell<Option<Box<dyn FnMut(Event) + 'static>>>;
+type ResizeCallback = std::cell::RefCell<Option<ResizeSyncCallback>>;
 
 thread_local! {
     pub(crate) static HANDLER: EventHandler = const { std::cell::RefCell::new(None) };
     pub(crate) static IN_SIZE_MOVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static NEXT_WINDOW_ID: Cell<u64> = const { Cell::new(1) };
+    static RESIZE_SYNC_CALLBACK: ResizeCallback = const { std::cell::RefCell::new(None) };
 }
 
 pub(crate) const SIZE_MOVE_TIMER_ID: usize = 0x5_1A_7E;
@@ -94,6 +96,38 @@ pub(crate) fn dispatch_event(event: Event) {
         if let Some(handler) = h.borrow_mut().as_mut() {
             handler(event);
         }
+    });
+}
+
+/// Register a callback for synchronous resize rendering.
+///
+/// Called by the framework during `App::run` setup. The callback runs the
+/// layout + GPU pipeline inline inside OS resize callbacks.
+pub fn set_render_callback(cb: ResizeSyncCallback) {
+    RESIZE_SYNC_CALLBACK.with(|r| {
+        *r.borrow_mut() = Some(cb);
+    });
+}
+
+/// Invoke the registered resize callback synchronously.
+///
+/// Called from `WM_SIZE` / `WM_NCCALCSIZE` during resize. No-op if no callback
+/// is registered. Phases 3/4 will invoke this from the message loop handlers.
+pub fn dispatch_resize_sync(window_id: WindowId, size: PhysicalSize) {
+    RESIZE_SYNC_CALLBACK.with(|r| {
+        if let Some(cb) = r.borrow_mut().as_mut() {
+            cb(window_id, size);
+        }
+    });
+}
+
+/// Clear the registered resize callback.
+///
+/// Called during application exit to release the Rc<AppState> reference
+/// and allow proper cleanup.
+pub fn clear_render_callback() {
+    RESIZE_SYNC_CALLBACK.with(|r| {
+        *r.borrow_mut() = None;
     });
 }
 

@@ -4,9 +4,12 @@
 //! Linux backends are planned post-Phase-0; the trait is shaped so an
 //! X11/Wayland impl can plug in without disturbing existing callers.
 
+mod render_callback;
+
 use std::sync::Arc;
 
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+pub use render_callback::{PhysicalSize, ResizeSyncCallback};
 
 /// Cross-platform window/event-loop driver.
 ///
@@ -176,9 +179,15 @@ pub enum Event {
 #[cfg(target_os = "macos")]
 mod mac;
 #[cfg(target_os = "macos")]
-pub use mac::{MacPlatform as DefaultPlatform, MacWindow as DefaultWindow, wake_run_loop};
+pub use mac::{
+    MacPlatform as DefaultPlatform, MacWindow as DefaultWindow, clear_render_callback,
+    dispatch_resize_sync, set_render_callback, wake_run_loop,
+};
 
 #[cfg(target_os = "windows")]
 mod win;
 #[cfg(target_os = "windows")]
-pub use win::{WinPlatform as DefaultPlatform, WinWindow as DefaultWindow, wake_run_loop};
+pub use win::{
+    WinPlatform as DefaultPlatform, WinWindow as DefaultWindow, clear_render_callback,
+    dispatch_resize_sync, set_render_callback, wake_run_loop,
+};

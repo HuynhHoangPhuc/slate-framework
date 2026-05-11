@@ -25,6 +25,7 @@
 
 // Core modules
 pub mod app;
+pub(crate) mod app_state;
 pub mod color;
 pub mod context;
 pub mod element;
