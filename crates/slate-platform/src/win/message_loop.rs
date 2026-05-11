@@ -4,21 +4,23 @@ use std::cell::Cell;
 use std::sync::Arc;
 
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
-use windows::Win32::Graphics::Gdi::{GetClientRect, ScreenToClient, ValidateRect};
+use windows::Win32::Graphics::Gdi::{ScreenToClient, ValidateRect};
+use windows::Win32::System::SystemServices::{MK_CONTROL, MK_SHIFT};
+use windows::Win32::UI::Controls::{HOVER_DEFAULT, WM_MOUSELEAVE};
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyState, ReleaseCapture, SetCapture, TrackMouseEvent, MK_CONTROL, MK_SHIFT, TME_LEAVE,
-    TRACKMOUSEEVENT, VK_LWIN, VK_MENU, VK_RWIN,
+    GetKeyState, ReleaseCapture, SetCapture, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT, VK_LWIN,
+    VK_MENU, VK_RWIN,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CREATESTRUCTW, DefWindowProcW, GWLP_USERDATA, GetWindowLongPtrW, HOVER_DEFAULT, KillTimer,
+    CREATESTRUCTW, DefWindowProcW, GWLP_USERDATA, GetClientRect, GetWindowLongPtrW, KillTimer,
     MINMAXINFO, MSG, PM_REMOVE, PeekMessageW, PostQuitMessage, SIZE_MINIMIZED, SWP_NOACTIVATE,
     SWP_NOZORDER, SetTimer, SetWindowLongPtrW, SetWindowPos, USER_TIMER_MINIMUM, WM_CAPTURECHANGED,
     WM_CLOSE, WM_DESTROY, WM_DPICHANGED, WM_ENTERSIZEMOVE, WM_ERASEBKGND, WM_EXITSIZEMOVE,
     WM_GETMINMAXINFO, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDBLCLK,
-    WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSELEAVE, WM_MOUSEMOVE, WM_MOUSEWHEEL,
-    WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE,
-    WM_TIMER, WM_XBUTTONDBLCLK, WM_XBUTTONDOWN, WM_XBUTTONUP,
+    WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCREATE,
+    WM_NCDESTROY, WM_PAINT, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE, WM_TIMER,
+    WM_XBUTTONDBLCLK, WM_XBUTTONDOWN, WM_XBUTTONUP,
 };
 
 use super::{IN_SIZE_MOVE, SIZE_MOVE_TIMER_ID, WM_APP_WAKE, clear_wake_hwnd, dispatch_event};

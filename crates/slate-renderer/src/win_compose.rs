@@ -279,7 +279,9 @@ impl CompositionTarget for WinCompose {
     fn configure(&mut self, device: &Device, width: u32, height: u32) {
         let w = width.max(1);
         let h = height.max(1);
+        log::trace!(target: "slate::resize", "configure requested: {}x{} (current: {}x{})", w, h, self.width, self.height);
         if self.width == w && self.height == h && self.back_buffer_textures[0].is_some() {
+            log::trace!(target: "slate::resize", "configure: no change needed");
             return;
         }
 
@@ -302,6 +304,7 @@ impl CompositionTarget for WinCompose {
             timeout: None,
         });
 
+        // 5. First attempt at ResizeBuffers
         let result = unsafe {
             self.swap_chain.ResizeBuffers(
                 BUFFER_COUNT,
@@ -311,16 +314,37 @@ impl CompositionTarget for WinCompose {
                 DXGI_SWAP_CHAIN_FLAG(0),
             )
         };
+
         if let Err(e) = result {
-            // ResizeBuffers can fail if DXGI still holds internal references to back buffers.
-            // This is a known issue with wgpu + DirectComposition swap chains.
-            // Continue with old size - compositor will stretch the content.
-            // TODO: Investigate proper synchronization to fix resize.
-            log::warn!("ResizeBuffers failed: {:?} - continuing with old size", e);
-            self.acquire_back_buffers(device);
-            return;
+            // First attempt failed - wgpu may still hold internal references.
+            // Retry pattern from win-dcomp-spike: poll + wait + retry.
+            log::trace!(target: "slate::resize", "ResizeBuffers first attempt failed: {:?} - retrying", e);
+
+            let _ = device.poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: None,
+            });
+            self.flush();
+
+            let retry_result = unsafe {
+                self.swap_chain.ResizeBuffers(
+                    BUFFER_COUNT,
+                    w,
+                    h,
+                    DXGI_FORMAT_B8G8R8A8_UNORM,
+                    DXGI_SWAP_CHAIN_FLAG(0),
+                )
+            };
+
+            if let Err(e2) = retry_result {
+                // Both attempts failed - continue with old size.
+                log::warn!(target: "slate::resize", "ResizeBuffers FAILED after retry: {:?} - keeping {}x{}", e2, self.width, self.height);
+                self.acquire_back_buffers(device);
+                return;
+            }
         }
 
+        log::trace!(target: "slate::resize", "ResizeBuffers SUCCESS: {}x{} -> {}x{}", self.width, self.height, w, h);
         self.width = w;
         self.height = h;
         self.acquire_back_buffers(device);

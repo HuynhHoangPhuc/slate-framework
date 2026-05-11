@@ -184,15 +184,21 @@ impl Renderer {
     pub fn resize(&mut self, new_size: (u32, u32)) {
         let max = self.device.limits().max_texture_dimension_2d;
         let (w, h) = (new_size.0.max(1).min(max), new_size.1.max(1).min(max));
+        log::trace!(target: "slate::resize", "Renderer::resize called: {:?} -> {}x{} (target currently: {:?})", new_size, w, h, self.target.size());
         if self.target.size() == (w, h) {
+            log::trace!(target: "slate::resize", "Renderer::resize: no change needed");
             return;
         }
         self.target.configure(&self.device, w, h);
+        // Use actual target size for viewport uniform - if ResizeBuffers failed,
+        // target.size() will be the old size, keeping viewport/render-target in sync.
+        let (actual_w, actual_h) = self.target.size();
+        log::trace!(target: "slate::resize", "After configure: target.size()={}x{} (requested {}x{})", actual_w, actual_h, w, h);
         self.queue.write_buffer(
             &self.viewport_buf,
             0,
             bytemuck::bytes_of(&ViewportUniform {
-                size: [w as f32, h as f32],
+                size: [actual_w as f32, actual_h as f32],
                 _pad: [0.0; 2],
             }),
         );
