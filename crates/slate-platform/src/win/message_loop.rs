@@ -4,27 +4,46 @@ use std::cell::Cell;
 use std::sync::Arc;
 
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
-use windows::Win32::Graphics::Gdi::{ScreenToClient, ValidateRect};
+use windows::Win32::Graphics::Gdi::{BeginPaint, EndPaint, InvalidateRect, PAINTSTRUCT, ScreenToClient, UpdateWindow};
 use windows::Win32::System::SystemServices::{MK_CONTROL, MK_SHIFT};
 use windows::Win32::UI::Controls::{HOVER_DEFAULT, WM_MOUSELEAVE};
-use windows::Win32::UI::HiDpi::GetDpiForWindow;
+use windows::Win32::UI::HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, ReleaseCapture, SetCapture, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT, VK_LWIN,
     VK_MENU, VK_RWIN,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CREATESTRUCTW, DefWindowProcW, GWLP_USERDATA, GetClientRect, GetWindowLongPtrW, MINMAXINFO,
-    MSG, NCCALCSIZE_PARAMS, PM_REMOVE, PeekMessageW, PostQuitMessage, SIZE_MINIMIZED,
-    SWP_NOACTIVATE, SWP_NOZORDER, SetWindowLongPtrW, SetWindowPos, WM_CAPTURECHANGED, WM_CLOSE,
-    WM_DESTROY, WM_DPICHANGED, WM_ENTERSIZEMOVE, WM_ERASEBKGND, WM_EXITSIZEMOVE, WM_GETMINMAXINFO,
-    WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP,
-    WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCALCSIZE, WM_NCCREATE, WM_NCDESTROY,
-    WM_PAINT, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE, WM_TIMER,
-    WM_XBUTTONDBLCLK, WM_XBUTTONDOWN, WM_XBUTTONUP,
+    CREATESTRUCTW, DefWindowProcW, GWLP_USERDATA, GetClientRect, GetWindowLongPtrW,
+    GetWindowPlacement, KillTimer, MINMAXINFO, NCCALCSIZE_PARAMS, PostQuitMessage, SIZE_MINIMIZED,
+    SM_CXPADDEDBORDER, SM_CYFRAME, SW_SHOWMAXIMIZED, SWP_NOACTIVATE, SWP_NOZORDER,
+    SetWindowLongPtrW, SetWindowPos, SetTimer, USER_TIMER_MINIMUM, WINDOWPLACEMENT,
+    WM_CAPTURECHANGED, WM_CLOSE, WM_DESTROY, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_ENTERSIZEMOVE,
+    WM_ERASEBKGND, WM_EXITSIZEMOVE, WM_GETMINMAXINFO, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN,
+    WM_LBUTTONUP, WM_MBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE,
+    WM_MOUSEWHEEL, WM_NCCALCSIZE, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_RBUTTONDBLCLK,
+    WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE, WM_TIMER, WM_XBUTTONDBLCLK, WM_XBUTTONDOWN,
+    WM_XBUTTONUP,
 };
 
-use super::{IN_SIZE_MOVE, WM_APP_WAKE, clear_wake_hwnd, dispatch_event};
+use super::{IN_SIZE_MOVE, RENDERING, WM_APP_WAKE, clear_wake_hwnd, dispatch_event, invoke_pump_callback};
 use crate::{Event, Modifiers, MouseButton, PhysicalSize, WindowId};
+
+/// Timer ID for the size-move modal loop paint pump.
+const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
+
+/// Check if the window is currently maximized.
+fn is_maximized(hwnd: HWND) -> bool {
+    let mut placement = WINDOWPLACEMENT::default();
+    placement.length = std::mem::size_of::<WINDOWPLACEMENT>() as u32;
+    // SAFETY: hwnd is valid, placement is properly initialized.
+    unsafe {
+        if GetWindowPlacement(hwnd, &mut placement).is_ok() {
+            placement.showCmd == (SW_SHOWMAXIMIZED.0 as u32)
+        } else {
+            false
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Mouse event decode helpers
@@ -108,32 +127,38 @@ impl WinWindowInner {
                 LRESULT(0)
             }
             WM_NCCALCSIZE => {
-                // Phase 4: Proactive sync resize — render BEFORE DWM commits new bounds.
-                // wparam != 0 means lparam is NCCALCSIZE_PARAMS* (resize case).
-                // wparam == 0 means lparam is RECT* (non-resize NC calculations) — must defer.
-                if _wparam.0 != 0 {
-                    // SAFETY: Win32 guarantees lparam is a valid *const NCCALCSIZE_PARAMS
-                    // when wparam != 0 for WM_NCCALCSIZE.
-                    let params = lparam.0 as *const NCCALCSIZE_PARAMS;
-                    let rect = unsafe { (*params).rgrc[0] };
-                    let new_size = PhysicalSize {
-                        width: (rect.right - rect.left).max(1) as u32,
-                        height: (rect.bottom - rect.top).max(1) as u32,
-                    };
-                    let current = self.current_size.get();
-                    if current != new_size {
-                        log::trace!(target: "slate::win", "WM_NCCALCSIZE sync resize: {:?} -> {:?}", current, new_size);
-                        crate::win::dispatch_resize_sync(self.id, new_size);
-                        self.current_size.set(new_size);
-                    }
-                    // Return 0 without calling DefWindowProcW: tells Windows NC area = 0,
-                    // client area = entire window. Correct for WS_EX_NOREDIRECTIONBITMAP
-                    // windows using DirectComposition (no system-drawn decorations).
-                    LRESULT(0)
-                } else {
-                    // Non-resize NC calculations (menu, style, theme) — defer to default.
-                    unsafe { DefWindowProcW(hwnd, msg, _wparam, lparam) }
+                // GPUI-aligned borderless trick: preserve custom chrome while allowing
+                // DefWindowProcW to compute proper client bounds.
+                // wparam=FALSE → defer to DefWindowProcW (lparam is *mut RECT).
+                if _wparam.0 == 0 {
+                    return unsafe { DefWindowProcW(hwnd, msg, _wparam, lparam) };
                 }
+                // wparam=TRUE, custom-chrome borderless path:
+                // 1. Save rgrc[0].top before DefWindowProcW modifies it.
+                // 2. Let DefWindowProcW compute the default NC inset.
+                // 3. Restore rgrc[0].top — undo the system top inset so client extends to top.
+                // 4. For maximized: eat the SM_CYFRAME inset to keep window edge inside screen.
+                // SAFETY: Win32 guarantees lparam is *mut NCCALCSIZE_PARAMS when wparam != 0.
+                let params = lparam.0 as *mut NCCALCSIZE_PARAMS;
+                let rgrc = unsafe { &mut (*params).rgrc };
+                let saved_top = rgrc[0].top;
+                let lresult = unsafe { DefWindowProcW(hwnd, msg, _wparam, lparam) };
+                rgrc[0].top = saved_top;
+                // Maximized special case: trim the auto-hide-from-monitor-edge inset.
+                if is_maximized(hwnd) {
+                    let dpi = unsafe { GetDpiForWindow(hwnd) };
+                    let frame_y = unsafe { GetSystemMetricsForDpi(SM_CYFRAME, dpi) };
+                    let padded_border = unsafe { GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi) };
+                    rgrc[0].top += frame_y + padded_border;
+                }
+                // Record size for skip-if-same guard in WM_SIZE.
+                let rect = rgrc[0];
+                let new_size = PhysicalSize {
+                    width: (rect.right - rect.left).max(1) as u32,
+                    height: (rect.bottom - rect.top).max(1) as u32,
+                };
+                self.current_size.set(new_size);
+                lresult
             }
             WM_SIZE => {
                 // Ignore minimize: lparam carries (0, 0) which would stage a
@@ -158,12 +183,11 @@ impl WinWindowInner {
                     physical_size: (pw, ph),
                     scale_factor: scale,
                 });
-                // Phase 4: Skip sync render if WM_NCCALCSIZE already handled it.
+                // Record size for the render callback.
                 let physical = PhysicalSize { width: pw, height: ph };
-                if self.current_size.get() != physical {
-                    crate::win::dispatch_resize_sync(self.id, physical);
-                    self.current_size.set(physical);
-                }
+                self.current_size.set(physical);
+                // Request redraw only when NOT in size-move modal loop.
+                // During size-move, WM_TIMER pump handles repainting.
                 if !in_size_move {
                     dispatch_event(Event::WindowRedrawRequested { window: self.id });
                 }
@@ -171,23 +195,62 @@ impl WinWindowInner {
             }
             WM_ERASEBKGND => LRESULT(1),
             WM_PAINT => {
-                dispatch_event(Event::WindowRedrawRequested { window: self.id });
-                let _ = unsafe { ValidateRect(Some(hwnd), None) };
+                // Re-entrancy guard: skip if already rendering (DComp callback edge case).
+                if RENDERING.with(|r| r.replace(true)) {
+                    log::trace!(target: "slate::win", "WM_PAINT re-entrant call skipped");
+                    return LRESULT(0);
+                }
+                // BeginPaint validates the paint region; EndPaint signals completion.
+                let mut ps = PAINTSTRUCT::default();
+                let _hdc = unsafe { BeginPaint(hwnd, &mut ps) };
+                // Invoke the render callback with current size.
+                let size = self.current_size.get();
+                crate::win::dispatch_resize_sync(self.id, size);
+                let _ = unsafe { EndPaint(hwnd, &ps) };
+                // Clear rendering flag.
+                RENDERING.with(|r| r.set(false));
+                LRESULT(0)
+            }
+            WM_DISPLAYCHANGE => {
+                // Display topology or resolution changed. Invalidate the window
+                // so the renderer re-evaluates surface/adapter on next paint.
+                unsafe {
+                    let _ = InvalidateRect(Some(hwnd), None, false);
+                }
                 LRESULT(0)
             }
             WM_ENTERSIZEMOVE => {
                 IN_SIZE_MOVE.with(|f| f.set(true));
+                // Install a timer to pump frames during the size-move modal loop.
+                // USER_TIMER_MINIMUM is ~10ms — fast enough for smooth resize.
+                unsafe {
+                    SetTimer(Some(hwnd), SIZE_MOVE_LOOP_TIMER_ID, USER_TIMER_MINIMUM, None);
+                }
                 LRESULT(0)
             }
             WM_EXITSIZEMOVE => {
+                // Kill the size-move pump timer.
+                unsafe {
+                    let _ = KillTimer(Some(hwnd), SIZE_MOVE_LOOP_TIMER_ID);
+                }
                 IN_SIZE_MOVE.with(|f| f.set(false));
-                // Drain any leftover timer messages from old code paths.
-                let mut msg = MSG::default();
-                while unsafe {
-                    PeekMessageW(&mut msg, Some(hwnd), WM_TIMER, WM_TIMER, PM_REMOVE).as_bool()
-                } {}
+                // Final redraw after exiting size-move.
                 dispatch_event(Event::WindowRedrawRequested { window: self.id });
                 LRESULT(0)
+            }
+            WM_TIMER => {
+                if _wparam.0 == SIZE_MOVE_LOOP_TIMER_ID {
+                    // Pump the foreground executor to process pending tasks.
+                    invoke_pump_callback();
+                    // Request paint of the current frame via InvalidateRect + UpdateWindow.
+                    // UpdateWindow forces synchronous WM_PAINT dispatch inside the modal loop.
+                    unsafe {
+                        let _ = InvalidateRect(Some(hwnd), None, false);
+                        let _ = UpdateWindow(hwnd);
+                    }
+                    return LRESULT(0);
+                }
+                unsafe { DefWindowProcW(hwnd, msg, _wparam, lparam) }
             }
             WM_DPICHANGED => {
                 // SAFETY: Win32 guarantees lParam is a valid *const RECT for WM_DPICHANGED.

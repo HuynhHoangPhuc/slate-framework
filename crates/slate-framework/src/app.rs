@@ -11,6 +11,8 @@ use slate_platform::{
     DefaultPlatform, DefaultWindow, Event, Platform, Window, WindowOptions,
     clear_render_callback, set_render_callback, wake_run_loop,
 };
+#[cfg(target_os = "windows")]
+use slate_platform::{clear_pump_executor_callback, set_pump_executor_callback};
 use slate_renderer::Renderer;
 
 use crate::app_state::{
@@ -167,6 +169,15 @@ impl App {
             }));
         }
 
+        // Register pump executor callback for WM_TIMER during size-move modal loop (Windows only)
+        #[cfg(target_os = "windows")]
+        {
+            let s = Rc::clone(&state);
+            set_pump_executor_callback(Box::new(move || {
+                s.executor.foreground.poll();
+            }));
+        }
+
         // AppContext for view factory
         let cx = AppContext {
             runtime: runtime.clone(),
@@ -232,6 +243,8 @@ impl App {
             Event::Exiting => {
                 // Clear the resize callback to release Rc<AppState> reference
                 clear_render_callback();
+                #[cfg(target_os = "windows")]
+                clear_pump_executor_callback();
                 log::info!("exiting");
             }
 

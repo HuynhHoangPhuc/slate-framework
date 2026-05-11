@@ -41,12 +41,19 @@ use crate::{Event, PhysicalSize, ResizeSyncCallback, WindowId};
 
 type EventHandler = std::cell::RefCell<Option<Box<dyn FnMut(Event) + 'static>>>;
 type ResizeCallback = std::cell::RefCell<Option<ResizeSyncCallback>>;
+type PumpCallback = std::cell::RefCell<Option<Box<dyn FnMut() + 'static>>>;
 
 thread_local! {
     pub(crate) static HANDLER: EventHandler = const { std::cell::RefCell::new(None) };
     pub(crate) static IN_SIZE_MOVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Re-entrancy guard for WM_PAINT rendering — prevents double-paint if WM_PAINT
+    /// recursively fires while we're already painting (DComp callback edge case).
+    pub(crate) static RENDERING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static NEXT_WINDOW_ID: Cell<u64> = const { Cell::new(1) };
     static RESIZE_SYNC_CALLBACK: ResizeCallback = const { std::cell::RefCell::new(None) };
+    /// Callback to pump the foreground executor during WM_TIMER in the size-move modal loop.
+    /// Registered by App::run, closes over Rc<AppState<V>> and calls executor.foreground.poll().
+    static PUMP_EXECUTOR_CALLBACK: PumpCallback = const { std::cell::RefCell::new(None) };
 }
 
 /// Custom message for wake events from background threads.
@@ -126,6 +133,37 @@ pub fn dispatch_resize_sync(window_id: WindowId, size: PhysicalSize) {
 pub fn clear_render_callback() {
     RESIZE_SYNC_CALLBACK.with(|r| {
         *r.borrow_mut() = None;
+    });
+}
+
+/// Register a callback to pump the foreground executor during WM_TIMER.
+///
+/// Called by the framework during `App::run` setup. The callback runs
+/// `executor.foreground.poll()` inside the size-move modal loop.
+pub fn set_pump_executor_callback(cb: Box<dyn FnMut() + 'static>) {
+    PUMP_EXECUTOR_CALLBACK.with(|p| {
+        *p.borrow_mut() = Some(cb);
+    });
+}
+
+/// Invoke the registered pump executor callback.
+///
+/// Called from `WM_TIMER` during the size-move modal loop. No-op if no
+/// callback is registered.
+pub(crate) fn invoke_pump_callback() {
+    PUMP_EXECUTOR_CALLBACK.with(|p| {
+        if let Some(cb) = p.borrow_mut().as_mut() {
+            cb();
+        }
+    });
+}
+
+/// Clear the registered pump executor callback.
+///
+/// Called during application exit to release the Rc<AppState> reference.
+pub fn clear_pump_executor_callback() {
+    PUMP_EXECUTOR_CALLBACK.with(|p| {
+        *p.borrow_mut() = None;
     });
 }
 

@@ -20,7 +20,7 @@ use std::time::Instant;
 use smallvec::SmallVec;
 use slate_platform::{DefaultWindow, Modifiers, MouseButton, PhysicalSize, Window, WindowId};
 use slate_reactive::ObserverId;
-use slate_renderer::{Renderer, Scene};
+use slate_renderer::{RenderError, Renderer, Scene};
 
 use crate::context::{LayoutCtx, PaintCtx, PrepaintCtx};
 use crate::event::{
@@ -262,8 +262,17 @@ pub fn run_redraw<V: View>(state: &AppState<V>) {
         let mut r = state.renderer.borrow_mut();
         let r = r.as_mut().expect("renderer not initialized");
 
-        if let Err(e) = r.render_scene(&mut s) {
-            log::warn!("render skipped: {e:?}");
+        match r.render_scene(&mut s) {
+            Ok(()) => {}
+            Err(RenderError::DeviceLost(reason)) => {
+                log::error!("device lost: {reason}");
+                r.mark_device_lost();
+                // Note: Full recovery (Phase 5) would recreate the renderer here.
+                // For now, mark as fatal and log the error.
+            }
+            Err(e) => {
+                log::warn!("render skipped: {e:?}");
+            }
         }
     }
 

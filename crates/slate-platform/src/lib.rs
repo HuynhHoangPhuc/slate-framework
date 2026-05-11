@@ -111,6 +111,7 @@ pub struct Modifiers {
 }
 
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum Event {
     /// Sent once after platform init, before the first paint.
     Resumed,
@@ -177,6 +178,20 @@ pub enum Event {
     CaptureLost {
         window: WindowId,
     },
+    // -------------------------------------------------------------------------
+    // Device lifecycle events (Phase 4/5)
+    // -------------------------------------------------------------------------
+    /// GPU device was lost (e.g., driver reset, adapter switch on hybrid GPU).
+    /// If `fatal` is true, recovery failed after multiple attempts and the
+    /// window should be closed.
+    DeviceLost {
+        window: WindowId,
+        fatal: bool,
+    },
+    /// GPU device was recovered after a device-lost event.
+    DeviceRestored {
+        window: WindowId,
+    },
 }
 
 #[cfg(target_os = "macos")]
@@ -191,6 +206,7 @@ pub use mac::{
 mod win;
 #[cfg(target_os = "windows")]
 pub use win::{
-    WinPlatform as DefaultPlatform, WinWindow as DefaultWindow, clear_render_callback,
-    dispatch_resize_sync, set_render_callback, wake_run_loop,
+    WinPlatform as DefaultPlatform, WinWindow as DefaultWindow, clear_pump_executor_callback,
+    clear_render_callback, dispatch_resize_sync, set_pump_executor_callback, set_render_callback,
+    wake_run_loop,
 };
