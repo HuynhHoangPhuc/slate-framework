@@ -4,12 +4,9 @@
 //! Linux backends are planned post-Phase-0; the trait is shaped so an
 //! X11/Wayland impl can plug in without disturbing existing callers.
 
-mod render_callback;
-
 use std::sync::Arc;
 
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
-pub use render_callback::{PhysicalSize, ResizeSyncCallback};
 
 /// Cross-platform window/event-loop driver.
 ///
@@ -111,13 +108,9 @@ pub struct Modifiers {
 }
 
 #[derive(Debug, Clone)]
-#[non_exhaustive]
 pub enum Event {
     /// Sent once after platform init, before the first paint.
     Resumed,
-    /// Fired after a resize completes. Not a request to render — the platform
-    /// layer drives rendering synchronously inside the resize callback
-    /// (`WM_NCCALCSIZE` on Windows, `setFrameSize:` on macOS).
     WindowResized {
         window: WindowId,
         logical_size: (u32, u32),
@@ -178,35 +171,14 @@ pub enum Event {
     CaptureLost {
         window: WindowId,
     },
-    // -------------------------------------------------------------------------
-    // Device lifecycle events (Phase 4/5)
-    // -------------------------------------------------------------------------
-    /// GPU device was lost (e.g., driver reset, adapter switch on hybrid GPU).
-    /// If `fatal` is true, recovery failed after multiple attempts and the
-    /// window should be closed.
-    DeviceLost {
-        window: WindowId,
-        fatal: bool,
-    },
-    /// GPU device was recovered after a device-lost event.
-    DeviceRestored {
-        window: WindowId,
-    },
 }
 
 #[cfg(target_os = "macos")]
 mod mac;
 #[cfg(target_os = "macos")]
-pub use mac::{
-    MacPlatform as DefaultPlatform, MacWindow as DefaultWindow, clear_render_callback,
-    dispatch_resize_sync, set_render_callback, wake_run_loop,
-};
+pub use mac::{MacPlatform as DefaultPlatform, MacWindow as DefaultWindow, wake_run_loop};
 
 #[cfg(target_os = "windows")]
 mod win;
 #[cfg(target_os = "windows")]
-pub use win::{
-    WinPlatform as DefaultPlatform, WinWindow as DefaultWindow, clear_pump_executor_callback,
-    clear_render_callback, dispatch_resize_sync, set_pump_executor_callback, set_render_callback,
-    wake_run_loop,
-};
+pub use win::{WinPlatform as DefaultPlatform, WinWindow as DefaultWindow, wake_run_loop};

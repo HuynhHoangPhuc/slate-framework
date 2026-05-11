@@ -21,8 +21,7 @@ use windows::Win32::Graphics::Direct3D12::{
     ID3D12CommandQueue, ID3D12Device, ID3D12Fence, ID3D12GraphicsCommandList, ID3D12Resource,
 };
 use windows::Win32::Graphics::DirectComposition::{
-    DCompositionCreateDevice, IDCompositionDevice, IDCompositionRectangleClip,
-    IDCompositionTarget, IDCompositionVisual,
+    DCompositionCreateDevice, IDCompositionDevice, IDCompositionTarget, IDCompositionVisual,
 };
 use windows::Win32::Graphics::Dxgi::Common::{
     DXGI_ALPHA_MODE_PREMULTIPLIED, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC,
@@ -39,41 +38,6 @@ use crate::RendererError;
 use crate::surface_target::{
     AcquiredFrame, AcquiredFrameInner, CompositionTarget, FrameAcquireError,
 };
-
-/// Error type for WinCompose operations that may indicate device-lost.
-/// The framework classifies these HRESULTs to determine if recovery is needed.
-#[derive(Debug, Clone)]
-pub enum WinComposeError {
-    /// Present failed with the given HRESULT.
-    Present(i32),
-    /// GetBuffer failed with the given HRESULT.
-    GetBuffer(i32),
-    /// Back buffer not acquired (internal state error).
-    AcquireFrame,
-    /// ResizeBuffers failed with the given HRESULT.
-    ResizeBuffers(i32),
-}
-
-impl std::fmt::Display for WinComposeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            WinComposeError::Present(hr) => write!(f, "Present failed: HRESULT 0x{:08X}", *hr as u32),
-            WinComposeError::GetBuffer(hr) => write!(f, "GetBuffer failed: HRESULT 0x{:08X}", *hr as u32),
-            WinComposeError::AcquireFrame => write!(f, "back buffer not acquired"),
-            WinComposeError::ResizeBuffers(hr) => write!(f, "ResizeBuffers failed: HRESULT 0x{:08X}", *hr as u32),
-        }
-    }
-}
-
-impl std::error::Error for WinComposeError {}
-
-/// Check if an HRESULT indicates a device-lost condition.
-pub fn is_device_lost_hresult(hr: i32) -> bool {
-    const DXGI_ERROR_DEVICE_REMOVED: i32 = 0x887A0005_u32 as i32;
-    const DXGI_ERROR_DEVICE_RESET: i32 = 0x887A0007_u32 as i32;
-    const DXGI_ERROR_DEVICE_HUNG: i32 = 0x887A0006_u32 as i32;
-    matches!(hr, DXGI_ERROR_DEVICE_REMOVED | DXGI_ERROR_DEVICE_RESET | DXGI_ERROR_DEVICE_HUNG)
-}
 
 const BUFFER_COUNT: u32 = 3;
 
@@ -309,25 +273,6 @@ impl WinCompose {
         let v = self.signal_next();
         self.wait_for_fence_value(v);
     }
-
-    /// Apply a DComp clip matching the new buffer bounds.
-    /// Called after ResizeBuffers to atomically commit the new bounds to DWM.
-    fn apply_clip(&self, width: u32, height: u32) -> windows::core::Result<()> {
-        if width == 0 || height == 0 {
-            return Ok(());
-        }
-        unsafe {
-            let clip: IDCompositionRectangleClip = self.comp_device.CreateRectangleClip()?;
-            // Use *2 variants for static scalar values (non-animated)
-            clip.SetLeft2(0.0)?;
-            clip.SetTop2(0.0)?;
-            clip.SetRight2(width as f32)?;
-            clip.SetBottom2(height as f32)?;
-            self.comp_visual.SetClip(&clip)?;
-            self.comp_device.Commit()?;
-        }
-        Ok(())
-    }
 }
 
 impl CompositionTarget for WinCompose {
@@ -380,11 +325,6 @@ impl CompositionTarget for WinCompose {
         self.height = h;
         self.acquire_back_buffers(device);
         self.fence_values = [0; BUFFER_COUNT as usize];
-
-        // Apply DComp clip after buffer resize for atomic commit to DWM.
-        if let Err(e) = self.apply_clip(w, h) {
-            log::warn!("apply_clip failed: {:?}", e);
-        }
     }
 
     fn acquire_frame(&mut self) -> Result<AcquiredFrame, FrameAcquireError> {
@@ -445,9 +385,9 @@ impl CompositionTarget for WinCompose {
         })
     }
 
-    fn present(&mut self, frame: AcquiredFrame) -> Result<(), FrameAcquireError> {
+    fn present(&mut self, frame: AcquiredFrame) {
         if self.is_minimized {
-            return Ok(());
+            return;
         }
 
         let idx = match frame.inner {
@@ -460,7 +400,7 @@ impl CompositionTarget for WinCompose {
 
         let back_buffer = match self.back_buffer_resources[idx].as_ref() {
             Some(b) => b,
-            None => return Ok(()),
+            None => return,
         };
 
         unsafe {
@@ -478,28 +418,14 @@ impl CompositionTarget for WinCompose {
             self.barrier_cmd_list.Close().ok();
             let command_lists = [Some(self.barrier_cmd_list.cast().unwrap())];
             self.raw_queue.ExecuteCommandLists(&command_lists);
-            // Capture Present HRESULT instead of discarding it.
-            let hr = self.swap_chain.Present(1, DXGI_PRESENT(0));
+            let _ = self.swap_chain.Present(1, DXGI_PRESENT(0));
             std::mem::ManuallyDrop::drop(&mut barrier.Anonymous.Transition);
-            // Check for device-lost after Present.
-            if hr.is_err() {
-                let code = hr.0;
-                if is_device_lost_hresult(code) {
-                    return Err(FrameAcquireError::DeviceLost(format!(
-                        "Present returned HRESULT 0x{:08X}",
-                        code as u32
-                    )));
-                }
-                // Other errors are logged but not fatal.
-                log::warn!("Present failed: HRESULT 0x{:08X}", code as u32);
-            }
         }
         // Signal and immediately wait for fence - ensures GPU is idle after each frame.
         // This is required for reliable ResizeBuffers on composition swap chains.
         let fence_val = self.signal_next();
         self.wait_for_fence_value(fence_val);
         self.fence_values[idx] = fence_val;
-        Ok(())
     }
 
     fn format(&self) -> TextureFormat {

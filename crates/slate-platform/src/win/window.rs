@@ -21,7 +21,7 @@ use windows::core::PCWSTR;
 use super::message_loop::WinWindowInner;
 use super::platform::CLASS_NAME;
 use super::{next_window_id, register_wake_hwnd, to_wide};
-use crate::{PhysicalSize, Window, WindowId, WindowOptions};
+use crate::{Window, WindowId, WindowOptions};
 
 // ---------------------------------------------------------------------------
 // WinWindow — public window handle (thin Arc wrapper)
@@ -47,9 +47,6 @@ impl WinWindow {
             min_size: opts.min_size,
             captured_buttons: Cell::new(0),
             is_tracking_hover: Cell::new(false),
-            // Init with logical size; first WM_NCCALCSIZE will update to physical.
-            // This ensures first resize always renders at correct physical dimensions.
-            current_size: Cell::new(PhysicalSize::new(opts.size.0, opts.size.1)),
         });
 
         let inner_ptr = Arc::as_ptr(&inner);

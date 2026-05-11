@@ -7,7 +7,6 @@
 //! a running `NSApplication` (CAMetalLayer attachment + `mainScreen` lookups).
 //! Constructing before `Platform::run` returns will panic or produce a null surface.
 
-use std::cell::Cell;
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
@@ -61,10 +60,6 @@ pub struct Renderer {
     shadow_pipeline: ShadowPipeline,
     image_pipeline: ImagePipeline,
     glyph_pipeline: GlyphPipeline,
-
-    // Device-lost state (Phase 4).
-    device_lost: Cell<bool>,
-    recovery_attempts: Cell<u32>,
 }
 
 impl Renderer {
@@ -181,8 +176,6 @@ impl Renderer {
             shadow_pipeline,
             image_pipeline,
             glyph_pipeline,
-            device_lost: Cell::new(false),
-            recovery_attempts: Cell::new(0),
         })
     }
 
@@ -322,10 +315,7 @@ impl Renderer {
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
-        self.target.present(frame).map_err(|e| match e {
-            FrameAcquireError::DeviceLost(reason) => RenderError::DeviceLost(reason),
-            other => RenderError::AcquireFailed(other.to_string()),
-        })?;
+        self.target.present(frame);
         Ok(())
     }
 
@@ -398,10 +388,7 @@ impl Renderer {
             }
         };
         self.draw_clear_pass(&frame.view);
-        self.target.present(frame).map_err(|e| match e {
-            FrameAcquireError::DeviceLost(reason) => RenderError::DeviceLost(reason),
-            other => RenderError::AcquireFailed(other.to_string()),
-        })?;
+        self.target.present(frame);
         Ok(())
     }
 
@@ -418,34 +405,6 @@ impl Renderer {
     /// The texture format the surface is configured with.
     pub fn surface_format(&self) -> TextureFormat {
         self.target.format()
-    }
-
-    /// Check if the device has been lost.
-    pub fn is_device_lost(&self) -> bool {
-        self.device_lost.get()
-    }
-
-    /// Mark the device as lost. Called by framework on RenderError::DeviceLost.
-    pub fn mark_device_lost(&self) {
-        self.device_lost.set(true);
-    }
-
-    /// Clear the device-lost flag. Called after successful recovery.
-    pub fn clear_device_lost(&self) {
-        self.device_lost.set(false);
-        self.recovery_attempts.set(0);
-    }
-
-    /// Get the current recovery attempt count.
-    pub fn recovery_attempts(&self) -> u32 {
-        self.recovery_attempts.get()
-    }
-
-    /// Increment and return the recovery attempt count.
-    pub fn increment_recovery_attempts(&self) -> u32 {
-        let count = self.recovery_attempts.get() + 1;
-        self.recovery_attempts.set(count);
-        count
     }
 
     /// Encode and submit a clear-color render pass (dark gray).

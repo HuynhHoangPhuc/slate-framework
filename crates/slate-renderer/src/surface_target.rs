@@ -38,10 +38,7 @@ pub trait CompositionTarget {
     /// Present the previously acquired frame. Consumes `frame`. On Windows
     /// this issues the trailing RENDER_TARGET → PRESENT barrier and
     /// `IDXGISwapChain::Present(1, 0)`. No-op when the window is minimized.
-    ///
-    /// Returns `Err(FrameAcquireError::DeviceLost)` if the device was lost
-    /// during presentation (e.g., GPU reset, adapter switch).
-    fn present(&mut self, frame: AcquiredFrame) -> Result<(), FrameAcquireError>;
+    fn present(&mut self, frame: AcquiredFrame);
 
     /// The texture format used for rendering (Bgra8UnormSrgb on macOS,
     /// Bgra8Unorm on Windows). Renderer pipelines are built against this.
