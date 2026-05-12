@@ -46,4 +46,5 @@ impl From<PhysicalSize> for (u32, u32) {
 /// # Thread Safety
 /// Not `Send + Sync` — platform windows are main-thread-only. The callback is
 /// stored in a `thread_local!` and invoked from the main thread.
+#[allow(dead_code)] // Will be used in Phase 3+; Phase 6 deletes this file
 pub type ResizeSyncCallback = Box<dyn FnMut(WindowId, PhysicalSize) + 'static>;

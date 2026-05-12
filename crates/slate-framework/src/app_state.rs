@@ -12,6 +12,8 @@
 //! Each borrow is released before the next begins. Do NOT hold multiple borrows
 //! simultaneously unless they are proven non-conflicting.
 
+#![allow(dead_code)] // Phase 0: module compiles but is unused until Phase 1 wires it
+
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -40,7 +42,7 @@ use crate::view::View;
 ///
 /// Generic over `V: View` to hold the user's root view type.
 /// Each field keeps its own `RefCell<T>` wrapper to preserve fine-grained borrow scope.
-pub struct AppState<V: View> {
+pub(crate) struct AppState<V: View> {
     // Deferred initialization (set in Event::Resumed)
     pub renderer: RefCell<Option<Renderer>>,
     pub text_system: RefCell<Option<TextSystem>>,
@@ -132,7 +134,7 @@ impl<V: View> AppState<V> {
 ///
 /// Shared by both the async `Event::WindowRedrawRequested` path and the
 /// sync resize callback path.
-pub fn run_redraw<V: View>(state: &AppState<V>) {
+pub(crate) fn run_redraw<V: View>(state: &AppState<V>) {
     // Skip if not initialized
     if state.renderer.borrow().is_none() {
         return;
@@ -298,7 +300,7 @@ pub fn run_redraw<V: View>(state: &AppState<V>) {
 ///
 /// Called from the platform's sync resize callback (setFrameSize: on macOS,
 /// WM_SIZE/WM_NCCALCSIZE on Windows).
-pub fn run_resize_sync<V: View>(state: &AppState<V>, _window_id: WindowId, size: PhysicalSize) {
+pub(crate) fn run_resize_sync<V: View>(state: &AppState<V>, _window_id: WindowId, size: PhysicalSize) {
     // Resize renderer
     if let Some(r) = state.renderer.borrow_mut().as_mut() {
         r.resize(size.as_tuple());
@@ -377,7 +379,7 @@ fn update_hover_state<V: View>(state: &AppState<V>) {
 }
 
 /// Walk ancestors from `start` to root, yielding each ElementId.
-pub fn ancestors<'a>(
+pub(crate) fn ancestors<'a>(
     start: ElementId,
     parent_map: &'a HashMap<ElementId, ElementId>,
 ) -> impl Iterator<Item = ElementId> + 'a {
@@ -390,7 +392,7 @@ pub fn ancestors<'a>(
 }
 
 /// Bubble a mouse event through the ancestor chain, invoking handlers.
-pub fn bubble_mouse_handler<F>(
+pub(crate) fn bubble_mouse_handler<F>(
     target: ElementId,
     event: &MouseEvent,
     handler_map: &HashMap<ElementId, Handlers>,
@@ -417,7 +419,7 @@ pub fn bubble_mouse_handler<F>(
 }
 
 /// Bubble a pointer event through the ancestor chain, invoking handlers.
-pub fn bubble_pointer_handler<F>(
+pub(crate) fn bubble_pointer_handler<F>(
     target: ElementId,
     event: &PointerEvent,
     handler_map: &HashMap<ElementId, Handlers>,
@@ -444,7 +446,7 @@ pub fn bubble_pointer_handler<F>(
 }
 
 /// Bubble a scroll event through the ancestor chain, invoking handlers.
-pub fn bubble_scroll_handler(
+pub(crate) fn bubble_scroll_handler(
     target: ElementId,
     event: &ScrollEvent,
     handler_map: &HashMap<ElementId, Handlers>,
@@ -471,7 +473,7 @@ pub fn bubble_scroll_handler(
 }
 
 /// Fire hover transitions between old and new hover targets.
-pub fn fire_hover_transitions(
+pub(crate) fn fire_hover_transitions(
     old_hover: Option<ElementId>,
     new_hover: Option<ElementId>,
     handler_map: &HashMap<ElementId, Handlers>,
@@ -545,7 +547,7 @@ pub fn fire_hover_transitions(
 }
 
 /// Convert MouseButton to bitmask bit position.
-pub fn button_to_bit(button: MouseButton) -> u8 {
+pub(crate) fn button_to_bit(button: MouseButton) -> u8 {
     match button {
         MouseButton::Left => 1 << 0,
         MouseButton::Right => 1 << 1,
