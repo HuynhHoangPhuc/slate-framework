@@ -480,6 +480,372 @@ impl<V: View> AppState<V> {
         }
     }
 
+    /// Handle background task completion (Event::Wake).
+    pub(crate) fn handle_wake(&self) -> AppSignal {
+        self.executor.foreground.poll();
+        AppSignal::RequestRedraw
+    }
+
+    /// Handle window close by platform (Event::WindowDestroyed).
+    /// Cleans up view and logs. Idempotent.
+    pub(crate) fn handle_window_destroyed(&self) -> AppSignal {
+        log::debug!("WindowDestroyed received in AppState");
+        *self.view.borrow_mut() = None;
+        AppSignal::RequestQuit
+    }
+
+    /// Handle device-lost event from platform.
+    pub(crate) fn dispatch_device_lost(&self, fatal: bool) -> AppSignal {
+        if fatal {
+            log::error!("GPU device lost (fatal) - recovery failed after max attempts");
+            AppSignal::RequestQuit
+        } else {
+            log::warn!("GPU device lost - recovery will be attempted");
+            AppSignal::None
+        }
+    }
+
+    /// Handle device-restored event from platform.
+    pub(crate) fn dispatch_device_restored(&self) -> AppSignal {
+        log::info!("GPU device restored - rendering resumed");
+        *self.recovery_attempts.borrow_mut() = 0;
+        AppSignal::RequestRedraw
+    }
+
+    // -----------------------------------------------------------------------
+    // Mouse event dispatch methods (Phase 2)
+    // -----------------------------------------------------------------------
+
+    /// Dispatch MouseDown event.
+    pub(crate) fn dispatch_mouse_down(
+        &self,
+        position: (f32, f32),
+        button: MouseButton,
+        modifiers: Modifiers,
+    ) -> AppSignal {
+        let mouse_event = MouseEvent {
+            position,
+            button: Some(button),
+            modifiers,
+            timestamp: Instant::now(),
+        };
+        let pointer_event = PointerEvent {
+            kind: PointerEventKind::Down,
+            position,
+            button: Some(button),
+            modifiers,
+            timestamp: Instant::now(),
+        };
+
+        // Update button state
+        let bit = button_to_bit(button);
+        let old_state = *self.button_state.borrow();
+        *self.button_state.borrow_mut() = old_state | bit;
+
+        // Determine dispatch target
+        let captured = *self.capture_target.borrow();
+        let target = if let Some(ct) = captured {
+            Some(ct)
+        } else {
+            let hit = self
+                .hit_test_list
+                .borrow()
+                .hit_test(Point::new(position.0, position.1));
+            if let Some(result) = hit {
+                *self.capture_target.borrow_mut() = Some(result.element_id);
+                Some(result.element_id)
+            } else {
+                None
+            }
+        };
+
+        if let Some(t) = target {
+            // Collect handlers first, then invoke (clone-before-drop pattern)
+            let mouse_handlers: SmallVec<[MouseHandler; 8]> = {
+                let hm = self.handler_map.borrow();
+                let pm = self.parent_map.borrow();
+                ancestors(t, &pm)
+                    .filter_map(|id| hm.get(&id).and_then(|h| h.on_mouse_down.clone()))
+                    .collect()
+            };
+            let pointer_handlers: SmallVec<[PointerHandler; 8]> = {
+                let hm = self.handler_map.borrow();
+                let pm = self.parent_map.borrow();
+                ancestors(t, &pm)
+                    .filter_map(|id| hm.get(&id).and_then(|h| h.on_pointer_event.clone()))
+                    .collect()
+            };
+
+            // Invoke handlers (borrows released)
+            let mut stopped = false;
+            for handler in &mouse_handlers {
+                let mut ctx = EventCtx::new(&mut stopped);
+                handler(&mouse_event, &mut ctx);
+                if stopped {
+                    break;
+                }
+            }
+
+            stopped = false;
+            for handler in &pointer_handlers {
+                let mut ctx = EventCtx::new(&mut stopped);
+                handler(&pointer_event, &mut ctx);
+                if stopped {
+                    break;
+                }
+            }
+        }
+
+        *self.last_mouse_pos.borrow_mut() = Some(position);
+        AppSignal::RequestRedraw
+    }
+
+    /// Dispatch MouseUp event.
+    pub(crate) fn dispatch_mouse_up(
+        &self,
+        position: (f32, f32),
+        button: MouseButton,
+        modifiers: Modifiers,
+    ) -> AppSignal {
+        let mouse_event = MouseEvent {
+            position,
+            button: Some(button),
+            modifiers,
+            timestamp: Instant::now(),
+        };
+        let pointer_event = PointerEvent {
+            kind: PointerEventKind::Up,
+            position,
+            button: Some(button),
+            modifiers,
+            timestamp: Instant::now(),
+        };
+
+        // Update button state
+        let bit = button_to_bit(button);
+        let old_state = *self.button_state.borrow();
+        let new_state = old_state & !bit;
+        *self.button_state.borrow_mut() = new_state;
+
+        // Determine dispatch target
+        let captured = *self.capture_target.borrow();
+        let up_hit = self
+            .hit_test_list
+            .borrow()
+            .hit_test(Point::new(position.0, position.1))
+            .map(|r| r.element_id);
+        let target = captured.or(up_hit);
+
+        if let Some(t) = target {
+            // Collect handlers (clone-before-drop pattern)
+            let mouse_up_handlers: SmallVec<[MouseHandler; 8]> = {
+                let hm = self.handler_map.borrow();
+                let pm = self.parent_map.borrow();
+                ancestors(t, &pm)
+                    .filter_map(|id| hm.get(&id).and_then(|h| h.on_mouse_up.clone()))
+                    .collect()
+            };
+            let pointer_handlers: SmallVec<[PointerHandler; 8]> = {
+                let hm = self.handler_map.borrow();
+                let pm = self.parent_map.borrow();
+                ancestors(t, &pm)
+                    .filter_map(|id| hm.get(&id).and_then(|h| h.on_pointer_event.clone()))
+                    .collect()
+            };
+            let click_handlers: SmallVec<[MouseHandler; 8]> = if button == MouseButton::Left
+                && up_hit == captured
+                && captured.is_some()
+            {
+                let hm = self.handler_map.borrow();
+                let pm = self.parent_map.borrow();
+                ancestors(t, &pm)
+                    .filter_map(|id| hm.get(&id).and_then(|h| h.on_click.clone()))
+                    .collect()
+            } else {
+                SmallVec::new()
+            };
+
+            // Invoke handlers (borrows released)
+            let mut stopped = false;
+            for handler in &mouse_up_handlers {
+                let mut ctx = EventCtx::new(&mut stopped);
+                handler(&mouse_event, &mut ctx);
+                if stopped {
+                    break;
+                }
+            }
+
+            stopped = false;
+            for handler in &pointer_handlers {
+                let mut ctx = EventCtx::new(&mut stopped);
+                handler(&pointer_event, &mut ctx);
+                if stopped {
+                    break;
+                }
+            }
+
+            stopped = false;
+            for handler in &click_handlers {
+                let mut ctx = EventCtx::new(&mut stopped);
+                handler(&mouse_event, &mut ctx);
+                if stopped {
+                    break;
+                }
+            }
+        }
+
+        // Release capture when all buttons are up
+        if new_state == 0 {
+            *self.capture_target.borrow_mut() = None;
+        }
+
+        *self.last_mouse_pos.borrow_mut() = Some(position);
+        AppSignal::RequestRedraw
+    }
+
+    /// Dispatch MouseMoved event.
+    pub(crate) fn dispatch_mouse_moved(
+        &self,
+        position: (f32, f32),
+        modifiers: Modifiers,
+    ) -> AppSignal {
+        let pointer_event = PointerEvent {
+            kind: PointerEventKind::Move,
+            position,
+            button: None,
+            modifiers,
+            timestamp: Instant::now(),
+        };
+
+        // Route through capture_target if captured, else hit-test
+        let captured = *self.capture_target.borrow();
+        let target = if let Some(ct) = captured {
+            Some(ct)
+        } else {
+            self.hit_test_list
+                .borrow()
+                .hit_test(Point::new(position.0, position.1))
+                .map(|r| r.element_id)
+        };
+
+        if let Some(t) = target {
+            // Collect handlers (clone-before-drop pattern)
+            let handlers: SmallVec<[PointerHandler; 8]> = {
+                let hm = self.handler_map.borrow();
+                let pm = self.parent_map.borrow();
+                ancestors(t, &pm)
+                    .filter_map(|id| hm.get(&id).and_then(|h| h.on_pointer_event.clone()))
+                    .collect()
+            };
+
+            // Invoke handlers
+            let mut stopped = false;
+            for handler in &handlers {
+                let mut ctx = EventCtx::new(&mut stopped);
+                handler(&pointer_event, &mut ctx);
+                if stopped {
+                    break;
+                }
+            }
+        }
+
+        *self.coalesced_move_pos.borrow_mut() = Some(position);
+        *self.last_mouse_pos.borrow_mut() = Some(position);
+        AppSignal::None
+    }
+
+    /// Dispatch MouseScrolled event.
+    pub(crate) fn dispatch_mouse_scrolled(
+        &self,
+        position: (f32, f32),
+        delta_x: f32,
+        delta_y: f32,
+        precise: bool,
+        modifiers: Modifiers,
+    ) -> AppSignal {
+        let scroll_event = ScrollEvent {
+            position,
+            delta_x,
+            delta_y,
+            precise,
+            modifiers,
+            timestamp: Instant::now(),
+        };
+
+        let hit = self
+            .hit_test_list
+            .borrow()
+            .hit_test(Point::new(position.0, position.1));
+
+        if let Some(result) = hit {
+            // Collect handlers (clone-before-drop pattern)
+            let handlers: SmallVec<[ScrollHandler; 8]> = {
+                let hm = self.handler_map.borrow();
+                let pm = self.parent_map.borrow();
+                ancestors(result.element_id, &pm)
+                    .filter_map(|id| hm.get(&id).and_then(|h| h.on_mouse_scrolled.clone()))
+                    .collect()
+            };
+
+            // Invoke handlers
+            let mut stopped = false;
+            for handler in &handlers {
+                let mut ctx = EventCtx::new(&mut stopped);
+                handler(&scroll_event, &mut ctx);
+                if stopped {
+                    break;
+                }
+            }
+        }
+
+        AppSignal::RequestRedraw
+    }
+
+    /// Dispatch MouseExited event.
+    pub(crate) fn dispatch_mouse_exited(&self) -> AppSignal {
+        let old_hover = *self.hovered_element.borrow();
+        if old_hover.is_some() {
+            // Collect handlers (clone-before-drop pattern)
+            let handlers: SmallVec<[PointerHandler; 8]> = {
+                let hm = self.handler_map.borrow();
+                let pm = self.parent_map.borrow();
+                if let Some(id) = old_hover {
+                    ancestors(id, &pm)
+                        .filter_map(|id| hm.get(&id).and_then(|h| h.on_pointer_leave.clone()))
+                        .collect()
+                } else {
+                    SmallVec::new()
+                }
+            };
+
+            // Invoke handlers
+            for handler in &handlers {
+                let event = PointerEvent {
+                    kind: PointerEventKind::Leave,
+                    position: (0.0, 0.0),
+                    button: None,
+                    modifiers: Modifiers::default(),
+                    timestamp: Instant::now(),
+                };
+                let mut stopped = false;
+                let mut ctx = EventCtx::new(&mut stopped);
+                handler(&event, &mut ctx);
+            }
+
+            *self.hovered_element.borrow_mut() = None;
+        }
+        *self.last_mouse_pos.borrow_mut() = None;
+        *self.coalesced_move_pos.borrow_mut() = None;
+        AppSignal::None
+    }
+
+    /// Dispatch CaptureLost event.
+    pub(crate) fn dispatch_capture_lost(&self) -> AppSignal {
+        *self.capture_target.borrow_mut() = None;
+        *self.button_state.borrow_mut() = 0;
+        AppSignal::None
+    }
+
     // -----------------------------------------------------------------------
     // Mouse event helpers (internal)
     // -----------------------------------------------------------------------
