@@ -169,7 +169,7 @@ impl WinCompose {
         let mut this = Self {
             width: w.max(1),
             height: h.max(1),
-            format: TextureFormat::Bgra8Unorm,
+            format: TextureFormat::Bgra8UnormSrgb,
             is_minimized: false,
             is_first_use: [true; BUFFER_COUNT as usize],
             fence_values: [0; BUFFER_COUNT as usize],
@@ -229,7 +229,9 @@ impl WinCompose {
                 dimension: wgpu::TextureDimension::D2,
                 format: wgpu::TextureFormat::Bgra8Unorm,
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                view_formats: &[],
+                // Declare sRGB view compatibility so we can create an sRGB view
+                // for automatic gamma correction during rendering.
+                view_formats: &[wgpu::TextureFormat::Bgra8UnormSrgb],
             };
 
             let wgpu_tex = unsafe { device.create_texture_from_hal::<Dx12>(hal_tex, &desc) };
@@ -404,7 +406,13 @@ impl CompositionTarget for WinCompose {
         let texture = self.back_buffer_textures[idx]
             .as_ref()
             .ok_or_else(|| FrameAcquireError::Failed("wgpu texture not acquired".to_owned()))?;
-        let view = texture.create_view(&TextureViewDescriptor::default());
+        // Create sRGB view for automatic gamma correction during rendering.
+        // Base texture is Bgra8Unorm (DirectComposition requirement), but the
+        // view applies sRGB encoding on write.
+        let view = texture.create_view(&TextureViewDescriptor {
+            format: Some(wgpu::TextureFormat::Bgra8UnormSrgb),
+            ..Default::default()
+        });
 
         Ok(AcquiredFrame {
             view,
