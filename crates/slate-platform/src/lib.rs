@@ -187,8 +187,8 @@ pub enum Event {
     },
 }
 
-mod render_callback;
-pub use render_callback::PhysicalSize;
+mod render_delegate;
+pub use render_delegate::{PhysicalSize, WindowRenderDelegate};
 
 #[cfg(target_os = "macos")]
 mod mac;
