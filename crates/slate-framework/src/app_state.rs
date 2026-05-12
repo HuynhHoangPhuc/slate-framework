@@ -20,7 +20,10 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use smallvec::SmallVec;
-use slate_platform::{DefaultWindow, Modifiers, MouseButton, PhysicalSize, Platform, Window};
+use slate_platform::{
+    DefaultWindow, Modifiers, MouseButton, PhysicalSize, Platform, Window, WindowId,
+    WindowRenderDelegate,
+};
 use slate_reactive::ObserverId;
 use slate_renderer::{Renderer, Scene};
 
@@ -916,6 +919,36 @@ impl<V: View> AppState<V> {
 impl<V: View> Drop for AppState<V> {
     fn drop(&mut self) {
         log::debug!("AppState<V> dropped — cycle-free shutdown verified");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// WindowRenderDelegate impl — sync resize/redraw from platform callbacks
+// ---------------------------------------------------------------------------
+
+impl<V: View> WindowRenderDelegate for AppState<V> {
+    fn on_resize_sync(&self, _window_id: WindowId, new_size: PhysicalSize) {
+        // Single-window today: window_id ignored.
+
+        // Step 1: resize the swap chain (cheap, in-place).
+        self.run_resize_sync(new_size);
+
+        // Step 2: full redraw THROUGH the recovery wrapper.
+        // RT-2.5: must use dispatch_redraw, not run_redraw — sync resize
+        // can still hit device-lost (e.g., GPU reset under heavy load), and
+        // bypassing the wrapper would either render garbage or panic.
+        if self.dispatch_redraw() == AppSignal::RequestQuit {
+            self.pending_quit.set(true);
+        }
+    }
+
+    fn on_redraw(&self, _window_id: WindowId) {
+        // Same routing as on_resize_sync's redraw step:
+        // dispatch_redraw includes the rendering: Cell<bool> guard and the
+        // device-lost recovery wrapper. Raw run_redraw is forbidden here.
+        if self.dispatch_redraw() == AppSignal::RequestQuit {
+            self.pending_quit.set(true);
+        }
     }
 }
 

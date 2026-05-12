@@ -7,7 +7,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use slate_platform::{
-    DefaultPlatform, DefaultWindow, Event, Platform, Window, WindowOptions, wake_run_loop,
+    DefaultPlatform, DefaultWindow, Event, Platform, Window, WindowOptions, WindowRenderDelegate,
+    wake_run_loop,
 };
 
 use crate::app_state::{AppSignal, AppState};
@@ -88,6 +89,18 @@ impl App {
             redraw_requester,
             runtime,
         ));
+
+        // Install render delegate on the platform window.
+        //
+        // CANNOT write: `Rc::downgrade(&state) as Weak<dyn WindowRenderDelegate>`.
+        // Per Rust Reference (unsized coercions): unsizing coercions are triggered
+        // in coercion sites (let-bindings, fn args, struct fields) but NOT by `as`
+        // casts. The ONLY working path: build an explicit Rc<dyn WindowRenderDelegate>
+        // via Rc::clone-then-coerce in a let-binding, then downgrade it.
+        let dyn_strong: Rc<dyn WindowRenderDelegate> = state.clone();
+        let dyn_weak = Rc::downgrade(&dyn_strong);
+        window.set_render_delegate(dyn_weak);
+        drop(dyn_strong); // strong ref no longer needed; `state` keeps AppState alive.
 
         let platform_ref = &platform;
         let state_ref = state.clone();
