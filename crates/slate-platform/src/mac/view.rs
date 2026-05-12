@@ -12,8 +12,8 @@ use objc2_app_kit::{
 use objc2_foundation::{MainThreadMarker, NSNotification, NSObject, NSObjectProtocol, NSRect};
 use objc2_quartz_core::CAMetalLayer;
 
-use super::{dispatch_event, ffi_boundary, post_redraw_event};
-use crate::{Event, Modifiers, MouseButton, WindowId};
+use super::{dispatch_event, ffi_boundary, post_redraw_event, unregister_window, with_window_delegate};
+use crate::{Event, Modifiers, MouseButton, PhysicalSize, WindowId};
 
 // ---------------------------------------------------------------------------
 // Mouse event decode helpers
@@ -115,6 +115,7 @@ define_class!(
         fn draw_rect(&self, _rect: NSRect) {
             let id = self.ivars().window_id.get();
             ffi_boundary(|| {
+                with_window_delegate(id, |d| d.on_redraw(id));
                 dispatch_event(Event::WindowRedrawRequested { window: id });
             });
         }
@@ -425,6 +426,8 @@ define_class!(
                     let lh = frame.size.height.round() as u32;
                     let pw = (frame.size.width * scale).round() as u32;
                     let ph = (frame.size.height * scale).round() as u32;
+                    // Sync delegate first so framebuffer is ready before observers see resize.
+                    with_window_delegate(id, |d| d.on_resize_sync(id, PhysicalSize::new(pw, ph)));
                     dispatch_event(Event::WindowResized {
                         window: id,
                         logical_size: (lw, lh),
@@ -454,6 +457,9 @@ define_class!(
         fn window_will_close(&self, _notification: &NSNotification) {
             let id = self.ivars().window_id.get();
             ffi_boundary(|| {
+                // Unregister FIRST — prevents stale delegate dispatch between
+                // close and dealloc when AppKit sends late paint events.
+                unregister_window(id);
                 dispatch_event(Event::WindowDestroyed { window: id });
                 // Quit policy lives in the user's `WindowCloseRequested`
                 // handler; calling `terminate:` here would invoke `exit()`
@@ -477,6 +483,7 @@ define_class!(
                 };
                 let scale = win.backingScaleFactor();
                 if let Some(view) = win.contentView() {
+                    // Update contentsScale FIRST — before invoking sync delegate.
                     if let Some(layer) = view.layer() {
                         layer.setContentsScale(scale);
                     }
@@ -486,6 +493,8 @@ define_class!(
                     let lh = frame.size.height.round() as u32;
                     let pw = (frame.size.width * scale).round() as u32;
                     let ph = (frame.size.height * scale).round() as u32;
+                    // Sync delegate second — contentsScale is now correct.
+                    with_window_delegate(id, |d| d.on_resize_sync(id, PhysicalSize::new(pw, ph)));
                     dispatch_event(Event::WindowResized {
                         window: id,
                         logical_size: (lw, lh),

@@ -63,6 +63,10 @@ pub trait Window: HasWindowHandle + HasDisplayHandle + 'static {
     fn close(&self);
     /// Stable id for routing events.
     fn id(&self) -> WindowId;
+    /// Install a render delegate to receive synchronous resize and redraw
+    /// callbacks. Held as `Weak<dyn>` to avoid `AppState ↔ Window` cycles.
+    /// Setting to a `Weak` whose `Rc` has been dropped is a no-op on next call.
+    fn set_render_delegate(&self, delegate: std::rc::Weak<dyn WindowRenderDelegate>);
 }
 
 #[derive(Clone, Debug)]

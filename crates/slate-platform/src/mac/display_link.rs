@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use dispatch::Queue;
 
-use super::dispatch_event;
+use super::{dispatch_event, with_window_delegate};
 use crate::{Event, WindowId};
 
 // Core Video FFI bindings
@@ -163,8 +163,10 @@ extern "C" fn display_link_callback(
     // Dispatch to main queue. Unlike NSApplication.postEvent: which targets
     // NSDefaultRunLoopMode (ignored during tracking mode), dispatch_async to
     // the main queue IS processed during tracking mode.
+    // NOTE: with_window_delegate must be called on main thread (thread-local registry).
     let window_id = state.window_id;
     Queue::main().exec_async(move || {
+        with_window_delegate(window_id, |d| d.on_redraw(window_id));
         dispatch_event(Event::WindowRedrawRequested { window: window_id });
     });
 

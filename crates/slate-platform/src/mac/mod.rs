@@ -21,13 +21,15 @@ mod window;
 pub use platform::MacPlatform;
 pub use window::MacWindow;
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
+use std::sync::Arc;
 
 use objc2_app_kit::{NSApplication, NSEvent, NSEventModifierFlags, NSEventType};
 use objc2_foundation::{MainThreadMarker, NSPoint};
 
-use crate::{Event, WindowId};
+use crate::{Event, WindowId, WindowRenderDelegate};
 
 // ---------------------------------------------------------------------------
 // Thread-local event handler storage
@@ -44,6 +46,9 @@ pub(crate) const WAKE_EVENT_SUBTYPE: i16 = 43;
 
 thread_local! {
     pub(crate) static HANDLER: EventHandler = const { std::cell::RefCell::new(None) };
+    /// Window registry: lookup MacWindow by WindowId for render delegate dispatch.
+    pub(crate) static WINDOWS: RefCell<HashMap<WindowId, std::sync::Weak<MacWindow>>> =
+        RefCell::new(HashMap::new());
 }
 
 /// Dispatch an `Event` through the thread-local handler. No-op if none installed.
@@ -53,6 +58,38 @@ pub(crate) fn dispatch_event(event: Event) {
             handler(event);
         }
     });
+}
+
+/// Register a window in the thread-local registry.
+pub(crate) fn register_window(id: WindowId, window: &Arc<MacWindow>) {
+    WINDOWS.with(|m| m.borrow_mut().insert(id, Arc::downgrade(window)));
+}
+
+/// Unregister a window from the thread-local registry. Idempotent.
+pub(crate) fn unregister_window(id: WindowId) {
+    WINDOWS.with(|m| { m.borrow_mut().remove(&id); });
+}
+
+/// Lookup MacWindow by id, then upgrade its render_delegate Weak, then invoke.
+/// All steps drop their borrows before invoking — re-entrancy safe.
+pub(crate) fn with_window_delegate(id: WindowId, f: impl FnOnce(&dyn WindowRenderDelegate)) {
+    // Step 1: upgrade Weak<MacWindow> from registry; release WINDOWS borrow.
+    let window = WINDOWS.with(|m| m.borrow().get(&id).and_then(|w| w.upgrade()));
+    let Some(window) = window else { return; };
+
+    // Step 2: clone Option<Weak<dyn WindowRenderDelegate>> from MacWindow;
+    // release render_delegate RefCell borrow IMMEDIATELY.
+    let weak = window.render_delegate.borrow().clone();
+
+    // Step 3: drop the MacWindow Arc BEFORE invoking — defense in depth.
+    drop(window);
+
+    // Step 4: upgrade dyn Weak and invoke.
+    if let Some(weak) = weak
+        && let Some(strong) = weak.upgrade()
+    {
+        f(&*strong);
+    }
 }
 
 /// Post a synthetic event to the run loop that will be processed on the next

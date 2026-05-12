@@ -1,6 +1,8 @@
 //! MacWindow — native macOS window handle.
 
+use std::cell::RefCell;
 use std::ptr::NonNull;
+use std::rc::Weak;
 use std::sync::Arc;
 
 use objc2::MainThreadOnly;
@@ -16,8 +18,8 @@ use raw_window_handle::{
 
 use super::display_link::DisplayLink;
 use super::view::{MetalView, WindowDelegate};
-use super::{next_window_id, post_redraw_event};
-use crate::{Window, WindowId, WindowOptions};
+use super::{next_window_id, post_redraw_event, register_window, unregister_window};
+use crate::{Window, WindowId, WindowOptions, WindowRenderDelegate};
 
 // ---------------------------------------------------------------------------
 // MacWindow — public window handle
@@ -35,6 +37,8 @@ pub struct MacWindow {
     /// CVDisplayLink for vsync-synchronized rendering. Ensures rendering continues
     /// during live resize when the main run loop is in NSEventTrackingRunLoopMode.
     _display_link: Option<DisplayLink>,
+    /// Render delegate for sync resize/redraw callbacks (Phase 4).
+    pub(crate) render_delegate: RefCell<Option<Weak<dyn WindowRenderDelegate>>>,
 }
 
 impl MacWindow {
@@ -116,13 +120,27 @@ impl MacWindow {
         // intentionally not Send+Sync (main-thread-only), so suppress the
         // arc_with_non_send_sync lint rather than changing the trait contract.
         #[allow(clippy::arc_with_non_send_sync)]
-        Arc::new(MacWindow {
+        let arc = Arc::new(MacWindow {
             id,
             ns_window,
             view,
             _delegate: delegate,
             _display_link: display_link,
-        })
+            render_delegate: RefCell::new(None),
+        });
+
+        // Register in thread-local registry for delegate dispatch from Obj-C callbacks.
+        register_window(id, &arc);
+
+        arc
+    }
+}
+
+impl Drop for MacWindow {
+    fn drop(&mut self) {
+        // Defense-in-depth: unregister from registry. windowWillClose: does this
+        // synchronously, but Drop catches early-drop paths that bypass it.
+        unregister_window(self.id);
     }
 }
 
@@ -169,6 +187,10 @@ impl Window for MacWindow {
 
     fn id(&self) -> WindowId {
         self.id
+    }
+
+    fn set_render_delegate(&self, delegate: Weak<dyn WindowRenderDelegate>) {
+        *self.render_delegate.borrow_mut() = Some(delegate);
     }
 }
 

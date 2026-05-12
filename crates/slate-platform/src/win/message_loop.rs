@@ -1,6 +1,7 @@
 //! Win32 message loop — wndproc trampoline and WinWindowInner message handling.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
+use std::rc::Weak;
 use std::sync::Arc;
 
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
@@ -24,7 +25,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use super::{IN_SIZE_MOVE, SIZE_MOVE_TIMER_ID, WM_APP_WAKE, clear_wake_hwnd, dispatch_event};
-use crate::{Event, Modifiers, MouseButton, WindowId};
+use crate::{Event, Modifiers, MouseButton, PhysicalSize, WindowId, WindowRenderDelegate};
 
 // ---------------------------------------------------------------------------
 // Mouse event decode helpers
@@ -82,9 +83,24 @@ pub struct WinWindowInner {
     pub(crate) captured_buttons: Cell<u8>,
     /// True if TrackMouseEvent is armed for WM_MOUSELEAVE.
     pub(crate) is_tracking_hover: Cell<bool>,
+    /// Render delegate for sync resize/redraw callbacks (Phase 4).
+    pub(crate) delegate: RefCell<Option<Weak<dyn WindowRenderDelegate>>>,
+    /// True during modal size-move loop; WM_SIZE skips delegate (WM_TIMER handles it).
+    pub(crate) in_size_move: Cell<bool>,
 }
 
 impl WinWindowInner {
+    /// Invoke the render delegate if present. Clone-and-drop pattern ensures
+    /// no RefCell borrow is held across the trait method call (re-entrancy safe).
+    fn with_delegate(&self, f: impl FnOnce(&dyn WindowRenderDelegate)) {
+        let weak = self.delegate.borrow().clone();
+        if let Some(weak) = weak {
+            if let Some(strong) = weak.upgrade() {
+                f(&*strong);
+            }
+        }
+    }
+
     /// Translate a Win32 message into a Slate [`Event`] and dispatch it.
     pub(crate) fn handle_message(
         &self,
@@ -122,6 +138,10 @@ impl WinWindowInner {
                 let lh = (ph as f64 / scale).round() as u32;
                 let in_size_move = IN_SIZE_MOVE.with(|f| f.get());
                 log::trace!(target: "slate::win", "WM_SIZE pw={pw} ph={ph} in_size_move={in_size_move}");
+                // Sync delegate: skip during size-move (WM_TIMER handles live-resize).
+                if !self.in_size_move.get() {
+                    self.with_delegate(|d| d.on_resize_sync(self.id, PhysicalSize::new(pw, ph)));
+                }
                 dispatch_event(Event::WindowResized {
                     window: self.id,
                     logical_size: (lw, lh),
@@ -134,17 +154,20 @@ impl WinWindowInner {
                 LRESULT(0)
             }
             WM_TIMER if _wparam.0 == SIZE_MOVE_TIMER_ID && IN_SIZE_MOVE.with(|f| f.get()) => {
+                self.with_delegate(|d| d.on_redraw(self.id));
                 dispatch_event(Event::WindowRedrawRequested { window: self.id });
                 let _ = unsafe { ValidateRect(Some(hwnd), None) };
                 LRESULT(0)
             }
             WM_ERASEBKGND => LRESULT(1),
             WM_PAINT => {
+                self.with_delegate(|d| d.on_redraw(self.id));
                 dispatch_event(Event::WindowRedrawRequested { window: self.id });
                 let _ = unsafe { ValidateRect(Some(hwnd), None) };
                 LRESULT(0)
             }
             WM_ENTERSIZEMOVE => {
+                self.in_size_move.set(true);
                 IN_SIZE_MOVE.with(|f| f.set(true));
                 let id =
                     unsafe { SetTimer(Some(hwnd), SIZE_MOVE_TIMER_ID, USER_TIMER_MINIMUM, None) };
@@ -156,6 +179,7 @@ impl WinWindowInner {
                 LRESULT(0)
             }
             WM_EXITSIZEMOVE => {
+                self.in_size_move.set(false);
                 IN_SIZE_MOVE.with(|f| f.set(false));
                 let _ = unsafe { KillTimer(Some(hwnd), SIZE_MOVE_TIMER_ID) };
 
@@ -166,6 +190,7 @@ impl WinWindowInner {
                     // discard
                 }
 
+                self.with_delegate(|d| d.on_redraw(self.id));
                 dispatch_event(Event::WindowRedrawRequested { window: self.id });
                 LRESULT(0)
             }
@@ -194,6 +219,8 @@ impl WinWindowInner {
                     let scale = dpi as f64 / 96.0;
                     let lw = (pw as f64 / scale).round() as u32;
                     let lh = (ph as f64 / scale).round() as u32;
+                    // Sync delegate first so framebuffer is ready before observers see resize.
+                    self.with_delegate(|d| d.on_resize_sync(self.id, PhysicalSize::new(pw, ph)));
                     dispatch_event(Event::WindowResized {
                         window: self.id,
                         logical_size: (lw, lh),
