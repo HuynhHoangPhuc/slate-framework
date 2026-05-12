@@ -126,10 +126,12 @@ impl GlyphPipeline {
         assert!(
             matches!(
                 surface_format,
-                TextureFormat::Bgra8UnormSrgb | TextureFormat::Rgba8UnormSrgb
+                TextureFormat::Bgra8UnormSrgb
+                    | TextureFormat::Rgba8UnormSrgb
+                    | TextureFormat::Bgra8Unorm
+                    | TextureFormat::Rgba8Unorm
             ),
-            "GlyphPipeline expects an sRGB surface format (Bgra8UnormSrgb / \
-             Rgba8UnormSrgb); got {surface_format:?}",
+            "GlyphPipeline expects sRGB or UNORM surface format; got {surface_format:?}",
         );
         // Red-team H2: catch the "image atlas wired to glyph pipeline" footgun
         // — the bind-group layout's `Float { filterable: true }` accepts both

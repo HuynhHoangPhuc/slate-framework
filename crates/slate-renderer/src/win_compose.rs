@@ -169,7 +169,7 @@ impl WinCompose {
         let mut this = Self {
             width: w.max(1),
             height: h.max(1),
-            format: TextureFormat::Bgra8UnormSrgb,
+            format: TextureFormat::Bgra8Unorm,
             is_minimized: false,
             is_first_use: [true; BUFFER_COUNT as usize],
             fence_values: [0; BUFFER_COUNT as usize],
@@ -205,7 +205,7 @@ impl WinCompose {
             let hal_tex = unsafe {
                 wgpu::hal::dx12::Device::texture_from_raw(
                     buffer.clone(),
-                    wgpu::TextureFormat::Bgra8UnormSrgb,
+                    wgpu::TextureFormat::Bgra8Unorm,
                     wgpu::TextureDimension::D2,
                     wgpu::Extent3d {
                         width: self.width,
@@ -227,7 +227,7 @@ impl WinCompose {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Bgra8UnormSrgb,
+                format: wgpu::TextureFormat::Bgra8Unorm,
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
                 view_formats: &[],
             };
@@ -292,26 +292,22 @@ impl CompositionTarget for WinCompose {
             return Ok(());
         }
 
-        // Match win-dcomp-spike resize flow: poll → wait_for_gpu → release → poll
-        // 1. Poll wgpu to process pending callbacks
+        // Wait for pending wgpu work
         let _ = device.poll(wgpu::PollType::Wait {
             submission_index: None,
             timeout: None,
         });
-
-        // 2. Wait for GPU to complete all queued work
+        // Wait for GPU to complete all queued work
         self.flush();
-
-        // 3. Release back buffer references
+        // Release wgpu texture wrappers and D3D12 resources
         self.release_back_buffers(device);
-
-        // 4. Poll again to ensure wgpu processes texture destruction
+        // Poll again to ensure wgpu processes texture destruction
         let _ = device.poll(wgpu::PollType::Wait {
             submission_index: None,
             timeout: None,
         });
 
-        // 5. First attempt at ResizeBuffers
+        // First attempt at ResizeBuffers
         let result = unsafe {
             self.swap_chain.ResizeBuffers(
                 BUFFER_COUNT,
@@ -514,7 +510,9 @@ fn transition_barrier(
         Flags: D3D12_RESOURCE_BARRIER_FLAG_NONE,
         Anonymous: D3D12_RESOURCE_BARRIER_0 {
             Transition: std::mem::ManuallyDrop::new(D3D12_RESOURCE_TRANSITION_BARRIER {
-                pResource: std::mem::ManuallyDrop::new(Some(resource.clone())),
+                // Use transmute_copy to avoid incrementing COM refcount - the barrier
+                // is only valid for the duration of the ResourceBarrier call.
+                pResource: unsafe { std::mem::transmute_copy(resource) },
                 Subresource: D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
                 StateBefore: before,
                 StateAfter: after,

@@ -112,10 +112,12 @@ impl ImagePipeline {
         assert!(
             matches!(
                 surface_format,
-                TextureFormat::Bgra8UnormSrgb | TextureFormat::Rgba8UnormSrgb
+                TextureFormat::Bgra8UnormSrgb
+                    | TextureFormat::Rgba8UnormSrgb
+                    | TextureFormat::Bgra8Unorm
+                    | TextureFormat::Rgba8Unorm
             ),
-            "ImagePipeline expects an sRGB surface format (Bgra8UnormSrgb / \
-             Rgba8UnormSrgb); got {surface_format:?}",
+            "ImagePipeline expects sRGB or UNORM surface format; got {surface_format:?}",
         );
         // Mirror of GlyphPipeline's R8Unorm guard: catch the "glyph mask atlas
         // wired to image pipeline" footgun. The shared atlas BGL accepts
