@@ -7,11 +7,11 @@
 //! a running `NSApplication` (CAMetalLayer attachment + `mainScreen` lookups).
 //! Constructing before `Platform::run` returns will panic or produce a null surface.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::num::NonZeroU32;
 use std::rc::Weak;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use slate_platform::Window;
 use wgpu::{
@@ -68,8 +68,10 @@ pub struct Renderer {
     image_pipeline: ImagePipeline,
     glyph_pipeline: GlyphPipeline,
 
-    // Device-lost state (Phase 4 detection).
-    device_lost: Cell<bool>,
+    // Device-lost state. Atomic so the wgpu `set_device_lost_callback`
+    // (Send + 'static, fires from a wgpu-internal thread) can flip the flag.
+    // Reads happen on the main thread via `is_device_lost()`.
+    device_lost: Arc<AtomicBool>,
 
     // Observer infrastructure (Phase 1: RendererObserver trait).
     // Generation starts at 1 so consumers can reserve 0 for "uninitialized".
@@ -133,6 +135,36 @@ impl Renderer {
             })
             .await?;
 
+        // H1 detection: wgpu fires this callback from a wgpu-internal thread
+        // for any device-lost condition, including buffer-creation failures
+        // (e.g. 0x887A0005 during cross-monitor drag on hybrid-GPU laptops)
+        // that have no Result return path. The atomic flag is read on the
+        // main thread by `is_device_lost()` -> `dispatch_redraw` engages the
+        // existing recovery state machine on the next frame.
+        //
+        // Filter `Destroyed` (matches zed/crates/gpui_wgpu/src/wgpu_context.rs:79)
+        // so intentional `Renderer` drop in tests does not trigger recovery.
+        let device_lost = Arc::new(AtomicBool::new(false));
+        device.set_device_lost_callback({
+            let device_lost = Arc::clone(&device_lost);
+            move |reason, message| {
+                if reason == wgpu::DeviceLostReason::Destroyed {
+                    log::debug!(
+                        target: "slate::device_lost",
+                        "wgpu device dropped (intentional): {message}"
+                    );
+                    return;
+                }
+                // Callback is `Send + 'static`; we cannot access `&self.device`
+                // here, so LUID + GetDeviceRemovedReason are unavailable from
+                // this call site. HR-path captures via `capture()` still get
+                // the full picture.
+                let dlr = device_lost_reason::capture_from_wgpu_no_device(reason, message);
+                device_lost_reason::emit(&dlr);
+                device_lost.store(true, Ordering::Release);
+            }
+        });
+
         let (w, h) = window.physical_size();
         let mut target = build_target(&instance, &adapter, &device, Arc::clone(&window))?;
         target
@@ -193,7 +225,7 @@ impl Renderer {
             shadow_pipeline,
             image_pipeline,
             glyph_pipeline,
-            device_lost: Cell::new(false),
+            device_lost,
             generation: AtomicU64::new(1),
             observers: RefCell::new(Vec::new()),
         })
@@ -203,13 +235,13 @@ impl Renderer {
     /// monitor topology change, or TDR). Once true, rendering will fail until
     /// the device is recovered (Phase 5).
     pub fn is_device_lost(&self) -> bool {
-        self.device_lost.get()
+        self.device_lost.load(Ordering::Acquire)
     }
 
     /// Explicitly mark the device as lost. Called by app_state when
     /// RendererError::DeviceLost is returned from render operations.
     pub fn mark_device_lost(&self) {
-        self.device_lost.set(true);
+        self.device_lost.store(true, Ordering::Release);
     }
 
     /// Proactively check device health via GetDeviceRemovedReason.
@@ -229,7 +261,7 @@ impl Renderer {
         };
         if is_lost {
             device_lost_reason::emit(&reason);
-            self.device_lost.set(true);
+            self.device_lost.store(true, Ordering::Release);
         }
         is_lost
     }
@@ -257,7 +289,7 @@ impl Renderer {
                 }
             }
         }
-        self.device_lost.set(true);
+        self.device_lost.store(true, Ordering::Release);
     }
 
     /// Register an observer to receive device recreation notifications.
@@ -329,7 +361,7 @@ impl Renderer {
             // Phase 2: Capture and emit structured telemetry
             let reason = device_lost_reason::capture("Renderer::check_hr", hr, Some(&self.device));
             device_lost_reason::emit(&reason);
-            self.device_lost.set(true);
+            self.device_lost.store(true, Ordering::Release);
             true
         } else {
             false
@@ -340,7 +372,7 @@ impl Renderer {
     /// the `(u32, u32)` payload of `Event::WindowResized`.
     pub fn resize(&mut self, new_size: (u32, u32)) {
         // Early-return if device is lost - no point attempting resize
-        if self.device_lost.get() {
+        if self.device_lost.load(Ordering::Acquire) {
             log::trace!(target: "slate::resize", "Renderer::resize skipped: device lost");
             return;
         }
@@ -436,7 +468,7 @@ impl Renderer {
                         return Ok(());
                     }
                     Err(FrameAcquireError::DeviceLost(reason)) => {
-                        self.device_lost.set(true);
+                        self.device_lost.store(true, Ordering::Release);
                         return Err(RenderError::DeviceLost(reason));
                     }
                     Err(other) => return Err(RenderError::AcquireFailed(other.to_string())),
@@ -578,7 +610,7 @@ impl Renderer {
                         return Ok(());
                     }
                     Err(FrameAcquireError::DeviceLost(reason)) => {
-                        self.device_lost.set(true);
+                        self.device_lost.store(true, Ordering::Release);
                         return Err(RenderError::DeviceLost(reason));
                     }
                     Err(other) => return Err(RenderError::AcquireFailed(other.to_string())),

@@ -17,6 +17,8 @@ pub struct DeviceLostReason {
     pub removed_reason_hr: Option<i32>,
     /// Adapter LUID (for distinguishing TDR vs cross-adapter migration).
     pub adapter_luid: Option<u64>,
+    /// Message supplied by the wgpu device-lost callback (None for HR-only paths).
+    pub message: Option<String>,
     /// Timestamp when the event was captured.
     pub timestamp: Instant,
 }
@@ -35,6 +37,34 @@ pub fn capture(source: &'static str, hr: i32, device: Option<&wgpu::Device>) -> 
         surface_hr: hr,
         removed_reason_hr,
         adapter_luid,
+        message: None,
+        timestamp: Instant::now(),
+    }
+}
+
+/// Capture a device-lost reason from the wgpu `set_device_lost_callback` call site.
+///
+/// The wgpu callback is `Send + 'static` and cannot capture `&Device`, so this
+/// constructor produces telemetry without `removed_reason_hr` or `adapter_luid`.
+/// The wgpu-provided reason variant is mapped onto `surface_hr` so existing
+/// HRESULT-based routing remains uniform; `Unknown` uses the `E_FAIL` sentinel.
+///
+/// Exhaustive match on `wgpu::DeviceLostReason` — adding a wgpu variant must
+/// be a compile error to force routing review.
+pub fn capture_from_wgpu_no_device(
+    reason: wgpu::DeviceLostReason,
+    message: String,
+) -> DeviceLostReason {
+    let surface_hr = match reason {
+        wgpu::DeviceLostReason::Unknown => 0x80004005_u32 as i32, // E_FAIL sentinel
+        wgpu::DeviceLostReason::Destroyed => 0x80004005_u32 as i32, // filtered upstream; safe fallback
+    };
+    DeviceLostReason {
+        source: "wgpu::device_lost_callback",
+        surface_hr,
+        removed_reason_hr: None,
+        adapter_luid: None,
+        message: Some(message),
         timestamp: Instant::now(),
     }
 }
@@ -48,6 +78,7 @@ pub fn emit(reason: &DeviceLostReason) {
         removed_reason = ?reason.removed_reason_hr.map(|h| format!("0x{:08X}", h as u32)),
         removed_reason_name = removed_reason_name(reason.removed_reason_hr),
         adapter_luid = ?reason.adapter_luid,
+        message = ?reason.message,
         "device lost"
     );
 }
@@ -61,6 +92,7 @@ fn removed_reason_name(hr: Option<i32>) -> &'static str {
             0x887A0007 => "DEVICE_RESET",
             0x887A0020 => "DRIVER_INTERNAL_ERROR",
             0x887A0026 => "ACCESS_LOST",
+            0x80004005 => "E_FAIL",
             0 => "S_OK",
             _ => "UNKNOWN",
         },
@@ -144,5 +176,24 @@ mod tests {
         assert_eq!(reason.surface_hr, 0x887A0005_u32 as i32);
         assert!(reason.removed_reason_hr.is_none());
         assert!(reason.adapter_luid.is_none());
+        assert!(reason.message.is_none());
+    }
+
+    #[test]
+    fn capture_from_wgpu_no_device_unknown() {
+        let reason = capture_from_wgpu_no_device(
+            wgpu::DeviceLostReason::Unknown,
+            "buffer creation failed".into(),
+        );
+        assert_eq!(reason.source, "wgpu::device_lost_callback");
+        assert_eq!(reason.surface_hr, 0x80004005_u32 as i32);
+        assert!(reason.removed_reason_hr.is_none());
+        assert!(reason.adapter_luid.is_none());
+        assert_eq!(reason.message.as_deref(), Some("buffer creation failed"));
+    }
+
+    #[test]
+    fn e_fail_renders_with_name() {
+        assert_eq!(removed_reason_name(Some(0x80004005_u32 as i32)), "E_FAIL");
     }
 }
