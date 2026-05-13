@@ -25,6 +25,9 @@
 
 // Core modules
 pub mod app;
+#[cfg(any(test, feature = "test-hooks"))]
+pub mod app_state;
+#[cfg(not(any(test, feature = "test-hooks")))]
 pub(crate) mod app_state;
 pub mod color;
 pub mod context;
@@ -39,6 +42,8 @@ pub(crate) mod paint_cache;
 pub(crate) mod reactive_state;
 pub mod style;
 pub mod text_system;
+#[cfg(any(test, feature = "test-hooks"))]
+pub mod test_support;
 pub mod types;
 pub mod view;
 

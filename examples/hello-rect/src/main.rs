@@ -20,6 +20,7 @@ fn main() {
         size: (800, 600),
         min_size: Some((320, 240)),
         resizable: true,
+        ..Default::default()
     });
 
     let renderer: RefCell<Option<Renderer>> = RefCell::new(None);

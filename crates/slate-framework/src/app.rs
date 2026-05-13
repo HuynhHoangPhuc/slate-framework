@@ -39,6 +39,18 @@ impl AppContext {
     pub fn background_executor(&self) -> BackgroundExecutor {
         self.background_executor.clone()
     }
+
+    /// Construct an `AppContext` directly. Test-only.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn new_for_test(
+        runtime: Arc<slate_reactive::Runtime>,
+        background_executor: BackgroundExecutor,
+    ) -> Self {
+        Self {
+            runtime,
+            background_executor,
+        }
+    }
 }
 
 /// Application container.

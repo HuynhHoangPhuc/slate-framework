@@ -39,6 +39,7 @@ image.workspace = true
 [dev-dependencies]
 trybuild = "1"
 tracing-test = "0.2"
+env_logger.workspace = true
 
 [features]
 default = []

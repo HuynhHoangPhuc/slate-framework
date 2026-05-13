@@ -76,6 +76,12 @@ pub struct WindowOptions {
     pub size: (u32, u32),
     pub min_size: Option<(u32, u32)>,
     pub resizable: bool,
+    /// Whether the window is visible on creation. `false` produces a borderless,
+    /// disabled, off-screen window suitable for headless DXGI/swap-chain tests.
+    pub visible: bool,
+    /// Top-left position in screen coordinates. `None` defers to the OS default
+    /// (`CW_USEDEFAULT` on Win32).
+    pub position: Option<(i32, i32)>,
 }
 
 impl Default for WindowOptions {
@@ -85,6 +91,8 @@ impl Default for WindowOptions {
             size: (800, 600),
             min_size: None,
             resizable: true,
+            visible: true,
+            position: None,
         }
     }
 }

@@ -15,7 +15,8 @@ use windows::Win32::Graphics::Gdi::InvalidateRect;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
     CW_USEDEFAULT, CreateWindowExW, DestroyWindow, GetClientRect, SetWindowTextW,
-    WS_EX_NOREDIRECTIONBITMAP, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
+    WS_DISABLED, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_OVERLAPPEDWINDOW, WS_POPUP,
+    WS_VISIBLE,
 };
 use windows::core::PCWSTR;
 
@@ -55,17 +56,35 @@ impl WinWindow {
 
         let inner_ptr = Arc::as_ptr(&inner);
 
+        let (ex_style, style) = if opts.visible {
+            (WS_EX_NOREDIRECTIONBITMAP, WS_OVERLAPPEDWINDOW | WS_VISIBLE)
+        } else {
+            // Off-screen test harness: borderless, disabled, no taskbar entry.
+            // WS_VISIBLE is required for the window to receive WM_PAINT — the
+            // window is kept off the user's desktop via `opts.position` (e.g.
+            // (-32000, -32000)) so it owns a real DXGI surface without ever
+            // being seen.
+            (
+                WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW,
+                WS_POPUP | WS_DISABLED | WS_VISIBLE,
+            )
+        };
+        let (x, y) = match opts.position {
+            Some((x, y)) => (x, y),
+            None => (CW_USEDEFAULT, CW_USEDEFAULT),
+        };
+
         // SAFETY: All arguments are valid Win32 values; CLASS_NAME was registered
         // in WinPlatform::new. The lpCreateParams raw pointer is valid for the
         // duration of CreateWindowExW (the user's Arc lives on the stack here).
         let hwnd = unsafe {
             CreateWindowExW(
-                WS_EX_NOREDIRECTIONBITMAP,
+                ex_style,
                 CLASS_NAME,
                 PCWSTR(title_w.as_ptr()),
-                WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-                CW_USEDEFAULT,
-                CW_USEDEFAULT,
+                style,
+                x,
+                y,
                 opts.size.0 as i32,
                 opts.size.1 as i32,
                 None,

@@ -2232,6 +2232,7 @@ dependencies = [
  "accesskit",
  "async-compat",
  "bytemuck",
+ "env_logger",
  "glam",
  "image",
  "log",

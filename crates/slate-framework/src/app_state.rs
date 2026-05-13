@@ -55,7 +55,7 @@ pub(crate) const RECOVERY_FLAP_GUARD_SECS: u64 = 5;
 /// Replaces the old 3-shot immediate retry with a zed-validated pattern:
 /// 350ms cooldown, 5-attempt backoff, and skip_draws gating.
 #[derive(Debug, Clone)]
-pub(crate) enum RecoveryState {
+pub enum RecoveryState {
     /// Device is healthy, no recovery in progress.
     NotLost,
     /// Device loss just detected; waiting to transition to cooldown.
@@ -72,7 +72,7 @@ pub(crate) enum RecoveryState {
 
 /// Signal returned by dispatch methods to communicate with the event loop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum AppSignal {
+pub enum AppSignal {
     None,
     RequestQuit,
     RequestRedraw,
@@ -106,7 +106,7 @@ impl Drop for RenderingGuard<'_> {
 ///
 /// Generic over `V: View` to hold the user's root view type.
 /// Each field keeps its own `RefCell<T>` wrapper to preserve fine-grained borrow scope.
-pub(crate) struct AppState<V: View> {
+pub struct AppState<V: View> {
     // Deferred initialization (set in Event::Resumed)
     pub renderer: RefCell<Option<Renderer>>,
     pub text_system: Rc<RefCell<Option<TextSystem>>>,
@@ -240,7 +240,7 @@ impl<V: View> AppState<V> {
 
     /// Initialize renderer + text_system + view. Called from Event::Resumed.
     /// Re-entry guarded: if renderer is already Some, returns Ok without re-allocating.
-    pub(crate) fn init_surfaces<P: Platform>(
+    pub fn init_surfaces<P: Platform>(
         &self,
         view_factory: &mut impl FnMut(&AppContext) -> V,
         cx: &AppContext,
@@ -303,7 +303,7 @@ impl<V: View> AppState<V> {
 
     /// Full redraw dispatch with device-lost recovery wrapper + re-entrancy guard.
     /// Returns AppSignal::RequestQuit if recovery exceeds RECOVERY_MAX_ATTEMPTS.
-    pub(crate) fn dispatch_redraw(&self) -> AppSignal {
+    pub fn dispatch_redraw(&self) -> AppSignal {
         // RE-ENTRANCY GUARD — applies to BOTH sync and async render paths.
         // If a redraw is already in flight, skip the duplicate.
         if self.rendering.get() {
@@ -650,21 +650,21 @@ impl<V: View> AppState<V> {
 
     /// Event::WindowResized arm — currently a no-op.
     /// Platform now drives WindowRedrawRequested post-resize.
-    pub(crate) fn handle_window_resized(&self, physical_size: (u32, u32)) {
+    pub fn handle_window_resized(&self, physical_size: (u32, u32)) {
         if let Some(r) = self.renderer.borrow_mut().as_mut() {
             r.resize(physical_size);
         }
     }
 
     /// Handle background task completion (Event::Wake).
-    pub(crate) fn handle_wake(&self) -> AppSignal {
+    pub fn handle_wake(&self) -> AppSignal {
         self.executor.foreground.poll();
         AppSignal::RequestRedraw
     }
 
     /// Handle window close by platform (Event::WindowDestroyed).
     /// Cleans up view and logs. Idempotent.
-    pub(crate) fn handle_window_destroyed(&self) -> AppSignal {
+    pub fn handle_window_destroyed(&self) -> AppSignal {
         log::debug!("WindowDestroyed received in AppState");
         *self.view.borrow_mut() = None;
         AppSignal::RequestQuit
@@ -1325,5 +1325,56 @@ pub(crate) fn button_to_bit(button: MouseButton) -> u8 {
         MouseButton::Right => 1 << 1,
         MouseButton::Middle => 1 << 2,
         MouseButton::Other(n) => 1 << (3 + n.min(4)),
+    }
+}
+
+// =============================================================================
+// Test-only accessors (gated on `test-hooks` feature)
+// =============================================================================
+
+#[cfg(any(test, feature = "test-hooks"))]
+impl<V: View> AppState<V> {
+    /// Current renderer generation. `None` if renderer not yet initialized.
+    pub fn renderer_generation(&self) -> Option<u64> {
+        self.renderer
+            .borrow()
+            .as_ref()
+            .map(|r| r.current_generation())
+    }
+
+    /// True if the renderer reports the device as lost.
+    pub fn renderer_is_device_lost(&self) -> bool {
+        self.renderer
+            .borrow()
+            .as_ref()
+            .map(|r| r.is_device_lost())
+            .unwrap_or(false)
+    }
+
+    /// Snapshot of the current recovery state.
+    pub fn current_recovery_state(&self) -> RecoveryState {
+        self.recovery_state.borrow().clone()
+    }
+
+    /// Trigger a synthetic device-lost via `ID3D12Device5::RemoveDevice()`.
+    /// Returns `false` if no renderer is initialized.
+    #[cfg(target_os = "windows")]
+    pub fn force_renderer_device_lost(&self) -> bool {
+        if let Some(r) = self.renderer.borrow().as_ref() {
+            r.force_device_lost();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Read the sync-path quit signal.
+    pub fn pending_quit(&self) -> bool {
+        self.pending_quit.get()
+    }
+
+    /// Request a redraw on the associated window.
+    pub fn request_redraw(&self) {
+        self.window.request_redraw();
     }
 }

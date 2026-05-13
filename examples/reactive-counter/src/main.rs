@@ -64,6 +64,7 @@ fn main() {
         size: (400, 300),
         min_size: Some((320, 240)),
         resizable: true,
+        ..Default::default()
     })
     .run(|cx: &AppContext| {
         let count = Signal::new(cx.runtime(), 0u32);

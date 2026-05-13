@@ -92,6 +92,7 @@ fn main() {
         size: (600, 400),
         min_size: Some((320, 240)),
         resizable: true,
+        ..Default::default()
     })
     .run(|_cx| HelloView);
 }
