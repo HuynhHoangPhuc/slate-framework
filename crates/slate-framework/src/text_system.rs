@@ -3,9 +3,12 @@
 //! `TextSystem` hides the platform-specific `TextBackend` behind `#[cfg]`
 //! so Element, Context, and tree types remain non-generic.
 
+use std::cell::RefCell;
 use std::marker::PhantomData;
+use std::rc::Weak;
 
 use slate_renderer::atlas::Atlas;
+use slate_renderer::RendererObserver;
 use slate_renderer::scene::GlyphInstance;
 use slate_text::backend::Font;
 use slate_text::run_builder::TextRunBuilder;
@@ -179,3 +182,34 @@ impl PlatformFont {
 
 // Note: !Send verification via compile-fail test planned for Phase 3+.
 // PhantomData<*const ()> marker enforces !Send at compile time.
+
+// ---------------------------------------------------------------------------
+// Phase 4: RendererObserver implementation for cache invalidation
+// ---------------------------------------------------------------------------
+
+/// Observer that clears GlyphCache CPU state on device recreation.
+///
+/// Registered with the Renderer; fires when device is successfully rebuilt.
+/// Clears stale AllocIds from the GlyphCache that reference the old atlas.
+pub struct TextSystemObserver {
+    inner: Weak<RefCell<Option<TextSystem>>>,
+}
+
+impl TextSystemObserver {
+    /// Create a new observer wrapping a weak ref to the text system.
+    pub fn new(inner: Weak<RefCell<Option<TextSystem>>>) -> Self {
+        Self { inner }
+    }
+}
+
+impl RendererObserver for TextSystemObserver {
+    fn on_renderer_recreated(&self, generation: u64) {
+        log::debug!(target: "slate::device_lost",
+            "TextSystemObserver: clearing GlyphCache CPU state (gen={})", generation);
+        if let Some(strong) = self.inner.upgrade()
+            && let Some(ts) = strong.borrow_mut().as_mut()
+        {
+            ts.glyph_cache_mut().clear_cpu_state();
+        }
+    }
+}

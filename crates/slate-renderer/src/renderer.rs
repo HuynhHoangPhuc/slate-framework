@@ -7,9 +7,11 @@
 //! a running `NSApplication` (CAMetalLayer attachment + `mainScreen` lookups).
 //! Constructing before `Platform::run` returns will panic or produce a null surface.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::num::NonZeroU32;
+use std::rc::Weak;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use slate_platform::Window;
 use wgpu::{
@@ -26,6 +28,8 @@ use crate::image_pipeline::ImagePipeline;
 use crate::instanced_rect_pipeline::InstancedRectPipeline;
 use crate::pipeline_shared::{self, ViewportUniform};
 use crate::scene::Scene;
+use crate::device_lost_reason;
+use crate::observer::RendererObserver;
 use crate::shadow_pipeline::ShadowPipeline;
 use crate::surface_target::{
     CompositionTarget, ConfigureError, FrameAcquireError,
@@ -66,6 +70,11 @@ pub struct Renderer {
 
     // Device-lost state (Phase 4 detection).
     device_lost: Cell<bool>,
+
+    // Observer infrastructure (Phase 1: RendererObserver trait).
+    // Generation starts at 1 so consumers can reserve 0 for "uninitialized".
+    generation: AtomicU64,
+    observers: RefCell<Vec<Weak<dyn RendererObserver>>>,
 }
 
 impl Renderer {
@@ -185,6 +194,8 @@ impl Renderer {
             image_pipeline,
             glyph_pipeline,
             device_lost: Cell::new(false),
+            generation: AtomicU64::new(1),
+            observers: RefCell::new(Vec::new()),
         })
     }
 
@@ -201,21 +212,123 @@ impl Renderer {
         self.device_lost.set(true);
     }
 
-    /// Check if an HRESULT indicates device-lost state. If so, sets the flag
-    /// and returns true. Called by internal error handlers.
+    /// Proactively check device health via GetDeviceRemovedReason.
+    ///
+    /// Called from WM_DISPLAYCHANGE and WM_DPICHANGED handlers to detect
+    /// device loss before the next Present fails. Returns true if the device
+    /// is lost (or status indeterminate on Windows).
+    pub fn mark_device_potentially_lost(&self) -> bool {
+        let reason = device_lost_reason::capture("Renderer::probe", 0, Some(&self.device));
+        let is_lost = match reason.removed_reason_hr {
+            Some(0) => false,  // S_OK: healthy
+            Some(_) => true,   // any non-zero HR: lost
+            #[cfg(target_os = "windows")]
+            None => true,      // as_hal failed on Windows → assume lost (AD-12)
+            #[cfg(not(target_os = "windows"))]
+            None => false,     // non-Windows: no DXGI semantics
+        };
+        if is_lost {
+            device_lost_reason::emit(&reason);
+            self.device_lost.set(true);
+        }
+        is_lost
+    }
+
+    /// Force device-lost state for testing. Calls ID3D12Device5::RemoveDevice()
+    /// to trigger a real DXGI_ERROR_DEVICE_REMOVED from the driver.
+    ///
+    /// # Safety
+    ///
+    /// This is a destructive operation that renders the device unusable.
+    /// Only available with the `test-hooks` feature or in `#[cfg(test)]`.
+    #[cfg(all(target_os = "windows", any(test, feature = "test-hooks")))]
+    pub fn force_device_lost(&self) {
+        use wgpu::hal::api::Dx12;
+        use windows::core::Interface;
+        use windows::Win32::Graphics::Direct3D12::ID3D12Device5;
+
+        unsafe {
+            if let Some(guard) = self.device.as_hal::<Dx12>() {
+                let raw_device = guard.raw_device();
+                if let Ok(dev5) = raw_device.cast::<ID3D12Device5>() {
+                    log::warn!(target: "slate::device_lost",
+                        "force_device_lost: calling ID3D12Device5::RemoveDevice");
+                    dev5.RemoveDevice();
+                }
+            }
+        }
+        self.device_lost.set(true);
+    }
+
+    /// Register an observer to receive device recreation notifications.
+    ///
+    /// The observer is stored as a weak reference. Dead observers are
+    /// automatically pruned during `fire_observers`.
+    pub fn register_observer(&self, weak: Weak<dyn RendererObserver>) {
+        self.observers.borrow_mut().push(weak);
+    }
+
+    /// Returns the current renderer generation (increments on each rebuild).
+    ///
+    /// Starts at 1; consumers can use 0 to represent "uninitialized".
+    pub fn current_generation(&self) -> u64 {
+        self.generation.load(Ordering::Acquire)
+    }
+
+    /// Fire all registered observers with the incremented generation.
+    ///
+    /// Called by Phase 3's recovery state machine after successful device rebuild.
+    /// Dead `Weak` references are pruned in the same pass.
+    ///
+    /// Uses clone-then-invoke pattern: collects live observers into a temp vec,
+    /// drops the RefCell borrow, then invokes callbacks. Prevents panic if an
+    /// observer attempts to call register_observer during its callback.
+    pub fn fire_observers(&self) {
+        let new_gen = self.generation.fetch_add(1, Ordering::AcqRel) + 1;
+
+        // Collect live observers and prune dead ones in a single pass
+        let live_observers: Vec<_> = {
+            let mut subs = self.observers.borrow_mut();
+            let mut live = Vec::with_capacity(subs.len());
+            subs.retain(|w| {
+                if let Some(strong) = w.upgrade() {
+                    live.push(strong);
+                    true
+                } else {
+                    false
+                }
+            });
+            live
+        }; // borrow dropped here
+
+        // Invoke callbacks without holding the RefCell borrow
+        for observer in &live_observers {
+            observer.on_renderer_recreated(new_gen);
+        }
+
+        log::debug!(target: "slate::device_lost",
+            "fire_observers: generation={}, active_observers={}", new_gen, live_observers.len());
+    }
+
+    /// Check if an HRESULT indicates device-lost state. If so, sets the flag,
+    /// emits telemetry, and returns true. Called by internal error handlers.
     fn check_hr_for_device_lost(&self, hr: i32) -> bool {
         // Canonical DXGI device-lost codes
         const DXGI_ERROR_DEVICE_REMOVED: i32 = 0x887A0005_u32 as i32;
-        const DXGI_ERROR_DEVICE_RESET: i32 = 0x887A0007_u32 as i32;
-        const DXGI_ERROR_DEVICE_HUNG: i32 = 0x887A0006_u32 as i32;
+        const DXGI_ERROR_DEVICE_RESET: i32 = 0x887A0006_u32 as i32;
+        const DXGI_ERROR_DEVICE_HUNG: i32 = 0x887A0007_u32 as i32;
         const DXGI_ERROR_DRIVER_INTERNAL_ERROR: i32 = 0x887A0020_u32 as i32;
+        const DXGI_ERROR_ACCESS_LOST: i32 = 0x887A0026_u32 as i32;
 
         if hr == DXGI_ERROR_DEVICE_REMOVED
             || hr == DXGI_ERROR_DEVICE_RESET
             || hr == DXGI_ERROR_DEVICE_HUNG
             || hr == DXGI_ERROR_DRIVER_INTERNAL_ERROR
+            || hr == DXGI_ERROR_ACCESS_LOST
         {
-            log::warn!(target: "slate::resize", "Device lost detected: HRESULT 0x{:08X}", hr as u32);
+            // Phase 2: Capture and emit structured telemetry
+            let reason = device_lost_reason::capture("Renderer::check_hr", hr, Some(&self.device));
+            device_lost_reason::emit(&reason);
             self.device_lost.set(true);
             true
         } else {

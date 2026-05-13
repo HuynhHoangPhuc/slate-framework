@@ -50,6 +50,7 @@ impl WinWindow {
             is_tracking_hover: Cell::new(false),
             delegate: RefCell::new(None),
             in_size_move: Cell::new(false),
+            pending_display_change: Cell::new(false),
         });
 
         let inner_ptr = Arc::as_ptr(&inner);

@@ -25,9 +25,11 @@
 // Public modules
 pub mod atlas;
 pub mod color;
+pub mod device_lost_reason;
 pub mod glyph_pipeline;
 pub mod image_pipeline;
 pub mod instanced_rect_pipeline;
+pub mod observer;
 pub mod pipeline_shared;
 pub mod renderer;
 pub mod scene;
@@ -55,6 +57,12 @@ pub use shadow_pipeline::ShadowPipeline;
 
 // Re-exports from scene
 pub use scene::{GlyphInstance, ImageInstance, Layer, RectInstance, Scene, ShadowInstance};
+
+// Re-exports from device_lost_reason
+pub use device_lost_reason::DeviceLostReason;
+
+// Re-exports from observer
+pub use observer::RendererObserver;
 
 // Re-exports from renderer
 pub use renderer::{RenderError, Renderer, RendererError};

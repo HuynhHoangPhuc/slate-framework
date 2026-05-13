@@ -100,4 +100,12 @@ pub trait WindowRenderDelegate {
     /// Called by the platform when the window needs to redraw (paint cycle).
     /// Implementer runs the full render pipeline synchronously.
     fn on_redraw(&self, window_id: WindowId);
+
+    /// Called on WM_DISPLAYCHANGE (monitor topology change). Default: no-op.
+    /// AppState overrides to probe device health proactively.
+    fn on_display_change(&self, _window_id: WindowId) {}
+
+    /// Called on WM_EXITSIZEMOVE (modal size-move loop ended). Default: no-op.
+    /// AppState overrides to fire deferred device probes.
+    fn on_size_move_end(&self, _window_id: WindowId) {}
 }

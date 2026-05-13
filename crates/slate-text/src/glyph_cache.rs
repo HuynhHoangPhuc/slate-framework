@@ -134,6 +134,15 @@ impl GlyphCache {
         }
     }
 
+    /// Clear CPU-side cache state without touching atlas.
+    ///
+    /// Used after device-lost recovery when the owning Atlas has been dropped
+    /// with the old Renderer. All cached `CachedGlyph` entries reference stale
+    /// atlas AllocIds and must be discarded.
+    pub fn clear_cpu_state(&mut self) {
+        self.cache.clear();
+    }
+
     /// Returns the number of cached glyphs.
     ///
     /// Useful for testing and debugging.

@@ -38,7 +38,9 @@ image.workspace = true
 
 [dev-dependencies]
 trybuild = "1"
+tracing-test = "0.2"
 
 [features]
 default = []
 tokio = ["dep:tokio", "dep:async-compat"]
+test-hooks = ["slate-renderer/test-hooks"]

@@ -16,16 +16,17 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use smallvec::SmallVec;
 use slate_platform::{
     DefaultWindow, Modifiers, MouseButton, PhysicalSize, Platform, Window, WindowId,
     WindowRenderDelegate,
 };
-use slate_reactive::ObserverId;
-use slate_renderer::{Renderer, Scene};
+use slate_reactive::{ObserverId, Signal};
+use slate_renderer::{Renderer, RendererObserver, Scene};
 
 use crate::app::AppContext;
 use crate::context::{LayoutCtx, PaintCtx, PrepaintCtx};
@@ -36,14 +37,38 @@ use crate::event::{
 use crate::executor::{Executor, RedrawRequester};
 use crate::hit_test::HitTestList;
 use crate::layout::{LayoutTree, compute_layout, resolve_bounds};
-use crate::paint_cache::TextShapingCache;
+use crate::paint_cache::{TextShapingCache, TextShapingCacheObserver};
 use crate::reactive_state::StateRegistry;
-use crate::text_system::TextSystem;
+use crate::text_system::{TextSystem, TextSystemObserver};
 use crate::types::{AccessibilityNode, ElementId, Point, Size};
 use crate::view::View;
 
-/// Maximum device-lost recovery attempts before giving up.
-pub(crate) const MAX_RECOVERY_ATTEMPTS: u32 = 3;
+// Recovery state machine constants (Phase 3)
+pub(crate) const RECOVERY_COOLDOWN_MS: u64 = 350;
+pub(crate) const RECOVERY_MAX_ATTEMPTS: u32 = 5;
+pub(crate) const RECOVERY_BACKOFF_BASE_MS: u64 = 100;
+pub(crate) const RECOVERY_BACKOFF_STEP_MS: u64 = 10;
+pub(crate) const RECOVERY_FLAP_GUARD_SECS: u64 = 5;
+
+/// Recovery state machine for device-lost handling (Phase 3).
+///
+/// Replaces the old 3-shot immediate retry with a zed-validated pattern:
+/// 350ms cooldown, 5-attempt backoff, and skip_draws gating.
+#[derive(Debug, Clone)]
+pub(crate) enum RecoveryState {
+    /// Device is healthy, no recovery in progress.
+    NotLost,
+    /// Device loss just detected; waiting to transition to cooldown.
+    DetectedLost { detected_at: Instant },
+    /// Waiting for 350ms cooldown before retry attempts.
+    CooldownGate { detected_at: Instant },
+    /// Actively retrying device recreation.
+    Retrying { attempt: u32, last_attempt_at: Instant },
+    /// Recovery succeeded; will transition to NotLost on next redraw.
+    Recovered,
+    /// Recovery exhausted all attempts; app should quit.
+    GiveUp,
+}
 
 /// Signal returned by dispatch methods to communicate with the event loop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,7 +109,7 @@ impl Drop for RenderingGuard<'_> {
 pub(crate) struct AppState<V: View> {
     // Deferred initialization (set in Event::Resumed)
     pub renderer: RefCell<Option<Renderer>>,
-    pub text_system: RefCell<Option<TextSystem>>,
+    pub text_system: Rc<RefCell<Option<TextSystem>>>,
     pub view: RefCell<Option<V>>,
 
     // Per-frame state (always allocated)
@@ -111,7 +136,11 @@ pub(crate) struct AppState<V: View> {
 
     // Element-level reactive state
     pub state_registry: RefCell<StateRegistry>,
-    pub text_shaping_cache: RefCell<TextShapingCache>,
+    pub text_shaping_cache: Rc<RefCell<TextShapingCache>>,
+
+    // Phase 4: Device-lost cache invalidation observers (held as Rc to keep alive)
+    pub text_system_observer: Rc<TextSystemObserver>,
+    pub text_shaping_cache_observer: Rc<TextShapingCacheObserver>,
 
     // Executor (foreground + background)
     pub executor: Executor,
@@ -120,8 +149,16 @@ pub(crate) struct AppState<V: View> {
     // Window reference for size queries
     pub window: Arc<DefaultWindow>,
 
-    // Device-lost recovery state
-    pub recovery_attempts: RefCell<u32>,
+    // Device-lost recovery state machine (Phase 3)
+    pub recovery_state: RefCell<RecoveryState>,
+    /// One-frame present suppression after recovery (Phase 3).
+    pub skip_draws: Cell<bool>,
+    /// 5-second flap guard: if device-lost re-fires within 5s of recovery, give up (Phase 3).
+    pub last_successful_recovery_at: Cell<Option<Instant>>,
+
+    // Renderer generation signal (Phase 1): increments on each successful device rebuild.
+    // Reactive consumers can subscribe to this to detect device recreation.
+    pub renderer_generation: Signal<u64>,
 
     // Re-entrancy guard: prevents nested render calls from causing RefCell panics
     pub rendering: Cell<bool>,
@@ -150,9 +187,18 @@ impl<V: View> AppState<V> {
         let view_observer_id = runtime.next_observer_id();
         let state_registry = StateRegistry::new(runtime.clone());
 
+        // Create Rc-wrapped caches for observer weak references (Phase 4)
+        let text_system = Rc::new(RefCell::new(None));
+        let text_shaping_cache = Rc::new(RefCell::new(TextShapingCache::new()));
+
+        // Create observers with weak references to the caches
+        let text_system_observer = Rc::new(TextSystemObserver::new(Rc::downgrade(&text_system)));
+        let text_shaping_cache_observer =
+            Rc::new(TextShapingCacheObserver::new(Rc::downgrade(&text_shaping_cache)));
+
         Self {
             renderer: RefCell::new(None),
-            text_system: RefCell::new(None),
+            text_system,
             view: RefCell::new(None),
 
             layout_tree: RefCell::new(LayoutTree::new()),
@@ -170,17 +216,23 @@ impl<V: View> AppState<V> {
             coalesced_move_pos: RefCell::new(None),
             last_dispatched_move_pos: RefCell::new(None),
 
-            runtime,
+            runtime: runtime.clone(),
             view_observer_id,
 
             state_registry: RefCell::new(state_registry),
-            text_shaping_cache: RefCell::new(TextShapingCache::new()),
+            text_shaping_cache,
+
+            text_system_observer,
+            text_shaping_cache_observer,
 
             executor,
             redraw_requester,
             window,
 
-            recovery_attempts: RefCell::new(0),
+            recovery_state: RefCell::new(RecoveryState::NotLost),
+            skip_draws: Cell::new(false),
+            last_successful_recovery_at: Cell::new(None),
+            renderer_generation: Signal::new(runtime, 0u64),
             rendering: Cell::new(false),
             pending_quit: Cell::new(false),
         }
@@ -195,7 +247,7 @@ impl<V: View> AppState<V> {
         platform: &P,
     ) -> Result<(), String> {
         // Re-entry guard: if already initialized (e.g. screen unlock fires Resumed again),
-        // skip re-initialization. DO NOT reset recovery_attempts here — that would wipe
+        // skip re-initialization. DO NOT reset recovery_state here — that would wipe
         // an active recovery counter. (Red-team RT-1.6)
         if self.renderer.borrow().is_some() {
             return Ok(());
@@ -224,13 +276,22 @@ impl<V: View> AppState<V> {
 
         log::info!("renderer and text system ready");
 
-        // 3. Store components
+        // 3. Register cache invalidation observers (Phase 4)
+        renderer.register_observer(Rc::downgrade(&self.text_system_observer)
+            as std::rc::Weak<dyn RendererObserver>);
+        renderer.register_observer(Rc::downgrade(&self.text_shaping_cache_observer)
+            as std::rc::Weak<dyn RendererObserver>);
+
+        // 4. Store components + update generation signal
+        let renderer_gen = renderer.current_generation();
         *self.renderer.borrow_mut() = Some(renderer);
         *self.text_system.borrow_mut() = Some(text_system);
         *self.view.borrow_mut() = Some(view_factory(cx));
+        self.renderer_generation.set(renderer_gen);
 
-        // 4. Reset state (only on first init)
-        *self.recovery_attempts.borrow_mut() = 0;
+        // 5. Reset state (only on first init)
+        *self.recovery_state.borrow_mut() = RecoveryState::NotLost;
+        self.skip_draws.set(false);
         self.rendering.set(false);
         self.pending_quit.set(false);
 
@@ -241,7 +302,7 @@ impl<V: View> AppState<V> {
     }
 
     /// Full redraw dispatch with device-lost recovery wrapper + re-entrancy guard.
-    /// Returns AppSignal::RequestQuit if recovery exceeds MAX_RECOVERY_ATTEMPTS.
+    /// Returns AppSignal::RequestQuit if recovery exceeds RECOVERY_MAX_ATTEMPTS.
     pub(crate) fn dispatch_redraw(&self) -> AppSignal {
         // RE-ENTRANCY GUARD — applies to BOTH sync and async render paths.
         // If a redraw is already in flight, skip the duplicate.
@@ -258,49 +319,154 @@ impl<V: View> AppState<V> {
             return AppSignal::None;
         }
 
-        // Device-lost recovery check
+        // Phase 3: State machine-driven device-lost recovery
         let device_lost = {
             let r = self.renderer.borrow();
             r.as_ref().map(|r| r.is_device_lost()).unwrap_or(false)
         };
 
-        if device_lost {
-            let attempts = *self.recovery_attempts.borrow();
-            if attempts >= MAX_RECOVERY_ATTEMPTS {
-                log::error!("GPU device recovery failed after {} attempts", attempts);
+        // Drive the state machine
+        let mut state = self.recovery_state.borrow_mut();
+        match state.clone() {
+            RecoveryState::NotLost if device_lost => {
+                // 5-second flap guard: if device-lost re-fires within 5s of recovery, give up
+                if let Some(t) = self.last_successful_recovery_at.get()
+                    && t.elapsed() < Duration::from_secs(RECOVERY_FLAP_GUARD_SECS)
+                {
+                    log::error!(target: "slate::device_lost",
+                        "device-lost re-fired within {}s of recovery — giving up",
+                        RECOVERY_FLAP_GUARD_SECS);
+                    *state = RecoveryState::GiveUp;
+                    drop(state);
+                    return AppSignal::RequestQuit;
+                }
+                log::info!(target: "slate::device_lost", "device loss detected, entering cooldown");
+                *state = RecoveryState::DetectedLost { detected_at: Instant::now() };
+                drop(state);
+                self.window.request_redraw();
+                return AppSignal::None;
+            }
+            RecoveryState::DetectedLost { detected_at } => {
+                *state = RecoveryState::CooldownGate { detected_at };
+                drop(state);
+                self.window.request_redraw();
+                return AppSignal::None;
+            }
+            RecoveryState::CooldownGate { detected_at } => {
+                if detected_at.elapsed() < Duration::from_millis(RECOVERY_COOLDOWN_MS) {
+                    drop(state);
+                    self.window.request_redraw();
+                    return AppSignal::None;
+                }
+                log::info!(target: "slate::device_lost", "cooldown elapsed, starting retry");
+                *state = RecoveryState::Retrying { attempt: 0, last_attempt_at: Instant::now() };
+                drop(state);
+                return self.execute_recovery_step();
+            }
+            RecoveryState::Retrying { .. } => {
+                drop(state);
+                return self.execute_recovery_step();
+            }
+            RecoveryState::Recovered => {
+                *state = RecoveryState::NotLost;
+                drop(state);
+                // Fall through to normal redraw
+            }
+            RecoveryState::GiveUp => {
                 return AppSignal::RequestQuit;
             }
-
-            *self.recovery_attempts.borrow_mut() += 1;
-            log::info!(
-                "Attempting GPU device recovery (attempt {}/{})",
-                attempts + 1,
-                MAX_RECOVERY_ATTEMPTS
-            );
-
-            // Drop old renderer
-            *self.renderer.borrow_mut() = None;
-
-            // Recreate renderer
-            match pollster::block_on(Renderer::new(self.window.clone())) {
-                Ok(new_renderer) => {
-                    log::info!("GPU device recovered successfully");
-                    *self.renderer.borrow_mut() = Some(new_renderer);
-                    *self.recovery_attempts.borrow_mut() = 0;
-                    self.window.request_redraw();
-                }
-                Err(e) => {
-                    log::error!("GPU device recovery failed: {e}");
-                    self.window.request_redraw();
-                }
+            RecoveryState::NotLost => {
+                drop(state);
+                // Fall through to normal redraw
             }
-            return AppSignal::None;
         }
 
         // Run the actual redraw
         self.run_redraw();
 
         AppSignal::None
+    }
+
+    /// Execute one step of the recovery retry loop (Phase 3).
+    ///
+    /// Called when `RecoveryState::Retrying`. Handles backoff sleep, renderer
+    /// recreation, observer firing, and state transitions.
+    fn execute_recovery_step(&self) -> AppSignal {
+        let attempt = match self.recovery_state.borrow().clone() {
+            RecoveryState::Retrying { attempt, .. } => attempt,
+            _ => return AppSignal::None,
+        };
+
+        // Backoff sleep (except first attempt)
+        if attempt > 0 {
+            let backoff = RECOVERY_BACKOFF_BASE_MS + (attempt as u64) * RECOVERY_BACKOFF_STEP_MS;
+            log::debug!(target: "slate::device_lost", "recovery backoff sleep: {}ms", backoff);
+            std::thread::sleep(Duration::from_millis(backoff));
+        }
+
+        log::info!(target: "slate::device_lost",
+            "attempting GPU device recovery (attempt {}/{})",
+            attempt + 1, RECOVERY_MAX_ATTEMPTS);
+
+        // Atomic drop (constraint #5): release borrow before rebuild
+        *self.renderer.borrow_mut() = None;
+
+        // Recreate renderer
+        match pollster::block_on(Renderer::new(self.window.clone())) {
+            Ok(new_renderer) => {
+                // Health-probe: check if the new renderer is already device-lost
+                if new_renderer.is_device_lost() {
+                    log::warn!(target: "slate::device_lost",
+                        "new renderer is already device-lost, treating as failure");
+                    return self.handle_recovery_failure(attempt);
+                }
+
+                log::info!(target: "slate::device_lost", "GPU device recovered successfully");
+
+                // Phase 4: Register cache invalidation observers before firing
+                new_renderer.register_observer(Rc::downgrade(&self.text_system_observer)
+                    as std::rc::Weak<dyn RendererObserver>);
+                new_renderer.register_observer(Rc::downgrade(&self.text_shaping_cache_observer)
+                    as std::rc::Weak<dyn RendererObserver>);
+                new_renderer.fire_observers();
+
+                let renderer_gen = new_renderer.current_generation();
+                *self.renderer.borrow_mut() = Some(new_renderer);
+                self.renderer_generation.set(renderer_gen);
+
+                // Set skip_draws for one-frame present suppression
+                self.skip_draws.set(true);
+
+                // Track for flap guard
+                self.last_successful_recovery_at.set(Some(Instant::now()));
+
+                *self.recovery_state.borrow_mut() = RecoveryState::Recovered;
+                self.window.request_redraw();
+                AppSignal::None
+            }
+            Err(e) => {
+                log::error!(target: "slate::device_lost", "GPU device recovery failed: {e}");
+                self.handle_recovery_failure(attempt)
+            }
+        }
+    }
+
+    /// Handle a failed recovery attempt.
+    fn handle_recovery_failure(&self, attempt: u32) -> AppSignal {
+        let next = attempt + 1;
+        if next >= RECOVERY_MAX_ATTEMPTS {
+            log::error!(target: "slate::device_lost",
+                "recovery exhausted after {} attempts", next);
+            *self.recovery_state.borrow_mut() = RecoveryState::GiveUp;
+            AppSignal::RequestQuit
+        } else {
+            *self.recovery_state.borrow_mut() = RecoveryState::Retrying {
+                attempt: next,
+                last_attempt_at: Instant::now(),
+            };
+            self.window.request_redraw();
+            AppSignal::None
+        }
     }
 
     /// Run the redraw pipeline (layout → prepaint → paint → render).
@@ -310,6 +476,13 @@ impl<V: View> AppState<V> {
     pub(crate) fn run_redraw(&self) {
         // Skip if not initialized
         if self.renderer.borrow().is_none() {
+            return;
+        }
+
+        // Phase 3: skip_draws gate - suppress one frame after recovery
+        if self.skip_draws.get() {
+            log::debug!(target: "slate::device_lost", "skip_draws active — present suppressed");
+            self.skip_draws.set(false);
             return;
         }
 
@@ -511,7 +684,7 @@ impl<V: View> AppState<V> {
     /// Handle device-restored event from platform.
     pub(crate) fn dispatch_device_restored(&self) -> AppSignal {
         log::info!("GPU device restored - rendering resumed");
-        *self.recovery_attempts.borrow_mut() = 0;
+        *self.recovery_state.borrow_mut() = RecoveryState::NotLost;
         AppSignal::RequestRedraw
     }
 
@@ -949,6 +1122,27 @@ impl<V: View> WindowRenderDelegate for AppState<V> {
         if self.dispatch_redraw() == AppSignal::RequestQuit {
             self.pending_quit.set(true);
         }
+    }
+
+    fn on_display_change(&self, _window_id: WindowId) {
+        // Phase 5: Proactive device health check on WM_DISPLAYCHANGE / WM_DPICHANGED.
+        // Called when monitor topology changes (resolution, monitor plug/unplug, DPI change).
+        let lost = {
+            let r = self.renderer.borrow();
+            r.as_ref().map(|r| r.mark_device_potentially_lost()).unwrap_or(false)
+        };
+        if lost {
+            log::info!(target: "slate::device_lost",
+                "on_display_change: device probe found loss → requesting redraw");
+            self.window.request_redraw();
+        }
+    }
+
+    fn on_size_move_end(&self, _window_id: WindowId) {
+        // Phase 5: Called when modal size-move loop ends (WM_EXITSIZEMOVE).
+        // The platform layer already fired any deferred display_change probe,
+        // so this is just a hook for future use. Currently no-op beyond logging.
+        log::trace!(target: "slate::win", "on_size_move_end: modal loop ended");
     }
 }
 

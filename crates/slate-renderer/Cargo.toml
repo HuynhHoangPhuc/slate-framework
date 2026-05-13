@@ -11,6 +11,10 @@ readme = "README.md"
 keywords = ["gui", "gpu", "wgpu", "renderer", "graphics"]
 categories = ["gui", "graphics", "rendering::graphics-api"]
 
+[features]
+default = []
+test-hooks = []
+
 [dependencies]
 slate-platform = { path = "../slate-platform", version = "0.0.2" }
 wgpu.workspace = true
@@ -20,6 +24,7 @@ bytemuck.workspace = true
 log.workspace = true
 thiserror.workspace = true
 pollster.workspace = true
+tracing = "0.1"
 etagere = "0.2.4"
 
 [target.'cfg(target_os = "windows")'.dependencies]

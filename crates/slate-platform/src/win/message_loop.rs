@@ -17,11 +17,11 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CREATESTRUCTW, DefWindowProcW, GWLP_USERDATA, GetClientRect, GetWindowLongPtrW, KillTimer,
     MINMAXINFO, MSG, PM_REMOVE, PeekMessageW, PostQuitMessage, SIZE_MINIMIZED, SWP_NOACTIVATE,
     SWP_NOZORDER, SetTimer, SetWindowLongPtrW, SetWindowPos, USER_TIMER_MINIMUM, WM_CAPTURECHANGED,
-    WM_CLOSE, WM_DESTROY, WM_DPICHANGED, WM_ENTERSIZEMOVE, WM_ERASEBKGND, WM_EXITSIZEMOVE,
-    WM_GETMINMAXINFO, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDBLCLK,
-    WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCREATE,
-    WM_NCDESTROY, WM_PAINT, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE, WM_TIMER,
-    WM_XBUTTONDBLCLK, WM_XBUTTONDOWN, WM_XBUTTONUP,
+    WM_CLOSE, WM_DESTROY, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_ENTERSIZEMOVE, WM_ERASEBKGND,
+    WM_EXITSIZEMOVE, WM_GETMINMAXINFO, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP,
+    WM_MBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL,
+    WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE,
+    WM_TIMER, WM_XBUTTONDBLCLK, WM_XBUTTONDOWN, WM_XBUTTONUP,
 };
 
 use super::{IN_SIZE_MOVE, SIZE_MOVE_TIMER_ID, WM_APP_WAKE, clear_wake_hwnd, dispatch_event};
@@ -87,6 +87,9 @@ pub struct WinWindowInner {
     pub(crate) delegate: RefCell<Option<Weak<dyn WindowRenderDelegate>>>,
     /// True during modal size-move loop; WM_SIZE skips delegate (WM_TIMER handles it).
     pub(crate) in_size_move: Cell<bool>,
+    /// Phase 5: Deferred device probe triggered during modal loop.
+    /// Set by WM_DISPLAYCHANGE/WM_DPICHANGED when in_size_move; fired in WM_EXITSIZEMOVE.
+    pub(crate) pending_display_change: Cell<bool>,
 }
 
 impl WinWindowInner {
@@ -94,10 +97,10 @@ impl WinWindowInner {
     /// no RefCell borrow is held across the trait method call (re-entrancy safe).
     fn with_delegate(&self, f: impl FnOnce(&dyn WindowRenderDelegate)) {
         let weak = self.delegate.borrow().clone();
-        if let Some(weak) = weak {
-            if let Some(strong) = weak.upgrade() {
-                f(&*strong);
-            }
+        if let Some(weak) = weak
+            && let Some(strong) = weak.upgrade()
+        {
+            f(&*strong);
         }
     }
 
@@ -190,13 +193,33 @@ impl WinWindowInner {
                     // discard
                 }
 
+                // Phase 5: Fire deferred device probe if display changed during modal loop.
+                if self.pending_display_change.get() {
+                    self.pending_display_change.set(false);
+                    log::trace!(target: "slate::win", "WM_EXITSIZEMOVE: firing deferred display change probe");
+                    self.with_delegate(|d| d.on_display_change(self.id));
+                }
+
+                self.with_delegate(|d| d.on_size_move_end(self.id));
                 self.with_delegate(|d| d.on_redraw(self.id));
                 dispatch_event(Event::WindowRedrawRequested { window: self.id });
+                LRESULT(0)
+            }
+            // Phase 5: Proactive device health check on monitor topology change.
+            WM_DISPLAYCHANGE => {
+                if self.in_size_move.get() || IN_SIZE_MOVE.with(|f| f.get()) {
+                    log::trace!(target: "slate::win", "WM_DISPLAYCHANGE: in modal loop, deferring probe");
+                    self.pending_display_change.set(true);
+                } else {
+                    log::trace!(target: "slate::win", "WM_DISPLAYCHANGE: probing device health");
+                    self.with_delegate(|d| d.on_display_change(self.id));
+                }
                 LRESULT(0)
             }
             WM_DPICHANGED => {
                 // SAFETY: Win32 guarantees lParam is a valid *const RECT for WM_DPICHANGED.
                 let suggested = unsafe { &*(lparam.0 as *const RECT) };
+                // SetWindowPos is unconditional per constraint #10 (must honour suggested rect).
                 let _ = unsafe {
                     SetWindowPos(
                         hwnd,
@@ -208,6 +231,7 @@ impl WinWindowInner {
                         SWP_NOZORDER | SWP_NOACTIVATE,
                     )
                 };
+                // In-size-move guard (Phase 5 / constraint #10): suppress resize dispatch during modal.
                 if !IN_SIZE_MOVE.with(|f| f.get()) {
                     // Suggested RECT is frame coords; use GetClientRect for client size.
                     let mut rect = RECT::default();
@@ -227,6 +251,14 @@ impl WinWindowInner {
                         physical_size: (pw, ph),
                         scale_factor: scale,
                     });
+                }
+                // Phase 5 / Q2: WM_DPICHANGED also probes for device loss (cross-monitor mid-drag).
+                if self.in_size_move.get() || IN_SIZE_MOVE.with(|f| f.get()) {
+                    log::trace!(target: "slate::win", "WM_DPICHANGED: in modal loop, deferring probe");
+                    self.pending_display_change.set(true);
+                } else {
+                    log::trace!(target: "slate::win", "WM_DPICHANGED: probing device health");
+                    self.with_delegate(|d| d.on_display_change(self.id));
                 }
                 LRESULT(0)
             }

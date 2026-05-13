@@ -18,10 +18,13 @@
 // Allow dead_code for API methods designed for future use (post-v1 expansion)
 #![allow(dead_code)]
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::mem::size_of;
+use std::rc::Weak;
 
+use slate_renderer::RendererObserver;
 use slate_text::types::{FontId, ShapedGlyph, ShapedLine};
 
 use crate::types::{Bounds, ElementId};
@@ -281,6 +284,16 @@ impl TextShapingCache {
         }
     }
 
+    /// Drop all cached shaped lines.
+    ///
+    /// Used after device-lost recovery when atlas slots referenced by stored
+    /// `Vec<ShapedGlyph>` AllocIds are invalid. Preserves frame counter and
+    /// metrics for telemetry continuity.
+    pub fn clear(&mut self) {
+        self.entries.clear();
+        self.memory_used = 0;
+    }
+
     /// Get current frame counter.
     pub fn current_frame(&self) -> u64 {
         self.current_frame
@@ -352,6 +365,35 @@ pub fn hash_bounds<H: Hasher>(bounds: &Bounds, h: &mut H) {
 pub fn hash_color<H: Hasher>(color: &[f32; 4], h: &mut H) {
     for &c in color {
         hash_f32(c, h);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4: RendererObserver implementation for cache invalidation
+// ---------------------------------------------------------------------------
+
+/// Observer that clears TextShapingCache on device recreation.
+///
+/// Registered with the Renderer; fires when device is successfully rebuilt.
+/// Clears stale shaped text entries that may reference invalid state.
+pub struct TextShapingCacheObserver {
+    inner: Weak<RefCell<TextShapingCache>>,
+}
+
+impl TextShapingCacheObserver {
+    /// Create a new observer wrapping a weak ref to the text shaping cache.
+    pub fn new(inner: Weak<RefCell<TextShapingCache>>) -> Self {
+        Self { inner }
+    }
+}
+
+impl RendererObserver for TextShapingCacheObserver {
+    fn on_renderer_recreated(&self, generation: u64) {
+        log::debug!(target: "slate::device_lost",
+            "TextShapingCacheObserver: clearing cache (gen={})", generation);
+        if let Some(strong) = self.inner.upgrade() {
+            strong.borrow_mut().clear();
+        }
     }
 }
 
