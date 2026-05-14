@@ -18,6 +18,7 @@ use std::sync::Arc;
 #[cfg(target_os = "windows")]
 use slate_platform::Window;
 
+#[cfg(target_os = "windows")]
 use crate::RendererError;
 
 /// Pick the adapter whose DXGI LUID matches the window's current monitor.
@@ -35,9 +36,7 @@ pub async fn pick_adapter_for_window(
     // must not be held across an await suspension point.
     let target_luid = window.current_monitor_luid();
 
-    let all_adapters: Vec<_> = instance
-        .enumerate_adapters(wgpu::Backends::DX12)
-        .await;
+    let all_adapters: Vec<_> = instance.enumerate_adapters(wgpu::Backends::DX12).await;
     let total_enumerated = all_adapters.len();
     let adapters: Vec<_> = all_adapters
         .into_iter()
@@ -90,12 +89,14 @@ pub async fn pick_adapter_for_window(
 /// WARP can present as `DeviceType::Cpu` OR as a discrete-type adapter with
 /// vendor id 0x1414 (Microsoft). Belt-and-suspenders name match catches
 /// localized strings that might slip past the structured fields.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub(crate) fn is_software_adapter(adapter: &wgpu::Adapter) -> bool {
     is_software_adapter_info(&adapter.get_info())
 }
 
 /// Same predicate operating on a raw `AdapterInfo` so it can be unit-tested
 /// without constructing a real wgpu adapter.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub(crate) fn is_software_adapter_info(info: &wgpu::AdapterInfo) -> bool {
     if matches!(info.device_type, wgpu::DeviceType::Cpu) {
         return true;
@@ -122,10 +123,7 @@ pub(crate) fn adapter_luid(adapter: &wgpu::Adapter) -> Option<u64> {
         let desc = raw.GetDesc().ok()?;
         // HighPart is i32 — zero-extend via u32 to avoid sign-extension
         // corrupting the upper 32 bits of the encoded LUID.
-        Some(
-            ((desc.AdapterLuid.HighPart as u32 as u64) << 32)
-                | (desc.AdapterLuid.LowPart as u64),
-        )
+        Some(((desc.AdapterLuid.HighPart as u32 as u64) << 32) | (desc.AdapterLuid.LowPart as u64))
     }
 }
 
@@ -164,7 +162,11 @@ mod tests {
 
     #[test]
     fn software_adapter_filter_catches_basic_render_name() {
-        let i = info("Microsoft Basic Render Driver", 0x10DE, DeviceType::DiscreteGpu);
+        let i = info(
+            "Microsoft Basic Render Driver",
+            0x10DE,
+            DeviceType::DiscreteGpu,
+        );
         assert!(is_software_adapter_info(&i));
     }
 
@@ -182,7 +184,11 @@ mod tests {
 
     #[test]
     fn software_adapter_filter_allows_real_igpu() {
-        let i = info("Intel(R) Iris(R) Xe Graphics", 0x8086, DeviceType::IntegratedGpu);
+        let i = info(
+            "Intel(R) Iris(R) Xe Graphics",
+            0x8086,
+            DeviceType::IntegratedGpu,
+        );
         assert!(!is_software_adapter_info(&i));
     }
 }

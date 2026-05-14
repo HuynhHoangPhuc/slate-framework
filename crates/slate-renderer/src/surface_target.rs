@@ -32,7 +32,8 @@ pub trait CompositionTarget {
     /// Returns `Ok(())` on success, or `Err` with an HRESULT if resize failed
     /// (Windows only — macOS always returns `Ok`). Caller should check for
     /// device-lost HRESULTs and handle recovery.
-    fn configure(&mut self, device: &Device, width: u32, height: u32) -> Result<(), ConfigureError>;
+    fn configure(&mut self, device: &Device, width: u32, height: u32)
+    -> Result<(), ConfigureError>;
 
     /// Acquire the next frame's render target. Caller renders into `view`,
     /// then calls `present`. On Windows, this drives the resource-state

@@ -23,8 +23,7 @@ use slate_framework::elements::Div;
 use slate_framework::executor::{Executor, RedrawRequester};
 use slate_framework::view::{IntoAny, View};
 use slate_platform::{
-    DefaultPlatform, Event, Platform, Window, WindowOptions, WindowRenderDelegate,
-    wake_run_loop,
+    DefaultPlatform, Event, Platform, Window, WindowOptions, WindowRenderDelegate, wake_run_loop,
 };
 
 const TICK_INTERVAL: Duration = Duration::from_millis(10);
@@ -82,7 +81,10 @@ fn destroyed_reason_does_not_trigger_recovery() {
 
         let should_tick = match event {
             Event::Resumed => {
-                if state.init_surfaces(&mut view_factory, &cx, &platform).is_err() {
+                if state
+                    .init_surfaces(&mut view_factory, &cx, &platform)
+                    .is_err()
+                {
                     platform.quit();
                     return;
                 }
@@ -106,7 +108,10 @@ fn destroyed_reason_does_not_trigger_recovery() {
                 "intentional drop for test".into(),
             );
             // Destroyed should be filtered → returns false
-            assert!(!result, "Destroyed reason should be filtered (return false)");
+            assert!(
+                !result,
+                "Destroyed reason should be filtered (return false)"
+            );
 
             // Device-lost flag should NOT be set
             assert!(
@@ -179,7 +184,10 @@ fn unknown_reason_triggers_recovery_state_machine() {
 
         let should_tick = match event {
             Event::Resumed => {
-                if state.init_surfaces(&mut view_factory, &cx, &platform).is_err() {
+                if state
+                    .init_surfaces(&mut view_factory, &cx, &platform)
+                    .is_err()
+                {
                     platform.quit();
                     return;
                 }
@@ -239,8 +247,8 @@ fn unknown_reason_triggers_recovery_state_machine() {
 
 #[test]
 fn atomic_flag_visibility_across_threads() {
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     // Synthetic test for atomic ordering contract:
     // Writer thread stores with Release, reader thread loads with Acquire.

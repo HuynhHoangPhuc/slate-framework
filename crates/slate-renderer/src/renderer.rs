@@ -14,6 +14,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use slate_platform::Window;
+#[cfg(not(target_os = "windows"))]
+use wgpu::RequestAdapterOptions;
 use wgpu::{
     Adapter, Backends, BindGroup, BindGroupDescriptor, BindGroupEntry, BindingResource, Buffer,
     BufferDescriptor, BufferUsages, Color, CommandEncoderDescriptor, Device, DeviceDescriptor,
@@ -21,21 +23,17 @@ use wgpu::{
     Operations, Queue, RenderPassColorAttachment, RenderPassDescriptor, RequestDeviceError,
     StoreOp, TextureFormat, Trace,
 };
-#[cfg(not(target_os = "windows"))]
-use wgpu::RequestAdapterOptions;
 
 use crate::atlas::{AllocId, Atlas, Format};
+use crate::device_lost_reason;
 use crate::glyph_pipeline::GlyphPipeline;
 use crate::image_pipeline::ImagePipeline;
 use crate::instanced_rect_pipeline::InstancedRectPipeline;
+use crate::observer::RendererObserver;
 use crate::pipeline_shared::{self, ViewportUniform};
 use crate::scene::Scene;
-use crate::device_lost_reason;
-use crate::observer::RendererObserver;
 use crate::shadow_pipeline::ShadowPipeline;
-use crate::surface_target::{
-    CompositionTarget, ConfigureError, FrameAcquireError,
-};
+use crate::surface_target::{CompositionTarget, ConfigureError, FrameAcquireError};
 
 #[cfg(target_os = "macos")]
 use crate::mac_surface;
@@ -301,12 +299,12 @@ impl Renderer {
     pub fn mark_device_potentially_lost(&self) -> bool {
         let reason = device_lost_reason::capture("Renderer::probe", 0, Some(&self.device));
         let is_lost = match reason.removed_reason_hr {
-            Some(0) => false,  // S_OK: healthy
-            Some(_) => true,   // any non-zero HR: lost
+            Some(0) => false, // S_OK: healthy
+            Some(_) => true,  // any non-zero HR: lost
             #[cfg(target_os = "windows")]
-            None => true,      // as_hal failed on Windows → assume lost (AD-12)
+            None => true, // as_hal failed on Windows → assume lost (AD-12)
             #[cfg(not(target_os = "windows"))]
-            None => false,     // non-Windows: no DXGI semantics
+            None => false, // non-Windows: no DXGI semantics
         };
         if is_lost {
             device_lost_reason::emit(&reason);
@@ -325,8 +323,8 @@ impl Renderer {
     #[cfg(all(target_os = "windows", any(test, feature = "test-hooks")))]
     pub fn force_device_lost(&self) {
         use wgpu::hal::api::Dx12;
-        use windows::core::Interface;
         use windows::Win32::Graphics::Direct3D12::ID3D12Device5;
+        use windows::core::Interface;
 
         unsafe {
             if let Some(guard) = self.device.as_hal::<Dx12>() {

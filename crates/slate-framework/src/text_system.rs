@@ -7,8 +7,8 @@ use std::cell::RefCell;
 use std::marker::PhantomData;
 use std::rc::Weak;
 
-use slate_renderer::atlas::Atlas;
 use slate_renderer::RendererObserver;
+use slate_renderer::atlas::Atlas;
 use slate_renderer::scene::GlyphInstance;
 use slate_text::backend::Font;
 use slate_text::run_builder::TextRunBuilder;

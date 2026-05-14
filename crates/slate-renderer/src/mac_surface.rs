@@ -74,7 +74,12 @@ impl MacSurface {
 }
 
 impl CompositionTarget for MacSurface {
-    fn configure(&mut self, device: &Device, width: u32, height: u32) -> Result<(), ConfigureError> {
+    fn configure(
+        &mut self,
+        device: &Device,
+        width: u32,
+        height: u32,
+    ) -> Result<(), ConfigureError> {
         self.config.width = width.max(1);
         self.config.height = height.max(1);
         self.surface.configure(device, &self.config);

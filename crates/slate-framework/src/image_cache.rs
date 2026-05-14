@@ -8,8 +8,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Weak;
 
-use slate_renderer::atlas::{Atlas, AtlasAllocation};
 use slate_renderer::RendererObserver;
+use slate_renderer::atlas::{Atlas, AtlasAllocation};
 use wgpu::Queue;
 
 /// Cache for uploaded images, keyed by (content_hash, width, height).

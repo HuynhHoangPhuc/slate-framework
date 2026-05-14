@@ -131,7 +131,7 @@ fn get_removed_reason_and_luid(device: &wgpu::Device) -> (Option<i32>, Option<u6
         // - Ok(()) means S_OK (device healthy)
         // - Err(e) means device lost, e.code() is the HRESULT
         let removed_hr = match raw_device.GetDeviceRemovedReason() {
-            Ok(()) => 0, // S_OK - device is healthy
+            Ok(()) => 0,          // S_OK - device is healthy
             Err(e) => e.code().0, // Extract HRESULT from error
         };
 
@@ -143,11 +143,9 @@ fn get_removed_reason_and_luid(device: &wgpu::Device) -> (Option<i32>, Option<u6
 }
 
 #[cfg(target_os = "windows")]
-fn get_adapter_luid(
-    device: &windows::Win32::Graphics::Direct3D12::ID3D12Device,
-) -> Option<u64> {
-    use windows::core::Interface;
+fn get_adapter_luid(device: &windows::Win32::Graphics::Direct3D12::ID3D12Device) -> Option<u64> {
     use windows::Win32::Graphics::Dxgi::IDXGIDevice;
+    use windows::core::Interface;
 
     unsafe {
         // Query IDXGIDevice from the D3D12 device
@@ -161,8 +159,7 @@ fn get_adapter_luid(
         let desc = adapter.GetDesc().ok()?;
 
         // Pack LUID (high + low 32 bits)
-        let luid = ((desc.AdapterLuid.HighPart as u64) << 32)
-            | (desc.AdapterLuid.LowPart as u64);
+        let luid = ((desc.AdapterLuid.HighPart as u64) << 32) | (desc.AdapterLuid.LowPart as u64);
         Some(luid)
     }
 }
@@ -178,8 +175,14 @@ mod tests {
 
     #[test]
     fn removed_reason_names() {
-        assert_eq!(removed_reason_name(Some(0x887A0005_u32 as i32)), "DEVICE_REMOVED");
-        assert_eq!(removed_reason_name(Some(0x887A0006_u32 as i32)), "DEVICE_HUNG");
+        assert_eq!(
+            removed_reason_name(Some(0x887A0005_u32 as i32)),
+            "DEVICE_REMOVED"
+        );
+        assert_eq!(
+            removed_reason_name(Some(0x887A0006_u32 as i32)),
+            "DEVICE_HUNG"
+        );
         assert_eq!(removed_reason_name(Some(0)), "S_OK");
         assert_eq!(removed_reason_name(None), "n/a");
     }

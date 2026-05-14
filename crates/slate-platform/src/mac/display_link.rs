@@ -20,9 +20,7 @@ use crate::{Event, WindowId};
 // Core Video FFI bindings
 #[link(name = "CoreVideo", kind = "framework")]
 unsafe extern "C" {
-    fn CVDisplayLinkCreateWithActiveCGDisplays(
-        display_link_out: *mut CVDisplayLinkRef,
-    ) -> i32;
+    fn CVDisplayLinkCreateWithActiveCGDisplays(display_link_out: *mut CVDisplayLinkRef) -> i32;
     fn CVDisplayLinkSetOutputCallback(
         display_link: CVDisplayLinkRef,
         callback: CVDisplayLinkOutputCallback,
@@ -32,7 +30,6 @@ unsafe extern "C" {
     fn CVDisplayLinkStop(display_link: CVDisplayLinkRef) -> i32;
     fn CVDisplayLinkRelease(display_link: CVDisplayLinkRef);
 }
-
 
 type CVDisplayLinkRef = *mut c_void;
 type CVDisplayLinkOutputCallback = extern "C" fn(

@@ -16,9 +16,9 @@ fn generate_quadrant_pattern() -> Vec<u8> {
     for y in 0..4 {
         for x in 0..4 {
             let color = match (x < 2, y < 2) {
-                (true, true) => [255, 0, 0, 255],     // top-left: red
-                (false, true) => [0, 255, 0, 255],   // top-right: green
-                (true, false) => [0, 0, 255, 255],   // bottom-left: blue
+                (true, true) => [255, 0, 0, 255],       // top-left: red
+                (false, true) => [0, 255, 0, 255],      // top-right: green
+                (true, false) => [0, 0, 255, 255],      // bottom-left: blue
                 (false, false) => [255, 255, 255, 255], // bottom-right: white
             };
             pixels.extend_from_slice(&color);
@@ -99,7 +99,9 @@ fn image_element_with_style_override() {
     let mut app = HeadlessApp::new(64, 64).expect("HeadlessApp creation failed");
 
     // Create a 2x2 solid red image
-    let pixels = vec![255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255];
+    let pixels = vec![
+        255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255,
+    ];
     let img = Image::new(2, 2, pixels);
 
     let ui = Div::new().child(img).into_any();

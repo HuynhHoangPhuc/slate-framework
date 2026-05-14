@@ -13,7 +13,7 @@ use windows::Win32::System::SystemServices::{MK_CONTROL, MK_SHIFT};
 use windows::Win32::UI::Controls::{HOVER_DEFAULT, WM_MOUSELEAVE};
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyState, ReleaseCapture, SetCapture, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT, VK_LWIN,
+    GetKeyState, ReleaseCapture, SetCapture, TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent, VK_LWIN,
     VK_MENU, VK_RWIN,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -485,13 +485,7 @@ impl WinWindowInner {
     }
 
     /// Handle mouse button down: acquire capture, emit MouseDown.
-    fn handle_button_down(
-        &self,
-        hwnd: HWND,
-        wparam: WPARAM,
-        lparam: LPARAM,
-        button: MouseButton,
-    ) {
+    fn handle_button_down(&self, hwnd: HWND, wparam: WPARAM, lparam: LPARAM, button: MouseButton) {
         let scale = self.get_dpi_scale(hwnd);
         let position = decode_pos(lparam, scale);
         let modifiers = decode_modifiers(wparam);
@@ -513,13 +507,7 @@ impl WinWindowInner {
     }
 
     /// Handle mouse button up: release capture if all buttons up, emit MouseUp.
-    fn handle_button_up(
-        &self,
-        hwnd: HWND,
-        wparam: WPARAM,
-        lparam: LPARAM,
-        button: MouseButton,
-    ) {
+    fn handle_button_up(&self, hwnd: HWND, wparam: WPARAM, lparam: LPARAM, button: MouseButton) {
         let scale = self.get_dpi_scale(hwnd);
         let position = decode_pos(lparam, scale);
         let modifiers = decode_modifiers(wparam);

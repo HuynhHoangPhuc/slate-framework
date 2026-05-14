@@ -34,17 +34,17 @@ pub mod context;
 pub mod element;
 pub mod elements;
 pub mod event;
-pub(crate) mod image_cache;
 pub mod executor;
 pub mod headless;
 pub mod hit_test;
+pub(crate) mod image_cache;
 pub mod layout;
 pub(crate) mod paint_cache;
 pub(crate) mod reactive_state;
 pub mod style;
-pub mod text_system;
 #[cfg(all(target_os = "windows", feature = "test-hooks"))]
 pub mod test_support;
+pub mod text_system;
 pub mod types;
 pub mod view;
 
@@ -56,8 +56,8 @@ pub use slate_text;
 
 // Re-export core types
 pub use app::{App, AppContext};
-pub use event::{EventCtx, MouseEvent, PointerEvent, PointerEventKind, ScrollEvent};
 pub use color::Color;
+pub use event::{EventCtx, MouseEvent, PointerEvent, PointerEventKind, ScrollEvent};
 pub use headless::{HeadlessApp, HeadlessError};
 
 /// Reactive primitives for building reactive UIs.

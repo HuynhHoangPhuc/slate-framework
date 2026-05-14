@@ -67,7 +67,9 @@ pub(crate) fn register_window(id: WindowId, window: &Arc<MacWindow>) {
 
 /// Unregister a window from the thread-local registry. Idempotent.
 pub(crate) fn unregister_window(id: WindowId) {
-    WINDOWS.with(|m| { m.borrow_mut().remove(&id); });
+    WINDOWS.with(|m| {
+        m.borrow_mut().remove(&id);
+    });
 }
 
 /// Lookup MacWindow by id, then upgrade its render_delegate Weak, then invoke.
@@ -75,7 +77,9 @@ pub(crate) fn unregister_window(id: WindowId) {
 pub(crate) fn with_window_delegate(id: WindowId, f: impl FnOnce(&dyn WindowRenderDelegate)) {
     // Step 1: upgrade Weak<MacWindow> from registry; release WINDOWS borrow.
     let window = WINDOWS.with(|m| m.borrow().get(&id).and_then(|w| w.upgrade()));
-    let Some(window) = window else { return; };
+    let Some(window) = window else {
+        return;
+    };
 
     // Step 2: clone Option<Weak<dyn WindowRenderDelegate>> from MacWindow;
     // release render_delegate RefCell borrow IMMEDIATELY.

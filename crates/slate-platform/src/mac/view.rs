@@ -12,7 +12,9 @@ use objc2_app_kit::{
 use objc2_foundation::{MainThreadMarker, NSNotification, NSObject, NSObjectProtocol, NSRect};
 use objc2_quartz_core::CAMetalLayer;
 
-use super::{dispatch_event, ffi_boundary, post_redraw_event, unregister_window, with_window_delegate};
+use super::{
+    dispatch_event, ffi_boundary, post_redraw_event, unregister_window, with_window_delegate,
+};
 use crate::{Event, Modifiers, MouseButton, PhysicalSize, WindowId};
 
 // ---------------------------------------------------------------------------
@@ -37,7 +39,11 @@ fn decode_position(view: &MetalView, event: &NSEvent) -> (f32, f32) {
 /// Takes (x, y) in window coords (Y-up), bounds_height, and scale.
 /// Post-Phase-3: scale is ignored (coords are already logical from NSView).
 #[cfg(test)]
-pub(crate) fn decode_position_pure(loc_in_window: (f32, f32), bounds_height: f32, _scale: f32) -> (f32, f32) {
+pub(crate) fn decode_position_pure(
+    loc_in_window: (f32, f32),
+    bounds_height: f32,
+    _scale: f32,
+) -> (f32, f32) {
     let x = loc_in_window.0;
     let y = bounds_height - loc_in_window.1;
     (x, y)

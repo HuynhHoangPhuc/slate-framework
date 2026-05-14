@@ -16,8 +16,8 @@ use taffy::TaffyTree;
 
 use crate::event::Handlers;
 use crate::executor::ForegroundExecutor;
-use crate::image_cache::ImageCache;
 use crate::hit_test::{HitRegion, HitTestList};
+use crate::image_cache::ImageCache;
 use crate::paint_cache::TextShapingCache;
 use crate::reactive_state::StateRegistry;
 use crate::text_system::TextSystem;
@@ -202,11 +202,7 @@ impl<'a> PrepaintCtx<'a> {
     /// Records the parent relationship for event dispatch ancestor walking.
     pub fn push_frame(&mut self, id: ElementId) {
         // Record parent relationship for event dispatch
-        if let Some(&parent) = self
-            .id_stack
-            .last()
-            .filter(|&&p| p != ElementId::root())
-        {
+        if let Some(&parent) = self.id_stack.last().filter(|&&p| p != ElementId::root()) {
             self.parent_map.insert(id, parent);
         }
         self.id_stack.push(id);

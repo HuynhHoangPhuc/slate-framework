@@ -155,7 +155,10 @@ impl App {
 
             let signal = match event {
                 Event::Resumed => {
-                    if state_ref.init_surfaces(&mut view_fn, &cx, platform_ref).is_err() {
+                    if state_ref
+                        .init_surfaces(&mut view_fn, &cx, platform_ref)
+                        .is_err()
+                    {
                         AppSignal::RequestQuit
                     } else {
                         #[cfg(all(target_os = "windows", feature = "test-hooks"))]
@@ -195,7 +198,8 @@ impl App {
                     precise,
                     modifiers,
                     ..
-                } => state_ref.dispatch_mouse_scrolled(position, delta_x, delta_y, precise, modifiers),
+                } => state_ref
+                    .dispatch_mouse_scrolled(position, delta_x, delta_y, precise, modifiers),
                 Event::MouseExited { .. } => state_ref.dispatch_mouse_exited(),
                 Event::CaptureLost { .. } => state_ref.dispatch_capture_lost(),
                 Event::DeviceLost { fatal, .. } => state_ref.dispatch_device_lost(fatal),

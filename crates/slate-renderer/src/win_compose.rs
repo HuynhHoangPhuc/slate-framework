@@ -40,7 +40,6 @@ use crate::surface_target::{
     PresentError,
 };
 
-
 const BUFFER_COUNT: u32 = 3;
 
 pub(crate) struct WinCompose {
@@ -285,7 +284,12 @@ impl WinCompose {
 }
 
 impl CompositionTarget for WinCompose {
-    fn configure(&mut self, device: &Device, width: u32, height: u32) -> Result<(), ConfigureError> {
+    fn configure(
+        &mut self,
+        device: &Device,
+        width: u32,
+        height: u32,
+    ) -> Result<(), ConfigureError> {
         let w = width.max(1);
         let h = height.max(1);
         log::trace!(target: "slate::resize", "configure requested: {}x{} (current: {}x{})", w, h, self.width, self.height);

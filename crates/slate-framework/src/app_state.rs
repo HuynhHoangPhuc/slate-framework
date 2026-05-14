@@ -20,13 +20,13 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use smallvec::SmallVec;
 use slate_platform::{
     DefaultWindow, Modifiers, MouseButton, PhysicalSize, Platform, Window, WindowId,
     WindowRenderDelegate,
 };
 use slate_reactive::{ObserverId, Signal};
 use slate_renderer::{Renderer, RendererObserver, Scene};
+use smallvec::SmallVec;
 
 use crate::app::AppContext;
 use crate::context::{LayoutCtx, PaintCtx, PrepaintCtx};
@@ -72,7 +72,10 @@ pub enum RecoveryState {
     /// Waiting for 350ms cooldown before retry attempts.
     CooldownGate { detected_at: Instant },
     /// Actively retrying device recreation.
-    Retrying { attempt: u32, last_attempt_at: Instant },
+    Retrying {
+        attempt: u32,
+        last_attempt_at: Instant,
+    },
     /// Recovery succeeded; will transition to NotLost on next redraw.
     Recovered,
     /// Recovery exhausted all attempts; app should quit.
@@ -211,8 +214,9 @@ impl<V: View> AppState<V> {
 
         // Create observers with weak references to the caches
         let text_system_observer = Rc::new(TextSystemObserver::new(Rc::downgrade(&text_system)));
-        let text_shaping_cache_observer =
-            Rc::new(TextShapingCacheObserver::new(Rc::downgrade(&text_shaping_cache)));
+        let text_shaping_cache_observer = Rc::new(TextShapingCacheObserver::new(Rc::downgrade(
+            &text_shaping_cache,
+        )));
 
         // Image cache + observer (Phase 2)
         let image_cache = Rc::new(RefCell::new(ImageCache::new()));
@@ -302,12 +306,15 @@ impl<V: View> AppState<V> {
         log::info!("renderer and text system ready");
 
         // 3. Register cache invalidation observers (Phase 4 + Phase 2)
-        renderer.register_observer(Rc::downgrade(&self.text_system_observer)
-            as std::rc::Weak<dyn RendererObserver>);
-        renderer.register_observer(Rc::downgrade(&self.text_shaping_cache_observer)
-            as std::rc::Weak<dyn RendererObserver>);
-        renderer.register_observer(Rc::downgrade(&self.image_system_observer)
-            as std::rc::Weak<dyn RendererObserver>);
+        renderer.register_observer(
+            Rc::downgrade(&self.text_system_observer) as std::rc::Weak<dyn RendererObserver>
+        );
+        renderer
+            .register_observer(Rc::downgrade(&self.text_shaping_cache_observer)
+                as std::rc::Weak<dyn RendererObserver>);
+        renderer.register_observer(
+            Rc::downgrade(&self.image_system_observer) as std::rc::Weak<dyn RendererObserver>
+        );
 
         // 4. Store components + update generation signal
         let renderer_gen = renderer.current_generation();
@@ -382,7 +389,9 @@ impl<V: View> AppState<V> {
             let recently_probed = self
                 .last_adapter_check_at
                 .get()
-                .map(|t| now.duration_since(t) < Duration::from_millis(ADAPTER_PROBE_MIN_INTERVAL_MS))
+                .map(|t| {
+                    now.duration_since(t) < Duration::from_millis(ADAPTER_PROBE_MIN_INTERVAL_MS)
+                })
                 .unwrap_or(false);
             if healthy && !recently_probed {
                 self.last_adapter_check_at.set(Some(now));
@@ -438,7 +447,9 @@ impl<V: View> AppState<V> {
                     }
                 }
                 log::info!(target: "slate::device_lost", "device loss detected, entering cooldown");
-                *state = RecoveryState::DetectedLost { detected_at: Instant::now() };
+                *state = RecoveryState::DetectedLost {
+                    detected_at: Instant::now(),
+                };
                 drop(state);
                 self.window.request_redraw();
                 return AppSignal::None;
@@ -456,7 +467,10 @@ impl<V: View> AppState<V> {
                     return AppSignal::None;
                 }
                 log::info!(target: "slate::device_lost", "cooldown elapsed, starting retry");
-                *state = RecoveryState::Retrying { attempt: 0, last_attempt_at: Instant::now() };
+                *state = RecoveryState::Retrying {
+                    attempt: 0,
+                    last_attempt_at: Instant::now(),
+                };
                 drop(state);
                 return self.execute_recovery_step();
             }
@@ -951,18 +965,16 @@ impl<V: View> AppState<V> {
                     .filter_map(|id| hm.get(&id).and_then(|h| h.on_pointer_event.clone()))
                     .collect()
             };
-            let click_handlers: SmallVec<[MouseHandler; 8]> = if button == MouseButton::Left
-                && up_hit == captured
-                && captured.is_some()
-            {
-                let hm = self.handler_map.borrow();
-                let pm = self.parent_map.borrow();
-                ancestors(t, &pm)
-                    .filter_map(|id| hm.get(&id).and_then(|h| h.on_click.clone()))
-                    .collect()
-            } else {
-                SmallVec::new()
-            };
+            let click_handlers: SmallVec<[MouseHandler; 8]> =
+                if button == MouseButton::Left && up_hit == captured && captured.is_some() {
+                    let hm = self.handler_map.borrow();
+                    let pm = self.parent_map.borrow();
+                    ancestors(t, &pm)
+                        .filter_map(|id| hm.get(&id).and_then(|h| h.on_click.clone()))
+                        .collect()
+                } else {
+                    SmallVec::new()
+                };
 
             // Invoke handlers (borrows released)
             let mut stopped = false;
@@ -1254,7 +1266,9 @@ impl<V: View> WindowRenderDelegate for AppState<V> {
         log::trace!(target: "slate::device_lost", "on_display_change ENTRY");
         let lost = {
             let r = self.renderer.borrow();
-            r.as_ref().map(|r| r.mark_device_potentially_lost()).unwrap_or(false)
+            r.as_ref()
+                .map(|r| r.mark_device_potentially_lost())
+                .unwrap_or(false)
         };
         log::trace!(target: "slate::device_lost", "on_display_change: probe returned lost={lost}");
         if lost {
@@ -1301,7 +1315,10 @@ pub(crate) fn bubble_mouse_handler<F>(
 {
     let mut chain: SmallVec<[MouseHandler; 8]> = SmallVec::new();
     for id in ancestors(target, parent_map) {
-        if let Some(h) = handler_map.get(&id).and_then(|handlers| get_handler(handlers)) {
+        if let Some(h) = handler_map
+            .get(&id)
+            .and_then(|handlers| get_handler(handlers))
+        {
             chain.push(h);
         }
     }
@@ -1328,7 +1345,10 @@ pub(crate) fn bubble_pointer_handler<F>(
 {
     let mut chain: SmallVec<[PointerHandler; 8]> = SmallVec::new();
     for id in ancestors(target, parent_map) {
-        if let Some(h) = handler_map.get(&id).and_then(|handlers| get_handler(handlers)) {
+        if let Some(h) = handler_map
+            .get(&id)
+            .and_then(|handlers| get_handler(handlers))
+        {
             chain.push(h);
         }
     }
@@ -1396,7 +1416,9 @@ pub(crate) fn fire_hover_transitions(
     let mut leave_handlers: SmallVec<[PointerHandler; 8]> = SmallVec::new();
     for &id in &old_chain {
         if !new_set.contains(&id)
-            && let Some(h) = handler_map.get(&id).and_then(|h| h.on_pointer_leave.clone())
+            && let Some(h) = handler_map
+                .get(&id)
+                .and_then(|h| h.on_pointer_leave.clone())
         {
             leave_handlers.push(h);
         }
@@ -1412,7 +1434,10 @@ pub(crate) fn fire_hover_transitions(
 
     let mut enter_handlers: SmallVec<[PointerHandler; 8]> = SmallVec::new();
     for &id in &enter_ids {
-        if let Some(h) = handler_map.get(&id).and_then(|h| h.on_pointer_enter.clone()) {
+        if let Some(h) = handler_map
+            .get(&id)
+            .and_then(|h| h.on_pointer_enter.clone())
+        {
             enter_handlers.push(h);
         }
     }
