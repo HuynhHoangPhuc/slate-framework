@@ -1397,6 +1397,27 @@ impl<V: View> AppState<V> {
         }
     }
 
+    /// Fire the device-lost callback logic for testing.
+    ///
+    /// Mirrors `Renderer::fire_device_lost_callback_for_test`: filters `Destroyed`
+    /// (returns false), otherwise captures telemetry and sets atomic flag.
+    /// Use to validate the Destroyed filter and state-machine engagement paths
+    /// without triggering a real wgpu device-lost condition.
+    ///
+    /// Only available with the `test-hooks` feature.
+    #[cfg(feature = "test-hooks")]
+    pub fn fire_renderer_device_lost_callback(
+        &self,
+        reason: wgpu::DeviceLostReason,
+        message: String,
+    ) -> bool {
+        if let Some(r) = self.renderer.borrow().as_ref() {
+            r.fire_device_lost_callback_for_test(reason, message)
+        } else {
+            false
+        }
+    }
+
     /// Read the sync-path quit signal.
     pub fn pending_quit(&self) -> bool {
         self.pending_quit.get()

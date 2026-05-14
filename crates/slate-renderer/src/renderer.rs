@@ -312,6 +312,45 @@ impl Renderer {
         self.device_lost.store(true, Ordering::Release);
     }
 
+    /// Fire the device-lost callback logic for testing.
+    ///
+    /// Mirrors the real `set_device_lost_callback` closure: filters `Destroyed`
+    /// (no-op), otherwise captures telemetry, emits tracing event, sets atomic.
+    /// Use to validate the Destroyed filter and state-machine engagement paths
+    /// without triggering a real wgpu device-lost condition.
+    ///
+    /// Only available with the `test-hooks` feature or in `#[cfg(test)]`.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn fire_device_lost_callback_for_test(
+        &self,
+        reason: wgpu::DeviceLostReason,
+        message: String,
+    ) -> bool {
+        if reason == wgpu::DeviceLostReason::Destroyed {
+            log::debug!(
+                target: "slate::device_lost",
+                "fire_device_lost_callback_for_test: filtered Destroyed reason: {message}"
+            );
+            return false;
+        }
+
+        let dlr = device_lost_reason::capture_from_wgpu(reason, message, Some(&self.device));
+        device_lost_reason::emit(&dlr);
+        log::warn!(
+            target: "slate::device_lost",
+            "fire_device_lost_callback_for_test: surface_hr=0x{:08X} removed_reason={:?}",
+            dlr.surface_hr as u32,
+            dlr.removed_reason_hr.map(|h| format!("0x{:08X}", h as u32))
+        );
+
+        let prev = self.device_lost.swap(true, Ordering::AcqRel);
+        log::trace!(
+            target: "slate::device_lost",
+            "fire_device_lost_callback_for_test: prev_flag={}", prev
+        );
+        true
+    }
+
     /// Register an observer to receive device recreation notifications.
     ///
     /// The observer is stored as a weak reference. Dead observers are

@@ -22,6 +22,17 @@
 //! });
 //! ```
 
+// RT-11: Prevent `test-hooks` feature from leaking into release builds.
+// The feature exposes `force_device_lost` and `fire_device_lost_callback_for_test`
+// which can DoS the GPU. Belt-and-suspenders against workspace members accidentally
+// enabling the feature via `[dependencies]` (not `[dev-dependencies]`).
+#[cfg(all(not(debug_assertions), feature = "test-hooks"))]
+compile_error!(
+    "the `test-hooks` feature must NEVER be enabled in release builds — \
+     it exposes `force_device_lost` and `fire_device_lost_callback_for_test` \
+     as public API and would allow any caller to DoS the GPU"
+);
+
 // Public modules
 pub mod atlas;
 pub mod color;
