@@ -44,8 +44,8 @@ pub fn capture(source: &'static str, hr: i32, device: Option<&wgpu::Device>) -> 
 
 /// Capture a device-lost reason from the wgpu `set_device_lost_callback` call site.
 ///
-/// The wgpu callback is `Send + 'static` and cannot capture `&Device`, so this
-/// constructor produces telemetry without `removed_reason_hr` or `adapter_luid`.
+/// Use this fallback when the callback cannot upgrade its weak device reference.
+/// It produces telemetry without `removed_reason_hr` or `adapter_luid`.
 /// The wgpu-provided reason variant is mapped onto `surface_hr` so existing
 /// HRESULT-based routing remains uniform; `Unknown` uses the `E_FAIL` sentinel.
 ///
@@ -55,15 +55,30 @@ pub fn capture_from_wgpu_no_device(
     reason: wgpu::DeviceLostReason,
     message: String,
 ) -> DeviceLostReason {
+    capture_from_wgpu(reason, message, None)
+}
+
+/// Capture a device-lost reason from the wgpu callback with optional device context.
+///
+/// When the callback can upgrade a weak device reference, this keeps the wgpu
+/// reason/message while also recording `GetDeviceRemovedReason()` and adapter LUID.
+pub fn capture_from_wgpu(
+    reason: wgpu::DeviceLostReason,
+    message: String,
+    device: Option<&wgpu::Device>,
+) -> DeviceLostReason {
     let surface_hr = match reason {
         wgpu::DeviceLostReason::Unknown => 0x80004005_u32 as i32, // E_FAIL sentinel
         wgpu::DeviceLostReason::Destroyed => 0x80004005_u32 as i32, // filtered upstream; safe fallback
     };
+    let (removed_reason_hr, adapter_luid) = device
+        .map(get_removed_reason_and_luid)
+        .unwrap_or((None, None));
     DeviceLostReason {
         source: "wgpu::device_lost_callback",
         surface_hr,
-        removed_reason_hr: None,
-        adapter_luid: None,
+        removed_reason_hr,
+        adapter_luid,
         message: Some(message),
         timestamp: Instant::now(),
     }

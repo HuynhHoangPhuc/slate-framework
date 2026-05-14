@@ -48,7 +48,7 @@ use crate::win_compose;
 pub struct Renderer {
     _instance: Instance,
     _adapter: Adapter,
-    device: Device,
+    device: Arc<Device>,
     queue: Queue,
     target: Box<dyn CompositionTarget>,
     _window: Arc<dyn Window>,
@@ -134,6 +134,7 @@ impl Renderer {
                 experimental_features: ExperimentalFeatures::disabled(),
             })
             .await?;
+        let device = Arc::new(device);
 
         // H1 detection: wgpu fires this callback from a wgpu-internal thread
         // for any device-lost condition, including buffer-creation failures
@@ -147,6 +148,7 @@ impl Renderer {
         let device_lost = Arc::new(AtomicBool::new(false));
         device.set_device_lost_callback({
             let device_lost = Arc::clone(&device_lost);
+            let device_weak = Arc::downgrade(&device);
             move |reason, message| {
                 if reason == wgpu::DeviceLostReason::Destroyed {
                     log::debug!(
@@ -155,12 +157,19 @@ impl Renderer {
                     );
                     return;
                 }
-                // Callback is `Send + 'static`; we cannot access `&self.device`
-                // here, so LUID + GetDeviceRemovedReason are unavailable from
-                // this call site. HR-path captures via `capture()` still get
-                // the full picture.
-                let dlr = device_lost_reason::capture_from_wgpu_no_device(reason, message);
+                let dlr = if let Some(device) = device_weak.upgrade() {
+                    device_lost_reason::capture_from_wgpu(reason, message, Some(&device))
+                } else {
+                    device_lost_reason::capture_from_wgpu_no_device(reason, message)
+                };
                 device_lost_reason::emit(&dlr);
+                log::warn!(
+                    target: "slate::device_lost",
+                    "wgpu callback telemetry: surface_hr=0x{:08X} removed_reason={:?} adapter_luid={:?}",
+                    dlr.surface_hr as u32,
+                    dlr.removed_reason_hr.map(|h| format!("0x{:08X}", h as u32)),
+                    dlr.adapter_luid
+                );
                 // Phase-2-reopen trace: confirm callback fires + capture prev-value
                 // so we can distinguish first-fire vs re-fire. `swap` is one atomic
                 // op; the returned previous value answers H-A vs H-B without a

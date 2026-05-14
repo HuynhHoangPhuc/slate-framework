@@ -351,15 +351,17 @@ impl<V: View> AppState<V> {
         match state.clone() {
             RecoveryState::NotLost if device_lost => {
                 // 5-second flap guard: if device-lost re-fires within 5s of recovery, give up
-                if let Some(t) = self.last_successful_recovery_at.get()
-                    && t.elapsed() < Duration::from_secs(RECOVERY_FLAP_GUARD_SECS)
-                {
-                    log::error!(target: "slate::device_lost",
-                        "device-lost re-fired within {}s of recovery — giving up",
-                        RECOVERY_FLAP_GUARD_SECS);
-                    *state = RecoveryState::GiveUp;
-                    drop(state);
-                    return AppSignal::RequestQuit;
+                if let Some(t) = self.last_successful_recovery_at.get() {
+                    let elapsed = t.elapsed();
+                    if elapsed < Duration::from_secs(RECOVERY_FLAP_GUARD_SECS) {
+                        log::error!(target: "slate::device_lost",
+                            "device-lost re-fired {}ms after recovery (guard={}s) - giving up",
+                            elapsed.as_millis(),
+                            RECOVERY_FLAP_GUARD_SECS);
+                        *state = RecoveryState::GiveUp;
+                        drop(state);
+                        return AppSignal::RequestQuit;
+                    }
                 }
                 log::info!(target: "slate::device_lost", "device loss detected, entering cooldown");
                 *state = RecoveryState::DetectedLost { detected_at: Instant::now() };
