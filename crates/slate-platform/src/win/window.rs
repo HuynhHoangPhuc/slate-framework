@@ -52,6 +52,8 @@ impl WinWindow {
             delegate: RefCell::new(None),
             in_size_move: Cell::new(false),
             pending_display_change: Cell::new(false),
+            logged_no_delegate: Cell::new(false),
+            logged_weak_upgrade_none: Cell::new(false),
         });
 
         let inner_ptr = Arc::as_ptr(&inner);

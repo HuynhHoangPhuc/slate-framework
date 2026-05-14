@@ -90,6 +90,9 @@ pub struct WinWindowInner {
     /// Phase 5: Deferred device probe triggered during modal loop.
     /// Set by WM_DISPLAYCHANGE/WM_DPICHANGED when in_size_move; fired in WM_EXITSIZEMOVE.
     pub(crate) pending_display_change: Cell<bool>,
+    /// Phase 2.1: fire-once gates so T2 diagnostics don't flood logs (~239×/drag).
+    pub(crate) logged_no_delegate: Cell<bool>,
+    pub(crate) logged_weak_upgrade_none: Cell<bool>,
 }
 
 impl WinWindowInner {
@@ -97,10 +100,18 @@ impl WinWindowInner {
     /// no RefCell borrow is held across the trait method call (re-entrancy safe).
     fn with_delegate(&self, f: impl FnOnce(&dyn WindowRenderDelegate)) {
         let weak = self.delegate.borrow().clone();
-        if let Some(weak) = weak
-            && let Some(strong) = weak.upgrade()
-        {
-            f(&*strong);
+        if let Some(weak) = weak {
+            if let Some(strong) = weak.upgrade() {
+                f(&*strong);
+            } else if !self.logged_weak_upgrade_none.replace(true) {
+                // Phase 2.1 T2: surface silent no-op when AppState was already dropped.
+                // Fire-once per window to keep diagnostic logs readable.
+                log::trace!(target: "slate::win", "with_delegate: weak upgrade returned None (logged once)");
+            }
+        } else if !self.logged_no_delegate.replace(true) {
+            // Phase 2.1 T2: delegate slot never installed (e.g. example bypasses AppState).
+            // Fire-once per window — otherwise spams ~239×/drag.
+            log::trace!(target: "slate::win", "with_delegate: no delegate installed (logged once)");
         }
     }
 
@@ -199,6 +210,8 @@ impl WinWindowInner {
                     log::trace!(target: "slate::win", "WM_EXITSIZEMOVE: firing deferred display change probe");
                     self.with_delegate(|d| d.on_display_change(self.id));
                 }
+                // Phase 2.1 T1: prove we re-emerge from the if-block.
+                log::trace!(target: "slate::win", "WM_EXITSIZEMOVE: post-probe checkpoint reached");
 
                 self.with_delegate(|d| d.on_size_move_end(self.id));
                 self.with_delegate(|d| d.on_redraw(self.id));

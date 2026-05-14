@@ -304,6 +304,20 @@ impl<V: View> AppState<V> {
     /// Full redraw dispatch with device-lost recovery wrapper + re-entrancy guard.
     /// Returns AppSignal::RequestQuit if recovery exceeds RECOVERY_MAX_ATTEMPTS.
     pub fn dispatch_redraw(&self) -> AppSignal {
+        // Phase-2-reopen trace: snapshot guard + flag BEFORE re-entrancy gate
+        // so we see every entry, even the bailed-on-rendering=true ones.
+        let pre_rendering = self.rendering.get();
+        let pre_device_lost = self
+            .renderer
+            .borrow()
+            .as_ref()
+            .map(|r| r.is_device_lost())
+            .unwrap_or(false);
+        log::trace!(
+            target: "slate::device_lost",
+            "dispatch_redraw entry: rendering={pre_rendering} device_lost={pre_device_lost}"
+        );
+
         // RE-ENTRANCY GUARD — applies to BOTH sync and async render paths.
         // If a redraw is already in flight, skip the duplicate.
         if self.rendering.get() {
@@ -327,6 +341,13 @@ impl<V: View> AppState<V> {
 
         // Drive the state machine
         let mut state = self.recovery_state.borrow_mut();
+        // Phase-2-reopen trace: which arm fires? Crucial for distinguishing
+        // "state machine never reached" vs "reached but fell through".
+        log::trace!(
+            target: "slate::device_lost",
+            "dispatch_redraw match: state={:?} device_lost={device_lost}",
+            &*state
+        );
         match state.clone() {
             RecoveryState::NotLost if device_lost => {
                 // 5-second flap guard: if device-lost re-fires within 5s of recovery, give up
@@ -1127,10 +1148,13 @@ impl<V: View> WindowRenderDelegate for AppState<V> {
     fn on_display_change(&self, _window_id: WindowId) {
         // Phase 5: Proactive device health check on WM_DISPLAYCHANGE / WM_DPICHANGED.
         // Called when monitor topology changes (resolution, monitor plug/unplug, DPI change).
+        // Phase 2.1 T3: confirm entry + post-probe verdict.
+        log::trace!(target: "slate::device_lost", "on_display_change ENTRY");
         let lost = {
             let r = self.renderer.borrow();
             r.as_ref().map(|r| r.mark_device_potentially_lost()).unwrap_or(false)
         };
+        log::trace!(target: "slate::device_lost", "on_display_change: probe returned lost={lost}");
         if lost {
             log::info!(target: "slate::device_lost",
                 "on_display_change: device probe found loss → requesting redraw");

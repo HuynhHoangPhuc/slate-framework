@@ -161,7 +161,18 @@ impl Renderer {
                 // the full picture.
                 let dlr = device_lost_reason::capture_from_wgpu_no_device(reason, message);
                 device_lost_reason::emit(&dlr);
-                device_lost.store(true, Ordering::Release);
+                // Phase-2-reopen trace: confirm callback fires + capture prev-value
+                // so we can distinguish first-fire vs re-fire. `swap` is one atomic
+                // op; the returned previous value answers H-A vs H-B without a
+                // separate load. Thread name included to confirm worker-vs-main.
+                let prev = device_lost.swap(true, Ordering::AcqRel);
+                let tid = std::thread::current().id();
+                let tname = std::thread::current().name().unwrap_or("<unnamed>").to_string();
+                log::trace!(
+                    target: "slate::device_lost",
+                    "wgpu callback fired: reason={:?} prev_flag={} thread={:?}/{}",
+                    reason, prev, tid, tname
+                );
             }
         });
 
@@ -374,6 +385,10 @@ impl Renderer {
         // Early-return if device is lost - no point attempting resize
         if self.device_lost.load(Ordering::Acquire) {
             log::trace!(target: "slate::resize", "Renderer::resize skipped: device lost");
+            // Phase 2.1 pre-emptive fix: nudge the pump so dispatch_redraw runs and
+            // the recovery state machine engages even if WM_EXITSIZEMOVE's delegate
+            // calls go silent. request_redraw is idempotent (InvalidateRect-backed).
+            self._window.request_redraw();
             return;
         }
 
