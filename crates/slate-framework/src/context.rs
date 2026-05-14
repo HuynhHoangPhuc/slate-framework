@@ -16,6 +16,7 @@ use taffy::TaffyTree;
 
 use crate::event::Handlers;
 use crate::executor::ForegroundExecutor;
+use crate::image_cache::ImageCache;
 use crate::hit_test::{HitRegion, HitTestList};
 use crate::paint_cache::TextShapingCache;
 use crate::reactive_state::StateRegistry;
@@ -303,6 +304,8 @@ impl<'a> PrepaintCtx<'a> {
 /// - GPU scene for primitive emission
 /// - Text system for text rasterization
 /// - Glyph atlas for texture storage
+/// - Image atlas for image texture storage
+/// - Image cache for uploaded image management
 /// - GPU queue for uploads
 /// - Foreground executor for async tasks
 /// - Scale factor
@@ -315,6 +318,10 @@ pub struct PaintCtx<'a> {
     pub text: &'a mut TextSystem,
     /// Glyph atlas for texture storage.
     pub glyph_atlas: &'a mut Atlas,
+    /// Image atlas for image texture storage.
+    pub image_atlas: &'a mut Atlas,
+    /// Image cache for uploaded image management.
+    pub(crate) image_cache: &'a mut ImageCache,
     /// GPU queue for texture uploads.
     pub queue: &'a wgpu::Queue,
     /// Foreground executor for UI-thread async tasks.
@@ -325,11 +332,14 @@ pub struct PaintCtx<'a> {
 
 impl<'a> PaintCtx<'a> {
     /// Create a new paint context.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         taffy: &'a TaffyTree<NodeContext>,
         scene: &'a mut Scene,
         text: &'a mut TextSystem,
         glyph_atlas: &'a mut Atlas,
+        image_atlas: &'a mut Atlas,
+        image_cache: &'a mut ImageCache,
         queue: &'a wgpu::Queue,
         executor: &'a ForegroundExecutor,
         scale_factor: f64,
@@ -339,6 +349,8 @@ impl<'a> PaintCtx<'a> {
             scene,
             text,
             glyph_atlas,
+            image_atlas,
+            image_cache,
             queue,
             executor,
             scale_factor,

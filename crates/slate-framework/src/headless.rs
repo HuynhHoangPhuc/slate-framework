@@ -40,6 +40,7 @@ use slate_renderer::shadow_pipeline::ShadowPipeline;
 use crate::context::{LayoutCtx, PaintCtx, PrepaintCtx};
 use crate::element::AnyElement;
 use crate::event::Handlers;
+use crate::image_cache::ImageCache;
 use crate::executor::{Executor, RedrawRequester};
 use crate::hit_test::HitTestList;
 use crate::layout::{LayoutTree, compute_layout, resolve_bounds};
@@ -96,6 +97,9 @@ pub struct HeadlessApp {
 
     // Phase 6: TextShapingCache for text shaping optimization
     text_shaping_cache: crate::paint_cache::TextShapingCache,
+
+    // Phase 2: Image cache for uploaded images
+    image_cache: ImageCache,
 
     // Phase 5a: Event handler collection (for headless testing parity)
     handler_map: HashMap<ElementId, Handlers>,
@@ -255,6 +259,9 @@ impl HeadlessApp {
         let handler_map = HashMap::new();
         let parent_map = HashMap::new();
 
+        // Phase 2: Image cache
+        let image_cache = ImageCache::new();
+
         Ok(Self {
             device,
             queue,
@@ -283,6 +290,7 @@ impl HeadlessApp {
             observer_id,
             state_registry,
             text_shaping_cache,
+            image_cache,
             handler_map,
             parent_map,
         })
@@ -376,13 +384,14 @@ impl HeadlessApp {
         // 4. Paint pass
         self.scene.clear();
         {
-            let (atlas, queue) = (&mut self.glyph_atlas, &self.queue);
             let mut cx = PaintCtx::new(
                 self.layout_tree.inner(),
                 &mut self.scene,
                 &mut self.text_system,
-                atlas,
-                queue,
+                &mut self.glyph_atlas,
+                &mut self.image_atlas,
+                &mut self.image_cache,
+                &self.queue,
                 &self.executor.foreground,
                 self.scale_factor,
             );

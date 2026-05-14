@@ -36,6 +36,7 @@ use crate::event::{
 };
 use crate::executor::{Executor, RedrawRequester};
 use crate::hit_test::HitTestList;
+use crate::image_cache::{ImageCache, ImageSystemObserver};
 use crate::layout::{LayoutTree, compute_layout, resolve_bounds};
 use crate::paint_cache::{TextShapingCache, TextShapingCacheObserver};
 use crate::reactive_state::StateRegistry;
@@ -142,6 +143,10 @@ pub struct AppState<V: View> {
     pub text_system_observer: Rc<TextSystemObserver>,
     pub text_shaping_cache_observer: Rc<TextShapingCacheObserver>,
 
+    // Image cache for uploaded images (survives device-lost via observer)
+    pub image_cache: Rc<RefCell<ImageCache>>,
+    pub image_system_observer: Rc<ImageSystemObserver>,
+
     // Executor (foreground + background)
     pub executor: Executor,
     pub redraw_requester: RedrawRequester,
@@ -196,6 +201,10 @@ impl<V: View> AppState<V> {
         let text_shaping_cache_observer =
             Rc::new(TextShapingCacheObserver::new(Rc::downgrade(&text_shaping_cache)));
 
+        // Image cache + observer (Phase 2)
+        let image_cache = Rc::new(RefCell::new(ImageCache::new()));
+        let image_system_observer = Rc::new(ImageSystemObserver::new(Rc::downgrade(&image_cache)));
+
         Self {
             renderer: RefCell::new(None),
             text_system,
@@ -224,6 +233,8 @@ impl<V: View> AppState<V> {
 
             text_system_observer,
             text_shaping_cache_observer,
+            image_cache,
+            image_system_observer,
 
             executor,
             redraw_requester,
@@ -276,10 +287,12 @@ impl<V: View> AppState<V> {
 
         log::info!("renderer and text system ready");
 
-        // 3. Register cache invalidation observers (Phase 4)
+        // 3. Register cache invalidation observers (Phase 4 + Phase 2)
         renderer.register_observer(Rc::downgrade(&self.text_system_observer)
             as std::rc::Weak<dyn RendererObserver>);
         renderer.register_observer(Rc::downgrade(&self.text_shaping_cache_observer)
+            as std::rc::Weak<dyn RendererObserver>);
+        renderer.register_observer(Rc::downgrade(&self.image_system_observer)
             as std::rc::Weak<dyn RendererObserver>);
 
         // 4. Store components + update generation signal
@@ -446,10 +459,12 @@ impl<V: View> AppState<V> {
 
                 log::info!(target: "slate::device_lost", "GPU device recovered successfully");
 
-                // Phase 4: Register cache invalidation observers before firing
+                // Phase 4 + Phase 2: Register cache invalidation observers before firing
                 new_renderer.register_observer(Rc::downgrade(&self.text_system_observer)
                     as std::rc::Weak<dyn RendererObserver>);
                 new_renderer.register_observer(Rc::downgrade(&self.text_shaping_cache_observer)
+                    as std::rc::Weak<dyn RendererObserver>);
+                new_renderer.register_observer(Rc::downgrade(&self.image_system_observer)
                     as std::rc::Weak<dyn RendererObserver>);
                 new_renderer.fire_observers();
 
@@ -620,12 +635,15 @@ impl<V: View> AppState<V> {
 
             s.clear();
 
-            let (atlas, queue) = r.glyph_atlas_and_queue();
+            let (glyph_atlas, image_atlas, queue) = r.atlases_and_queue();
+            let mut ic = self.image_cache.borrow_mut();
             let mut cx = PaintCtx::new(
                 tree.inner(),
                 &mut s,
                 ts,
-                atlas,
+                glyph_atlas,
+                image_atlas,
+                &mut ic,
                 queue,
                 &self.executor.foreground,
                 scale_factor,

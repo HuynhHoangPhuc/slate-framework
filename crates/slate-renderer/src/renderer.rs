@@ -636,6 +636,11 @@ impl Renderer {
         (&mut self.glyph_atlas, &self.queue)
     }
 
+    /// Access both atlases (glyph + image) and queue together for paint context.
+    pub fn atlases_and_queue(&mut self) -> (&mut Atlas, &mut Atlas, &Queue) {
+        (&mut self.glyph_atlas, &mut self.image_atlas, &self.queue)
+    }
+
     /// Acquire the next frame, submit a clear-color pass, and present.
     ///
     /// Stub clear-only path — use [`Renderer::render_scene`] for Scene-driven

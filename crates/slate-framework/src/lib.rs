@@ -34,6 +34,7 @@ pub mod context;
 pub mod element;
 pub mod elements;
 pub mod event;
+pub(crate) mod image_cache;
 pub mod executor;
 pub mod headless;
 pub mod hit_test;
@@ -77,7 +78,7 @@ pub mod reactive {
 // Re-export smol::Timer for async timing (Phase 5: F1)
 pub use context::{LayoutCtx, PaintCtx, PrepaintCtx};
 pub use element::{AnyElement, Element, IntoElement};
-pub use elements::{Div, Text, TextAlign, TextWrap};
+pub use elements::{Div, Image, MAX_IMAGE_DIM, Text, TextAlign, TextWrap};
 pub use executor::{BackgroundExecutor, Executor, ForegroundExecutor, RedrawRequester};
 pub use hit_test::{CursorStyle, HitRegion, HitTestList, HitTestResult};
 pub use layout::{LayoutTree, compute_layout, resolve_bounds, resolve_child_bounds};
