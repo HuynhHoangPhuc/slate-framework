@@ -42,7 +42,7 @@ pub(crate) mod paint_cache;
 pub(crate) mod reactive_state;
 pub mod style;
 pub mod text_system;
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(all(target_os = "windows", feature = "test-hooks"))]
 pub mod test_support;
 pub mod types;
 pub mod view;

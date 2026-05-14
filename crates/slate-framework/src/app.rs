@@ -20,11 +20,11 @@ use crate::view::View;
 // `force_renderer_device_lost()` N milliseconds after the first `Resumed`,
 // so the OS WM_PAINT pump can be observed driving the state machine through
 // `DetectedLost -> CooldownGate -> Retrying -> Recovered`.
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(all(target_os = "windows", feature = "test-hooks"))]
 static FORCE_DEVICE_LOST_PENDING: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(all(target_os = "windows", feature = "test-hooks"))]
 static FORCE_DEVICE_LOST_ARMED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
@@ -140,7 +140,7 @@ impl App {
             // Phase 2.1 synthetic trigger: env-var-scheduled force_device_lost
             // fires from a background thread that wakes the run loop; the wake
             // event arrives here and we run on the main thread.
-            #[cfg(any(test, feature = "test-hooks"))]
+            #[cfg(all(target_os = "windows", feature = "test-hooks"))]
             if FORCE_DEVICE_LOST_PENDING.swap(false, std::sync::atomic::Ordering::AcqRel) {
                 log::warn!(
                     target: "slate::test_hooks",
@@ -158,7 +158,7 @@ impl App {
                     if state_ref.init_surfaces(&mut view_fn, &cx, platform_ref).is_err() {
                         AppSignal::RequestQuit
                     } else {
-                        #[cfg(any(test, feature = "test-hooks"))]
+                        #[cfg(all(target_os = "windows", feature = "test-hooks"))]
                         arm_force_device_lost_trigger();
                         AppSignal::RequestRedraw
                     }
@@ -222,7 +222,7 @@ impl App {
 /// flag and invokes `AppState::force_renderer_device_lost`.
 ///
 /// Subsequent calls are no-ops (one-shot arming).
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(all(target_os = "windows", feature = "test-hooks"))]
 fn arm_force_device_lost_trigger() {
     use std::sync::atomic::Ordering;
 

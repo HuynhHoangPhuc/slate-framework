@@ -189,17 +189,10 @@ impl RecoveryHarness {
                 && gen_now >= initial_gen.get()
                 && !state.renderer_is_device_lost()
             {
-                #[cfg(target_os = "windows")]
-                {
-                    if state.force_renderer_device_lost() {
-                        triggered.set(true);
-                    }
-                }
-                #[cfg(not(target_os = "windows"))]
-                {
+                // Module is gated on Windows + test-hooks, so force_renderer_device_lost
+                // is always available here.
+                if state.force_renderer_device_lost() {
                     triggered.set(true);
-                    platform.quit();
-                    return;
                 }
                 schedule_next_tick();
             } else if triggered.get()

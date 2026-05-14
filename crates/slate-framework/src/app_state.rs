@@ -1384,7 +1384,10 @@ impl<V: View> AppState<V> {
 
     /// Trigger a synthetic device-lost via `ID3D12Device5::RemoveDevice()`.
     /// Returns `false` if no renderer is initialized.
-    #[cfg(target_os = "windows")]
+    ///
+    /// Only available with the `test-hooks` feature enabled on both slate-framework
+    /// and slate-renderer (the feature propagates via Cargo.toml `test-hooks = ["slate-renderer/test-hooks"]`).
+    #[cfg(all(target_os = "windows", feature = "test-hooks"))]
     pub fn force_renderer_device_lost(&self) -> bool {
         if let Some(r) = self.renderer.borrow().as_ref() {
             r.force_device_lost();
