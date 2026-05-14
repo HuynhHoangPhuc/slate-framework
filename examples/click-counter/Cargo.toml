@@ -6,6 +6,11 @@ rust-version.workspace = true
 license.workspace = true
 publish = false
 
+[features]
+# Enables the env-var force_device_lost trigger (SLATE_FORCE_DEVICE_LOST_MS).
+# Pulls in slate-framework's test-hooks feature chain.
+test-hooks = ["slate-framework/test-hooks"]
+
 [dependencies]
 slate-framework = { path = "../../crates/slate-framework", version = "0.0.2" }
 env_logger.workspace = true

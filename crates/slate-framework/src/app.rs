@@ -15,6 +15,19 @@ use crate::app_state::{AppSignal, AppState};
 use crate::executor::{BackgroundExecutor, Executor, RedrawRequester};
 use crate::view::View;
 
+// Synthetic device-lost trigger for Phase 2.1 closure on the real visible-window
+// AppState path. Setting `SLATE_FORCE_DEVICE_LOST_MS=N` schedules a
+// `force_renderer_device_lost()` N milliseconds after the first `Resumed`,
+// so the OS WM_PAINT pump can be observed driving the state machine through
+// `DetectedLost -> CooldownGate -> Retrying -> Recovered`.
+#[cfg(any(test, feature = "test-hooks"))]
+static FORCE_DEVICE_LOST_PENDING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(any(test, feature = "test-hooks"))]
+static FORCE_DEVICE_LOST_ARMED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 /// Application context passed to the view factory.
 ///
 /// Provides access to the reactive runtime and background executor for constructing
@@ -124,11 +137,29 @@ impl App {
                 return;
             }
 
+            // Phase 2.1 synthetic trigger: env-var-scheduled force_device_lost
+            // fires from a background thread that wakes the run loop; the wake
+            // event arrives here and we run on the main thread.
+            #[cfg(any(test, feature = "test-hooks"))]
+            if FORCE_DEVICE_LOST_PENDING.swap(false, std::sync::atomic::Ordering::AcqRel) {
+                log::warn!(
+                    target: "slate::test_hooks",
+                    "SLATE_FORCE_DEVICE_LOST_MS elapsed - firing force_renderer_device_lost"
+                );
+                let fired = state_ref.force_renderer_device_lost();
+                log::warn!(
+                    target: "slate::test_hooks",
+                    "force_renderer_device_lost returned fired={fired}"
+                );
+            }
+
             let signal = match event {
                 Event::Resumed => {
                     if state_ref.init_surfaces(&mut view_fn, &cx, platform_ref).is_err() {
                         AppSignal::RequestQuit
                     } else {
+                        #[cfg(any(test, feature = "test-hooks"))]
+                        arm_force_device_lost_trigger();
                         AppSignal::RequestRedraw
                     }
                 }
@@ -183,4 +214,44 @@ impl App {
             }
         });
     }
+}
+
+/// Read `SLATE_FORCE_DEVICE_LOST_MS` once and arm a background thread that
+/// sleeps the requested duration, sets `FORCE_DEVICE_LOST_PENDING`, and
+/// wakes the run loop. The wake handler on the main thread observes the
+/// flag and invokes `AppState::force_renderer_device_lost`.
+///
+/// Subsequent calls are no-ops (one-shot arming).
+#[cfg(any(test, feature = "test-hooks"))]
+fn arm_force_device_lost_trigger() {
+    use std::sync::atomic::Ordering;
+
+    if FORCE_DEVICE_LOST_ARMED.swap(true, Ordering::AcqRel) {
+        return;
+    }
+
+    let ms: u64 = match std::env::var("SLATE_FORCE_DEVICE_LOST_MS") {
+        Ok(s) => match s.trim().parse() {
+            Ok(n) => n,
+            Err(_) => {
+                log::warn!(
+                    target: "slate::test_hooks",
+                    "SLATE_FORCE_DEVICE_LOST_MS='{s}' is not a valid u64 - skipping"
+                );
+                return;
+            }
+        },
+        Err(_) => return,
+    };
+
+    log::warn!(
+        target: "slate::test_hooks",
+        "SLATE_FORCE_DEVICE_LOST_MS armed: will fire force_renderer_device_lost in {ms}ms"
+    );
+
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(ms));
+        FORCE_DEVICE_LOST_PENDING.store(true, Ordering::Release);
+        wake_run_loop();
+    });
 }
