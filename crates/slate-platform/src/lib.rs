@@ -67,6 +67,18 @@ pub trait Window: HasWindowHandle + HasDisplayHandle + 'static {
     /// callbacks. Held as `Weak<dyn>` to avoid `AppState ↔ Window` cycles.
     /// Setting to a `Weak` whose `Rc` has been dropped is a no-op on next call.
     fn set_render_delegate(&self, delegate: std::rc::Weak<dyn WindowRenderDelegate>);
+
+    /// LUID of the DXGI adapter that drives the monitor the window currently
+    /// occupies (Windows only). Used by the renderer to pick the adapter that
+    /// matches the window's monitor so cross-monitor drag does not silently
+    /// switch the swap-chain across adapters (`DXGI_ERROR_DEVICE_REMOVED`).
+    ///
+    /// Returns `None` on platforms where monitor-bound adapter selection is
+    /// not meaningful (macOS Metal manages this transparently) or when the
+    /// LUID cannot be determined (probe failure, window minimized).
+    fn current_monitor_luid(&self) -> Option<u64> {
+        None
+    }
 }
 
 #[derive(Clone, Debug)]

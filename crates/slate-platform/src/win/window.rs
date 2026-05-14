@@ -11,7 +11,12 @@ use raw_window_handle::{
 };
 use windows::Win32::Foundation::RECT;
 use windows::Win32::Foundation::{HINSTANCE, HWND};
-use windows::Win32::Graphics::Gdi::InvalidateRect;
+use windows::Win32::Graphics::Dxgi::{
+    CreateDXGIFactory2, DXGI_CREATE_FACTORY_FLAGS, IDXGIFactory2,
+};
+use windows::Win32::Graphics::Gdi::{
+    HMONITOR, InvalidateRect, MONITOR_DEFAULTTONEAREST, MonitorFromWindow,
+};
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
     CW_USEDEFAULT, CreateWindowExW, DestroyWindow, GetClientRect, SetWindowTextW,
@@ -41,6 +46,19 @@ impl WinWindow {
         let id = next_window_id();
         let title_w = to_wide(&opts.title);
 
+        // Cache a DXGI factory up-front so per-redraw LUID probes don't
+        // re-create one each call. None on failure → probe returns None →
+        // adapter selection falls back to HighPerformance.
+        // SAFETY: CreateDXGIFactory2 is a pure COM constructor; no aliasing.
+        let dxgi_factory: Option<IDXGIFactory2> =
+            unsafe { CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0)) }.ok();
+        if dxgi_factory.is_none() {
+            log::warn!(
+                target: "slate::win",
+                "CreateDXGIFactory2 failed; monitor-LUID probe will return None"
+            );
+        }
+
         #[allow(clippy::arc_with_non_send_sync)]
         let inner = Arc::new(WinWindowInner {
             hwnd: HWND(std::ptr::null_mut()),
@@ -54,6 +72,9 @@ impl WinWindow {
             pending_display_change: Cell::new(false),
             logged_no_delegate: Cell::new(false),
             logged_weak_upgrade_none: Cell::new(false),
+            dxgi_factory,
+            last_monitor: Cell::new(HMONITOR(std::ptr::null_mut())),
+            pending_monitor_change: Cell::new(false),
         });
 
         let inner_ptr = Arc::as_ptr(&inner);
@@ -101,6 +122,13 @@ impl WinWindow {
         let inner_mut = inner_ptr as *mut WinWindowInner;
         // SAFETY: inner_ptr is our Arc's pointer; no other thread has access yet.
         unsafe { (*inner_mut).hwnd = hwnd };
+
+        // Seed last_monitor with the real HMONITOR so the first
+        // WM_WINDOWPOSCHANGED after creation does not fire a spurious
+        // change against a null sentinel.
+        // SAFETY: hwnd is a valid window handle just returned by CreateWindowExW.
+        let initial_hmon = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+        inner.last_monitor.set(initial_hmon);
 
         // Register this HWND for wake events from background threads.
         // First window wins; subsequent calls are no-ops (CAS).
@@ -162,6 +190,43 @@ impl Window for WinWindow {
 
     fn set_render_delegate(&self, delegate: Weak<dyn WindowRenderDelegate>) {
         *self.inner.delegate.borrow_mut() = Some(delegate);
+    }
+
+    fn current_monitor_luid(&self) -> Option<u64> {
+        let factory = self.inner.dxgi_factory.as_ref()?;
+        // SAFETY: hwnd is valid for the lifetime of this WinWindow.
+        let hmon = unsafe { MonitorFromWindow(self.inner.hwnd, MONITOR_DEFAULTTONEAREST) };
+        if hmon.is_invalid() {
+            return None;
+        }
+        // SAFETY: factory is a live IDXGIFactory2; EnumAdapters/EnumOutputs/GetDesc
+        // return COM error on out-of-range, breaking the loops normally. HMONITOR
+        // equality compares raw pointer values.
+        unsafe {
+            for adapter_idx in 0u32.. {
+                let Ok(adapter) = factory.EnumAdapters(adapter_idx) else {
+                    break;
+                };
+                for output_idx in 0u32.. {
+                    let Ok(output) = adapter.EnumOutputs(output_idx) else {
+                        break;
+                    };
+                    let Ok(odesc) = output.GetDesc() else {
+                        continue;
+                    };
+                    if odesc.Monitor == hmon {
+                        let adesc = adapter.GetDesc().ok()?;
+                        // HighPart is i32 — zero-extend via u32 to avoid
+                        // sign-extension corrupting the upper bits.
+                        return Some(
+                            ((adesc.AdapterLuid.HighPart as u32 as u64) << 32)
+                                | (adesc.AdapterLuid.LowPart as u64),
+                        );
+                    }
+                }
+            }
+        }
+        None
     }
 }
 

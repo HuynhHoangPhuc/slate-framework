@@ -53,6 +53,9 @@ pub(crate) mod mac_surface;
 #[cfg(target_os = "windows")]
 pub(crate) mod win_compose;
 
+// Adapter selection (logic is cross-platform-testable; LUID interop is Windows-only)
+pub(crate) mod adapter_selection;
+
 // Re-exports from color
 pub use color::{
     linear_to_srgb_channel, linear_to_srgb_u8, srgb_channel_to_linear, srgb_to_linear,

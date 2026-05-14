@@ -18,9 +18,11 @@ use wgpu::{
     Adapter, Backends, BindGroup, BindGroupDescriptor, BindGroupEntry, BindingResource, Buffer,
     BufferDescriptor, BufferUsages, Color, CommandEncoderDescriptor, Device, DeviceDescriptor,
     ExperimentalFeatures, Features, Instance, InstanceDescriptor, Limits, LoadOp, MemoryHints,
-    Operations, Queue, RenderPassColorAttachment, RenderPassDescriptor, RequestAdapterOptions,
-    RequestDeviceError, StoreOp, TextureFormat, Trace,
+    Operations, Queue, RenderPassColorAttachment, RenderPassDescriptor, RequestDeviceError,
+    StoreOp, TextureFormat, Trace,
 };
+#[cfg(not(target_os = "windows"))]
+use wgpu::RequestAdapterOptions;
 
 use crate::atlas::{AllocId, Atlas, Format};
 use crate::glyph_pipeline::GlyphPipeline;
@@ -48,6 +50,15 @@ use crate::win_compose;
 pub struct Renderer {
     _instance: Instance,
     _adapter: Adapter,
+    /// DXGI adapter LUID captured at construction. `None` on macOS, or on
+    /// Windows if the LUID extraction failed (logged at construction).
+    ///
+    /// Invariant: this value is captured from the wgpu adapter the renderer
+    /// was built on. Because `Renderer` is fully rebuilt on every recovery
+    /// (full `Renderer::new` runs, observers re-fire), this stays in lock-step
+    /// with the live device. **If partial recovery is ever added that re-uses
+    /// the wgpu `Device`, this MUST be refreshed at the same time.**
+    adapter_luid: Option<u64>,
     device: Arc<Device>,
     queue: Queue,
     target: Box<dyn CompositionTarget>,
@@ -108,6 +119,9 @@ impl Renderer {
             display: None,
         });
 
+        #[cfg(target_os = "windows")]
+        let adapter = crate::adapter_selection::pick_adapter_for_window(&instance, &window).await?;
+        #[cfg(not(target_os = "windows"))]
         let adapter = instance
             .request_adapter(&RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
@@ -121,6 +135,11 @@ impl Renderer {
             "slate-renderer: GPU adapter selected: {:?}",
             adapter.get_info()
         );
+
+        #[cfg(target_os = "windows")]
+        let adapter_luid = crate::adapter_selection::adapter_luid(&adapter);
+        #[cfg(not(target_os = "windows"))]
+        let adapter_luid: Option<u64> = None;
 
         let (device, queue) = adapter
             .request_device(&DeviceDescriptor {
@@ -232,6 +251,7 @@ impl Renderer {
         Ok(Self {
             _instance: instance,
             _adapter: adapter,
+            adapter_luid,
             device,
             queue,
             target,
@@ -256,6 +276,15 @@ impl Renderer {
     /// the device is recovered (Phase 5).
     pub fn is_device_lost(&self) -> bool {
         self.device_lost.load(Ordering::Acquire)
+    }
+
+    /// DXGI adapter LUID this renderer was constructed against. `None` on
+    /// macOS or if LUID extraction failed at construction. Used by the
+    /// framework's per-redraw LUID probe to detect when the window has moved
+    /// to a monitor served by a different adapter — at which point recovery
+    /// rebuilds the renderer on the correct adapter.
+    pub fn current_adapter_luid(&self) -> Option<u64> {
+        self.adapter_luid
     }
 
     /// Explicitly mark the device as lost. Called by app_state when

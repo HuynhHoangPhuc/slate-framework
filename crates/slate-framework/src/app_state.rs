@@ -51,6 +51,14 @@ pub(crate) const RECOVERY_BACKOFF_BASE_MS: u64 = 100;
 pub(crate) const RECOVERY_BACKOFF_STEP_MS: u64 = 10;
 pub(crate) const RECOVERY_FLAP_GUARD_SECS: u64 = 5;
 
+// Phase 4 (H3): minimum spacing between adapter-LUID probes in `dispatch_redraw`.
+// During a cross-monitor drag the window can cross the boundary many times in
+// quick succession; probing every redraw would mark device-lost repeatedly and
+// thrash the recovery state machine. 100ms is short enough to feel instant on
+// a single deliberate drag yet long enough to absorb the natural drag-jitter
+// burst (~60fps × 1–2 frames straddling the seam).
+pub(crate) const ADAPTER_PROBE_MIN_INTERVAL_MS: u64 = 100;
+
 /// Recovery state machine for device-lost handling (Phase 3).
 ///
 /// Replaces the old 3-shot immediate retry with a zed-validated pattern:
@@ -120,7 +128,7 @@ pub struct AppState<V: View> {
     pub scene: RefCell<Scene>,
 
     // Mouse event dispatch state
-    pub handler_map: RefCell<HashMap<ElementId, Handlers>>,
+    pub(crate) handler_map: RefCell<HashMap<ElementId, Handlers>>,
     pub parent_map: RefCell<HashMap<ElementId, ElementId>>,
     pub hovered_element: RefCell<Option<ElementId>>,
     pub button_state: RefCell<u8>,
@@ -136,7 +144,7 @@ pub struct AppState<V: View> {
     pub view_observer_id: ObserverId,
 
     // Element-level reactive state
-    pub state_registry: RefCell<StateRegistry>,
+    pub(crate) state_registry: RefCell<StateRegistry>,
     pub text_shaping_cache: Rc<RefCell<TextShapingCache>>,
 
     // Phase 4: Device-lost cache invalidation observers (held as Rc to keep alive)
@@ -144,8 +152,8 @@ pub struct AppState<V: View> {
     pub text_shaping_cache_observer: Rc<TextShapingCacheObserver>,
 
     // Image cache for uploaded images (survives device-lost via observer)
-    pub image_cache: Rc<RefCell<ImageCache>>,
-    pub image_system_observer: Rc<ImageSystemObserver>,
+    pub(crate) image_cache: Rc<RefCell<ImageCache>>,
+    pub(crate) image_system_observer: Rc<ImageSystemObserver>,
 
     // Executor (foreground + background)
     pub executor: Executor,
@@ -160,6 +168,11 @@ pub struct AppState<V: View> {
     pub skip_draws: Cell<bool>,
     /// 5-second flap guard: if device-lost re-fires within 5s of recovery, give up (Phase 3).
     pub last_successful_recovery_at: Cell<Option<Instant>>,
+    /// Phase 4 (H3): timestamp of the last adapter-LUID probe. Skip the probe
+    /// for `ADAPTER_PROBE_MIN_INTERVAL_MS` after the previous one so a
+    /// cross-monitor drag that straddles the seam for multiple frames does
+    /// not repeatedly fire `mark_device_lost`.
+    pub last_adapter_check_at: Cell<Option<Instant>>,
 
     // Renderer generation signal (Phase 1): increments on each successful device rebuild.
     // Reactive consumers can subscribe to this to detect device recreation.
@@ -243,6 +256,7 @@ impl<V: View> AppState<V> {
             recovery_state: RefCell::new(RecoveryState::NotLost),
             skip_draws: Cell::new(false),
             last_successful_recovery_at: Cell::new(None),
+            last_adapter_check_at: Cell::new(None),
             renderer_generation: Signal::new(runtime, 0u64),
             rendering: Cell::new(false),
             pending_quit: Cell::new(false),
@@ -344,6 +358,53 @@ impl<V: View> AppState<V> {
         // Skip if not initialized
         if self.renderer.borrow().is_none() {
             return AppSignal::None;
+        }
+
+        // Adapter-LUID probe: detect cross-monitor drag onto a different
+        // physical adapter and mark the device lost so the recovery state
+        // machine re-picks an adapter matching the window's current monitor.
+        //
+        // Gated on `RecoveryState::NotLost` + `!skip_draws` — during active
+        // recovery the renderer still reports the OLD adapter's LUID, so an
+        // unconditional probe would re-mark device-lost on every retry step
+        // and could trip the 5-second flap guard.
+        //
+        // Throttle: the 100ms minimum interval absorbs the multi-frame burst
+        // produced by a cross-monitor drag straddling the seam.
+        //
+        // No-op on non-Windows: `current_monitor_luid` returns `None` from
+        // the default trait impl and `current_adapter_luid` returns `None`
+        // on non-Dx12 backends.
+        {
+            let healthy = matches!(*self.recovery_state.borrow(), RecoveryState::NotLost)
+                && !self.skip_draws.get();
+            let now = Instant::now();
+            let recently_probed = self
+                .last_adapter_check_at
+                .get()
+                .map(|t| now.duration_since(t) < Duration::from_millis(ADAPTER_PROBE_MIN_INTERVAL_MS))
+                .unwrap_or(false);
+            if healthy && !recently_probed {
+                self.last_adapter_check_at.set(Some(now));
+                let window_luid = self.window.current_monitor_luid();
+                let adapter_luid = self
+                    .renderer
+                    .borrow()
+                    .as_ref()
+                    .and_then(|r| r.current_adapter_luid());
+                if let (Some(w), Some(a)) = (window_luid, adapter_luid)
+                    && w != a
+                {
+                    log::info!(
+                        target: "slate::device_lost",
+                        "adapter LUID mismatch: window={:#018x} renderer={:#018x} — marking device-lost",
+                        w, a
+                    );
+                    if let Some(r) = self.renderer.borrow().as_ref() {
+                        r.mark_device_potentially_lost();
+                    }
+                }
+            }
         }
 
         // Phase 3: State machine-driven device-lost recovery
@@ -459,18 +520,39 @@ impl<V: View> AppState<V> {
 
                 log::info!(target: "slate::device_lost", "GPU device recovered successfully");
 
-                // Phase 4 + Phase 2: Register cache invalidation observers before firing
-                new_renderer.register_observer(Rc::downgrade(&self.text_system_observer)
-                    as std::rc::Weak<dyn RendererObserver>);
-                new_renderer.register_observer(Rc::downgrade(&self.text_shaping_cache_observer)
-                    as std::rc::Weak<dyn RendererObserver>);
-                new_renderer.register_observer(Rc::downgrade(&self.image_system_observer)
-                    as std::rc::Weak<dyn RendererObserver>);
-                new_renderer.fire_observers();
-
-                let renderer_gen = new_renderer.current_generation();
+                // RT-15: Assign FIRST so observer callbacks that inspect
+                // `self.renderer.borrow()` see the new device instead of None.
+                // Matches `init_surfaces` ordering (assign → register).
                 *self.renderer.borrow_mut() = Some(new_renderer);
+
+                // Register cache-invalidation observers on the now-installed renderer.
+                {
+                    let r = self.renderer.borrow();
+                    let r = r.as_ref().expect("renderer just assigned");
+                    r.register_observer(Rc::downgrade(&self.text_system_observer)
+                        as std::rc::Weak<dyn RendererObserver>);
+                    r.register_observer(Rc::downgrade(&self.text_shaping_cache_observer)
+                        as std::rc::Weak<dyn RendererObserver>);
+                    r.register_observer(Rc::downgrade(&self.image_system_observer)
+                        as std::rc::Weak<dyn RendererObserver>);
+                    // Fire only on recovery (not init): caches built against the
+                    // dead device must be invalidated before the next paint.
+                    r.fire_observers();
+                }
+
+                let renderer_gen = self
+                    .renderer
+                    .borrow()
+                    .as_ref()
+                    .map(|r| r.current_generation())
+                    .unwrap_or(0);
                 self.renderer_generation.set(renderer_gen);
+
+                // Phase 4 (H3): cross-monitor recovery just re-picked the adapter
+                // for the window's CURRENT monitor. Stamp the probe clock so the
+                // 100ms throttle in `dispatch_redraw` doesn't immediately re-probe
+                // before the OS-level adapter state has settled.
+                self.last_adapter_check_at.set(Some(Instant::now()));
 
                 // Set skip_draws for one-frame present suppression
                 self.skip_draws.set(true);

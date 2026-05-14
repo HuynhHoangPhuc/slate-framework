@@ -5,7 +5,10 @@ use std::rc::Weak;
 use std::sync::Arc;
 
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
-use windows::Win32::Graphics::Gdi::{ScreenToClient, ValidateRect};
+use windows::Win32::Graphics::Dxgi::IDXGIFactory2;
+use windows::Win32::Graphics::Gdi::{
+    HMONITOR, MONITOR_DEFAULTTONULL, MonitorFromWindow, ScreenToClient, ValidateRect,
+};
 use windows::Win32::System::SystemServices::{MK_CONTROL, MK_SHIFT};
 use windows::Win32::UI::Controls::{HOVER_DEFAULT, WM_MOUSELEAVE};
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
@@ -21,7 +24,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WM_EXITSIZEMOVE, WM_GETMINMAXINFO, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP,
     WM_MBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL,
     WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE,
-    WM_TIMER, WM_XBUTTONDBLCLK, WM_XBUTTONDOWN, WM_XBUTTONUP,
+    WM_TIMER, WM_WINDOWPOSCHANGED, WM_XBUTTONDBLCLK, WM_XBUTTONDOWN, WM_XBUTTONUP,
 };
 
 use super::{IN_SIZE_MOVE, SIZE_MOVE_TIMER_ID, WM_APP_WAKE, clear_wake_hwnd, dispatch_event};
@@ -93,6 +96,22 @@ pub struct WinWindowInner {
     /// Phase 2.1: fire-once gates so T2 diagnostics don't flood logs (~239×/drag).
     pub(crate) logged_no_delegate: Cell<bool>,
     pub(crate) logged_weak_upgrade_none: Cell<bool>,
+    /// Cached DXGI factory for monitor→adapter LUID mapping. Created once at
+    /// window construction; reused for every `current_monitor_luid` probe so
+    /// the per-redraw LUID check stays microseconds, not a fresh COM factory
+    /// each call.
+    pub(crate) dxgi_factory: Option<IDXGIFactory2>,
+    /// HMONITOR the window most recently occupied. Compared against
+    /// `MonitorFromWindow` in `WM_WINDOWPOSCHANGED` to detect cross-monitor
+    /// moves that bypass `WM_DISPLAYCHANGE` / `WM_DPICHANGED` (same-DPI
+    /// monitor pair). Initialized to the real HMONITOR at construction so
+    /// the first WM_WINDOWPOSCHANGED does not fire a spurious change.
+    pub(crate) last_monitor: Cell<HMONITOR>,
+    /// Deferred monitor-change flag set by `WM_WINDOWPOSCHANGED` when the
+    /// window is inside a modal size/move loop. Drained in `WM_EXITSIZEMOVE`.
+    /// Distinct from `pending_display_change` — different semantics, different
+    /// probe call site.
+    pub(crate) pending_monitor_change: Cell<bool>,
 }
 
 impl WinWindowInner {
@@ -210,6 +229,16 @@ impl WinWindowInner {
                     log::trace!(target: "slate::win", "WM_EXITSIZEMOVE: firing deferred display change probe");
                     self.with_delegate(|d| d.on_display_change(self.id));
                 }
+                // Cross-monitor drag completed inside the modal loop — request a
+                // redraw so the framework's per-frame adapter-LUID probe runs
+                // and migrates the renderer to the new monitor's adapter if
+                // needed. Deliberately separate from `pending_display_change`
+                // (different probe semantics: GPU health vs. adapter LUID).
+                if self.pending_monitor_change.get() {
+                    self.pending_monitor_change.set(false);
+                    log::trace!(target: "slate::win", "WM_EXITSIZEMOVE: draining deferred monitor-change redraw");
+                    dispatch_event(Event::WindowRedrawRequested { window: self.id });
+                }
                 // Phase 2.1 T1: prove we re-emerge from the if-block.
                 log::trace!(target: "slate::win", "WM_EXITSIZEMOVE: post-probe checkpoint reached");
 
@@ -274,6 +303,30 @@ impl WinWindowInner {
                     self.with_delegate(|d| d.on_display_change(self.id));
                 }
                 LRESULT(0)
+            }
+            // Cross-monitor drag without DPI change (same-DPI monitor pair) does
+            // not produce WM_DISPLAYCHANGE or WM_DPICHANGED. Compare the
+            // window's current HMONITOR against the cached one and request a
+            // redraw on change so the framework's per-frame adapter-LUID probe
+            // can migrate the renderer. MONITOR_DEFAULTTONULL — we want a real
+            // HMONITOR or nothing, never a stale fallback.
+            WM_WINDOWPOSCHANGED => {
+                // SAFETY: hwnd is valid for the message lifetime.
+                let hmon = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONULL) };
+                let last = self.last_monitor.get();
+                if !hmon.is_invalid() && hmon != last {
+                    self.last_monitor.set(hmon);
+                    if self.in_size_move.get() || IN_SIZE_MOVE.with(|f| f.get()) {
+                        log::trace!(target: "slate::win", "WM_WINDOWPOSCHANGED: monitor changed in modal loop, deferring redraw");
+                        self.pending_monitor_change.set(true);
+                    } else {
+                        log::trace!(target: "slate::win", "WM_WINDOWPOSCHANGED: monitor changed, requesting redraw");
+                        dispatch_event(Event::WindowRedrawRequested { window: self.id });
+                    }
+                }
+                // SAFETY: default proc must run so it generates the follow-up
+                // WM_SIZE / WM_MOVE messages.
+                unsafe { DefWindowProcW(hwnd, msg, _wparam, lparam) }
             }
             WM_GETMINMAXINFO => {
                 if let Some((min_w, min_h)) = self.min_size {

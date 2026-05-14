@@ -333,7 +333,7 @@ pub struct PaintCtx<'a> {
 impl<'a> PaintCtx<'a> {
     /// Create a new paint context.
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub(crate) fn new(
         taffy: &'a TaffyTree<NodeContext>,
         scene: &'a mut Scene,
         text: &'a mut TextSystem,
