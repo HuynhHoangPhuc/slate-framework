@@ -1,86 +1,47 @@
-//! hello-rect — Phase 7 anchor demo.
+//! hello-rect — Anchor demo using App::new.
 //!
-//! Opens a native window, initialises the renderer, and draws a single
-//! antialiased rounded rectangle via the Scene-driven instanced rect pipeline.
+//! Opens a native window and renders a single antialiased rounded rectangle
+//! using the framework's element system with automatic device-lost recovery.
 //!
 //! Run: `cargo run -p hello-rect`
 
-use std::cell::RefCell;
-use std::sync::Arc;
+use slate_framework::{
+    AlignItems, AnyElement, App, AppContext, Color, Div, FlexDirection, IntoAny, JustifyContent,
+    View, WindowOptions,
+};
 
-use slate_platform::{DefaultPlatform, Event, Platform, Window, WindowOptions};
-use slate_renderer::{RectInstance, Renderer, Scene, srgb_u8_to_linear_premul};
+struct HelloRectView;
+
+impl View for HelloRectView {
+    fn render(&mut self) -> AnyElement {
+        // Outer container: flex column, centered
+        Div::new()
+            .style(|s| {
+                s.flex_direction(FlexDirection::Column)
+                    .align_items(AlignItems::Center)
+                    .justify_content(JustifyContent::Center)
+                    .flex_grow(1.0)
+            })
+            .child(
+                // Inner rect: sky blue (#66ccff), 400x200 logical pixels, corner radius 24
+                Div::new()
+                    .background(Color::from_hex("#66ccff").unwrap_or(Color::BLUE).into())
+                    .corner_radius(24.0)
+                    .style(|s| s.width(400.0).height(200.0)),
+            )
+            .into_any()
+    }
+}
 
 fn main() {
     env_logger::init();
 
-    let platform = DefaultPlatform::new();
-    let window: Arc<_> = platform.create_window(WindowOptions {
+    App::new(WindowOptions {
         title: "Slate · hello-rect".into(),
         size: (800, 600),
         min_size: Some((320, 240)),
         resizable: true,
         ..Default::default()
-    });
-
-    let renderer: RefCell<Option<Renderer>> = RefCell::new(None);
-    let scene: RefCell<Scene> = RefCell::new(Scene::new());
-
-    let platform_ref = &platform;
-    let window_ref = window.clone();
-
-    platform.run(move |event| match event {
-        Event::Resumed => {
-            let r = match pollster::block_on(Renderer::new(window_ref.clone())) {
-                Ok(r) => r,
-                Err(e) => {
-                    log::error!("renderer init failed: {e}");
-                    platform_ref.quit();
-                    return;
-                }
-            };
-            log::info!("renderer ready");
-            *renderer.borrow_mut() = Some(r);
-        }
-
-        Event::WindowResized { physical_size, .. } => {
-            if let Some(r) = renderer.borrow_mut().as_mut() {
-                r.resize(physical_size);
-            }
-        }
-
-        Event::WindowRedrawRequested { .. } => {
-            if renderer.borrow().is_none() {
-                return;
-            }
-
-            let (w, h) = window_ref.physical_size();
-            let scale = window_ref.scale_factor() as f32;
-
-            let mut s = scene.borrow_mut();
-            s.clear();
-            s.push_rect(RectInstance {
-                rect: [
-                    w as f32 / 2.0 - 200.0 * scale,
-                    h as f32 / 2.0 - 100.0 * scale,
-                    400.0 * scale,
-                    200.0 * scale,
-                ],
-                color: srgb_u8_to_linear_premul([0x66, 0xcc, 0xff, 0xff]),
-                corner_radius: 24.0 * scale,
-                _pad: [0.0; 3],
-            });
-
-            let result = renderer.borrow_mut().as_mut().unwrap().render_scene(&mut s);
-            if let Err(e) = result {
-                log::warn!("render skipped: {e:?}");
-            }
-        }
-
-        Event::WindowCloseRequested { .. } => platform_ref.quit(),
-
-        Event::Exiting => log::info!("bye"),
-
-        _ => {}
-    });
+    })
+    .run(|_cx: &AppContext| HelloRectView);
 }

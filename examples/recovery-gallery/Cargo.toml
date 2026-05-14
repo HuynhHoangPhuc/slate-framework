@@ -1,6 +1,6 @@
 [package]
-name = "hello-rect"
-description = "Anchor demo: opens a window and renders a single rounded rectangle"
+name = "recovery-gallery"
+description = "Image + device-lost recovery showcase using App::new"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -77,6 +77,7 @@ pub struct Image {
 
 /// Layout state for Image — stores Taffy node ID.
 pub struct ImageLayoutState {
+    #[allow(dead_code)] // Reserved for future layout invalidation
     node_id: taffy::NodeId,
 }
 

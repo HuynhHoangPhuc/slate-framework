@@ -11,6 +11,7 @@ members = [
     "examples/hello-rect",
     "examples/primitive-gallery",
     "examples/reactive-counter",
+    "examples/recovery-gallery",
     "examples/win-dcomp-spike",
 ]
 resolver = "2"

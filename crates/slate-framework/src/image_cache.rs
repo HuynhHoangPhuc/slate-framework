@@ -30,10 +30,6 @@ pub(crate) struct ImageCache {
 pub(crate) struct ImageCacheEntry {
     /// CPU-side pixel data (survives device-lost).
     pixels: Vec<u8>,
-    /// Image width in pixels.
-    width: u32,
-    /// Image height in pixels.
-    height: u32,
     /// Atlas allocation (None after device-lost, until re-uploaded).
     alloc: Option<AtlasAllocation>,
 }
@@ -102,8 +98,6 @@ impl ImageCache {
                     key,
                     ImageCacheEntry {
                         pixels: pixels.to_vec(),
-                        width,
-                        height,
                         alloc: Some(alloc),
                     },
                 );
@@ -185,8 +179,6 @@ mod tests {
             (12345u64, 1u32, 1u32),
             ImageCacheEntry {
                 pixels: vec![255u8; 4],
-                width: 1,
-                height: 1,
                 alloc: None, // Would normally be Some(...)
             },
         );
