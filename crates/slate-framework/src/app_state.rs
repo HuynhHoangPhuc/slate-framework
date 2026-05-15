@@ -44,10 +44,22 @@ use crate::text_system::{TextSystem, TextSystemObserver};
 use crate::types::{AccessibilityNode, ElementId, Point, Size};
 use crate::view::View;
 
-// Recovery state machine constants (Phase 3)
+// Recovery state machine constants (Phase 3).
+// Test-fast overrides (test-hooks feature) shrink each cycle to ~tens of ms so
+// integration tests can exercise multiple recovery cycles inside a 5-second
+// wall-clock budget without burning CPU on cooldown sleeps.
+#[cfg(not(feature = "test-hooks"))]
 pub(crate) const RECOVERY_COOLDOWN_MS: u64 = 350;
+#[cfg(feature = "test-hooks")]
+pub(crate) const RECOVERY_COOLDOWN_MS: u64 = 20;
+
 pub(crate) const RECOVERY_MAX_ATTEMPTS: u32 = 5;
+
+#[cfg(not(feature = "test-hooks"))]
 pub(crate) const RECOVERY_BACKOFF_BASE_MS: u64 = 100;
+#[cfg(feature = "test-hooks")]
+pub(crate) const RECOVERY_BACKOFF_BASE_MS: u64 = 10;
+
 pub(crate) const RECOVERY_BACKOFF_STEP_MS: u64 = 10;
 pub(crate) const RECOVERY_FLAP_GUARD_SECS: u64 = 5;
 
@@ -59,27 +71,63 @@ pub(crate) const RECOVERY_FLAP_GUARD_SECS: u64 = 5;
 // burst (~60fps × 1–2 frames straddling the seam).
 pub(crate) const ADAPTER_PROBE_MIN_INTERVAL_MS: u64 = 100;
 
+/// Origin classification for a device-lost event.
+///
+/// Distinguishes user-initiated cross-adapter migrations (`LuidMigration` —
+/// the per-redraw LUID probe noticed the window moved to a monitor served by
+/// a different adapter and synthetically marked the device lost) from real
+/// driver/TDR faults reported by wgpu's `set_device_lost_callback`
+/// (`WgpuCallback`).
+///
+/// Only `WgpuCallback` contributes to the 5-second flap guard. `LuidMigration`
+/// bypasses it — repeated cross-seam drags are healthy, not a fault loop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceLossReason {
+    /// Window moved across adapters; recovery rebuilds on the new adapter.
+    LuidMigration,
+    /// wgpu lost-callback fired — real driver reset, TDR, or device removal.
+    WgpuCallback,
+}
+
 /// Recovery state machine for device-lost handling (Phase 3).
 ///
 /// Replaces the old 3-shot immediate retry with a zed-validated pattern:
 /// 350ms cooldown, 5-attempt backoff, and skip_draws gating.
+///
+/// Each non-terminal active variant carries the `DeviceLossReason` so the
+/// flap-guard predicate can apply reason-aware semantics (Phase 2 — L1).
 #[derive(Debug, Clone)]
 pub enum RecoveryState {
     /// Device is healthy, no recovery in progress.
     NotLost,
     /// Device loss just detected; waiting to transition to cooldown.
-    DetectedLost { detected_at: Instant },
+    DetectedLost {
+        detected_at: Instant,
+        reason: DeviceLossReason,
+    },
+    /// Loss occurred during the WM_ENTERSIZEMOVE..WM_EXITSIZEMOVE modal loop
+    /// (Phase 3 — L2). Recovery is deferred until the modal loop exits, so a
+    /// drag that crosses adapters multiple times in a single gesture collapses
+    /// into one recovery cycle. Exits to `CooldownGate` on `on_size_move_end`.
+    DeferredUntilStable {
+        detected_at: Instant,
+        reason: DeviceLossReason,
+    },
     /// Waiting for 350ms cooldown before retry attempts.
-    CooldownGate { detected_at: Instant },
+    CooldownGate {
+        since: Instant,
+        reason: DeviceLossReason,
+    },
     /// Actively retrying device recreation.
     Retrying {
         attempt: u32,
         last_attempt_at: Instant,
+        reason: DeviceLossReason,
     },
     /// Recovery succeeded; will transition to NotLost on next redraw.
-    Recovered,
+    Recovered { at: Instant },
     /// Recovery exhausted all attempts; app should quit.
-    GiveUp,
+    GiveUp { reason: DeviceLossReason },
 }
 
 /// Signal returned by dispatch methods to communicate with the event loop.
@@ -169,8 +217,16 @@ pub struct AppState<V: View> {
     pub recovery_state: RefCell<RecoveryState>,
     /// One-frame present suppression after recovery (Phase 3).
     pub skip_draws: Cell<bool>,
-    /// 5-second flap guard: if device-lost re-fires within 5s of recovery, give up (Phase 3).
+    /// Post-recovery flap clock (Phase 3). Stamped on every successful
+    /// recovery regardless of reason. Retained for log continuity and
+    /// downstream consumers; the reason-aware predicate now uses
+    /// `last_wgpu_callback_loss_at` (Phase 2).
     pub last_successful_recovery_at: Cell<Option<Instant>>,
+    /// WgpuCallback inter-loss clock (Phase 2 — L1). Stamped on each
+    /// `WgpuCallback` classification edge. Drives the reason-aware flap
+    /// guard: 2× `WgpuCallback` within `RECOVERY_FLAP_GUARD_SECS` → `GiveUp`.
+    /// `LuidMigration` losses do not stamp or read this clock.
+    pub last_wgpu_callback_loss_at: Cell<Option<Instant>>,
     /// Phase 4 (H3): timestamp of the last adapter-LUID probe. Skip the probe
     /// for `ADAPTER_PROBE_MIN_INTERVAL_MS` after the previous one so a
     /// cross-monitor drag that straddles the seam for multiple frames does
@@ -260,6 +316,7 @@ impl<V: View> AppState<V> {
             recovery_state: RefCell::new(RecoveryState::NotLost),
             skip_draws: Cell::new(false),
             last_successful_recovery_at: Cell::new(None),
+            last_wgpu_callback_loss_at: Cell::new(None),
             last_adapter_check_at: Cell::new(None),
             renderer_generation: Signal::new(runtime, 0u64),
             rendering: Cell::new(false),
@@ -433,57 +490,105 @@ impl<V: View> AppState<V> {
         );
         match state.clone() {
             RecoveryState::NotLost if device_lost => {
-                // 5-second flap guard: if device-lost re-fires within 5s of recovery, give up
-                if let Some(t) = self.last_successful_recovery_at.get() {
-                    let elapsed = t.elapsed();
-                    if elapsed < Duration::from_secs(RECOVERY_FLAP_GUARD_SECS) {
-                        log::error!(target: "slate::device_lost",
-                            "device-lost re-fired {}ms after recovery (guard={}s) - giving up",
-                            elapsed.as_millis(),
-                            RECOVERY_FLAP_GUARD_SECS);
-                        *state = RecoveryState::GiveUp;
-                        drop(state);
-                        return AppSignal::RequestQuit;
-                    }
+                // Classify origin: the renderer's wgpu lost-callback sets a
+                // dedicated atomic. If consumed=true the loss came from wgpu;
+                // otherwise it came from the per-redraw LUID probe.
+                let reason = self.classify_loss_reason();
+                let now = Instant::now();
+
+                // L2 deferral: loss arrived during the modal size/move loop.
+                // Park in `DeferredUntilStable` — `on_size_move_end` will
+                // transition us into `CooldownGate` once the user releases.
+                // No render, no retry while deferred.
+                if self.window.in_size_move() {
+                    log::info!(target: "slate::device_lost",
+                        "device-lost during modal size/move loop — deferring (reason={:?})", reason);
+                    *state = RecoveryState::DeferredUntilStable {
+                        detected_at: now,
+                        reason,
+                    };
+                    drop(state);
+                    return AppSignal::None;
                 }
-                log::info!(target: "slate::device_lost", "device loss detected, entering cooldown");
+
+                // Reason-aware flap guard: only `WgpuCallback` losses count.
+                // `LuidMigration` always passes — cross-adapter drag is healthy.
+                if reason == DeviceLossReason::WgpuCallback {
+                    if let Some(prev) = self.last_wgpu_callback_loss_at.get() {
+                        let elapsed = now.duration_since(prev);
+                        if elapsed <= Duration::from_secs(RECOVERY_FLAP_GUARD_SECS) {
+                            log::error!(target: "slate::device_lost",
+                                "device-lost re-fired {}ms after prior WgpuCallback (guard={}s, reason=WgpuCallback) — giving up",
+                                elapsed.as_millis(),
+                                RECOVERY_FLAP_GUARD_SECS);
+                            *state = RecoveryState::GiveUp { reason };
+                            self.last_wgpu_callback_loss_at.set(Some(now));
+                            drop(state);
+                            return AppSignal::RequestQuit;
+                        }
+                    }
+                    self.last_wgpu_callback_loss_at.set(Some(now));
+                }
+
+                log::info!(target: "slate::device_lost",
+                    "device loss detected (reason={:?}), entering cooldown", reason);
                 *state = RecoveryState::DetectedLost {
-                    detected_at: Instant::now(),
+                    detected_at: now,
+                    reason,
                 };
                 drop(state);
                 self.window.request_redraw();
                 return AppSignal::None;
             }
-            RecoveryState::DetectedLost { detected_at } => {
-                *state = RecoveryState::CooldownGate { detected_at };
+            RecoveryState::DetectedLost { detected_at, reason } => {
+                let reason = self.maybe_upgrade_reason(reason);
+                *state = RecoveryState::CooldownGate {
+                    since: detected_at,
+                    reason,
+                };
                 drop(state);
                 self.window.request_redraw();
                 return AppSignal::None;
             }
-            RecoveryState::CooldownGate { detected_at } => {
-                if detected_at.elapsed() < Duration::from_millis(RECOVERY_COOLDOWN_MS) {
+            RecoveryState::CooldownGate { since, reason } => {
+                let reason = self.maybe_upgrade_reason(reason);
+                if since.elapsed() < Duration::from_millis(RECOVERY_COOLDOWN_MS) {
+                    // Refresh state with possibly-upgraded reason; stay gated.
+                    *state = RecoveryState::CooldownGate { since, reason };
                     drop(state);
                     self.window.request_redraw();
                     return AppSignal::None;
                 }
-                log::info!(target: "slate::device_lost", "cooldown elapsed, starting retry");
+                log::info!(target: "slate::device_lost",
+                    "cooldown elapsed, starting retry (reason={:?})", reason);
                 *state = RecoveryState::Retrying {
                     attempt: 0,
                     last_attempt_at: Instant::now(),
+                    reason,
                 };
                 drop(state);
                 return self.execute_recovery_step();
             }
-            RecoveryState::Retrying { .. } => {
+            RecoveryState::Retrying { reason, .. } => {
+                let _ = self.maybe_upgrade_reason(reason);
                 drop(state);
                 return self.execute_recovery_step();
             }
-            RecoveryState::Recovered => {
+            RecoveryState::DeferredUntilStable { reason, .. } => {
+                // L2: still inside modal size/move loop. Re-run the L1
+                // upgrade rule so a `WgpuCallback` arriving mid-drag pins
+                // the stored reason to the real fault, then skip render.
+                // `on_size_move_end` transitions us out into CooldownGate.
+                let _ = self.maybe_upgrade_reason(reason);
+                drop(state);
+                return AppSignal::None;
+            }
+            RecoveryState::Recovered { .. } => {
                 *state = RecoveryState::NotLost;
                 drop(state);
                 // Fall through to normal redraw
             }
-            RecoveryState::GiveUp => {
+            RecoveryState::GiveUp { .. } => {
                 return AppSignal::RequestQuit;
             }
             RecoveryState::NotLost => {
@@ -498,13 +603,60 @@ impl<V: View> AppState<V> {
         AppSignal::None
     }
 
+    /// Classify the origin of a device-loss event by consuming the renderer's
+    /// wgpu-callback signal (Phase 2 — L1).
+    ///
+    /// Returns `WgpuCallback` if wgpu's lost-callback fired since the last
+    /// consume; otherwise `LuidMigration` (the loss was synthesized by the
+    /// per-redraw LUID probe). Must be called on the NotLost→DetectedLost edge.
+    fn classify_loss_reason(&self) -> DeviceLossReason {
+        let callback_fired = self
+            .renderer
+            .borrow()
+            .as_ref()
+            .map(|r| r.consume_wgpu_callback_fired())
+            .unwrap_or(false);
+        if callback_fired {
+            DeviceLossReason::WgpuCallback
+        } else {
+            DeviceLossReason::LuidMigration
+        }
+    }
+
+    /// Re-check the wgpu-callback signal during an in-flight recovery cycle
+    /// and upgrade the carried reason to `WgpuCallback` if it has fired since
+    /// classification (Phase 2 — L1 upgrade rule).
+    ///
+    /// A `WgpuCallback` event arriving after a `LuidMigration` classification
+    /// indicates the cross-monitor drag *also* tripped a real driver fault;
+    /// conservative bias counts it. Stamps `last_wgpu_callback_loss_at` so
+    /// the next WgpuCallback event observes the spacing correctly.
+    fn maybe_upgrade_reason(&self, current: DeviceLossReason) -> DeviceLossReason {
+        let callback_fired = self
+            .renderer
+            .borrow()
+            .as_ref()
+            .map(|r| r.consume_wgpu_callback_fired())
+            .unwrap_or(false);
+        if callback_fired && current == DeviceLossReason::LuidMigration {
+            self.last_wgpu_callback_loss_at.set(Some(Instant::now()));
+            log::info!(target: "slate::device_lost",
+                "upgrade-rule: WgpuCallback arrived mid-cycle — upgrading reason from LuidMigration");
+            DeviceLossReason::WgpuCallback
+        } else {
+            current
+        }
+    }
+
     /// Execute one step of the recovery retry loop (Phase 3).
     ///
     /// Called when `RecoveryState::Retrying`. Handles backoff sleep, renderer
     /// recreation, observer firing, and state transitions.
     fn execute_recovery_step(&self) -> AppSignal {
-        let attempt = match self.recovery_state.borrow().clone() {
-            RecoveryState::Retrying { attempt, .. } => attempt,
+        let (attempt, reason) = match self.recovery_state.borrow().clone() {
+            RecoveryState::Retrying {
+                attempt, reason, ..
+            } => (attempt, reason),
             _ => return AppSignal::None,
         };
 
@@ -529,7 +681,7 @@ impl<V: View> AppState<V> {
                 if new_renderer.is_device_lost() {
                     log::warn!(target: "slate::device_lost",
                         "new renderer is already device-lost, treating as failure");
-                    return self.handle_recovery_failure(attempt);
+                    return self.handle_recovery_failure(attempt, reason);
                 }
 
                 log::info!(target: "slate::device_lost", "GPU device recovered successfully");
@@ -571,32 +723,47 @@ impl<V: View> AppState<V> {
                 // Set skip_draws for one-frame present suppression
                 self.skip_draws.set(true);
 
-                // Track for flap guard
-                self.last_successful_recovery_at.set(Some(Instant::now()));
+                // Track for flap guard (reason-agnostic, kept for continuity).
+                let now = Instant::now();
+                self.last_successful_recovery_at.set(Some(now));
 
-                *self.recovery_state.borrow_mut() = RecoveryState::Recovered;
+                // Discard any late-arriving wgpu-callback signal: this cycle is
+                // closed. Without this clear, a callback that fired after
+                // classification but before recovery would leak into the next
+                // cycle and misclassify a subsequent LuidMigration as
+                // WgpuCallback. The atomic is owned by the *current* cycle.
+                if let Some(r) = self.renderer.borrow().as_ref() {
+                    let leaked = r.consume_wgpu_callback_fired();
+                    if leaked {
+                        log::trace!(target: "slate::device_lost",
+                            "Recovered: cleared late wgpu_callback_fired signal");
+                    }
+                }
+
+                *self.recovery_state.borrow_mut() = RecoveryState::Recovered { at: now };
                 self.window.request_redraw();
                 AppSignal::None
             }
             Err(e) => {
                 log::error!(target: "slate::device_lost", "GPU device recovery failed: {e}");
-                self.handle_recovery_failure(attempt)
+                self.handle_recovery_failure(attempt, reason)
             }
         }
     }
 
     /// Handle a failed recovery attempt.
-    fn handle_recovery_failure(&self, attempt: u32) -> AppSignal {
+    fn handle_recovery_failure(&self, attempt: u32, reason: DeviceLossReason) -> AppSignal {
         let next = attempt + 1;
         if next >= RECOVERY_MAX_ATTEMPTS {
             log::error!(target: "slate::device_lost",
-                "recovery exhausted after {} attempts", next);
-            *self.recovery_state.borrow_mut() = RecoveryState::GiveUp;
+                "recovery exhausted after {} attempts (reason={:?})", next, reason);
+            *self.recovery_state.borrow_mut() = RecoveryState::GiveUp { reason };
             AppSignal::RequestQuit
         } else {
             *self.recovery_state.borrow_mut() = RecoveryState::Retrying {
                 attempt: next,
                 last_attempt_at: Instant::now(),
+                reason,
             };
             self.window.request_redraw();
             AppSignal::None
@@ -1279,10 +1446,24 @@ impl<V: View> WindowRenderDelegate for AppState<V> {
     }
 
     fn on_size_move_end(&self, _window_id: WindowId) {
-        // Phase 5: Called when modal size-move loop ends (WM_EXITSIZEMOVE).
-        // The platform layer already fired any deferred display_change probe,
-        // so this is just a hook for future use. Currently no-op beyond logging.
+        // Called when modal size-move loop ends (WM_EXITSIZEMOVE).
+        // The platform layer already fired any deferred display_change probe.
+        // If we deferred a device-lost during the drag, hand it off to
+        // `CooldownGate` now so recovery resumes on the next dispatch_redraw
+        // tick (keeping `Renderer::new` off this thread's call stack).
         log::trace!(target: "slate::win", "on_size_move_end: modal loop ended");
+
+        let snapshot = self.recovery_state.borrow().clone();
+        if let RecoveryState::DeferredUntilStable { reason, .. } = snapshot {
+            log::info!(target: "slate::device_lost",
+                "exit size/move — resuming recovery via cooldown gate (reason={:?})", reason);
+            *self.recovery_state.borrow_mut() = RecoveryState::CooldownGate {
+                since: Instant::now(),
+                reason,
+            };
+            self.last_adapter_check_at.set(None);
+            self.window.request_redraw();
+        }
     }
 }
 
@@ -1520,6 +1701,33 @@ impl<V: View> AppState<V> {
         } else {
             false
         }
+    }
+
+    /// Synthetic `LuidMigration`-origin device loss: sets the renderer's
+    /// `device_lost` atomic without touching `wgpu_callback_fired`, so the
+    /// classifier reports `DeviceLossReason::LuidMigration`.
+    ///
+    /// Only available with the `test-hooks` feature.
+    #[cfg(all(target_os = "windows", feature = "test-hooks"))]
+    pub fn force_renderer_device_lost_luid_migration_for_test(&self) -> bool {
+        if let Some(r) = self.renderer.borrow().as_ref() {
+            r.force_device_lost_luid_migration();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Consume the renderer's `wgpu_callback_fired` flag, returning prior value.
+    /// Mirrors `Renderer::consume_wgpu_callback_fired` for the cycle-leak
+    /// regression test.
+    #[cfg(feature = "test-hooks")]
+    pub fn consume_wgpu_callback_fired_for_test(&self) -> bool {
+        self.renderer
+            .borrow()
+            .as_ref()
+            .map(|r| r.consume_wgpu_callback_fired())
+            .unwrap_or(false)
     }
 
     /// Fire the device-lost callback logic for testing.

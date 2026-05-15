@@ -44,4 +44,4 @@ env_logger.workspace = true
 [features]
 default = []
 tokio = ["dep:tokio", "dep:async-compat"]
-test-hooks = ["slate-renderer/test-hooks"]
+test-hooks = ["slate-renderer/test-hooks", "slate-platform/test-hooks"]

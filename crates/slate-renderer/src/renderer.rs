@@ -82,6 +82,16 @@ pub struct Renderer {
     // Reads happen on the main thread via `is_device_lost()`.
     device_lost: Arc<AtomicBool>,
 
+    // Wgpu-callback origin signal. Set exclusively from inside the wgpu
+    // `set_device_lost_callback` closure (and the equivalent test hook).
+    // AppState consumes it via `consume_wgpu_callback_fired` on the
+    // NotLost→DetectedLost edge and on every subsequent redraw during a
+    // recovery cycle to apply the "upgrade rule" (a wgpu-callback that
+    // arrives after a LuidMigration cycle upgrades the cycle's reason).
+    // Lifecycle: fire-and-be-consumed-once-per-cycle. Cleared on
+    // Retrying→Recovered transition to prevent leakage across cycles.
+    wgpu_callback_fired: Arc<AtomicBool>,
+
     // Observer infrastructure (Phase 1: RendererObserver trait).
     // Generation starts at 1 so consumers can reserve 0 for "uninitialized".
     generation: AtomicU64,
@@ -163,8 +173,10 @@ impl Renderer {
         // Filter `Destroyed` (matches zed/crates/gpui_wgpu/src/wgpu_context.rs:79)
         // so intentional `Renderer` drop in tests does not trigger recovery.
         let device_lost = Arc::new(AtomicBool::new(false));
+        let wgpu_callback_fired = Arc::new(AtomicBool::new(false));
         device.set_device_lost_callback({
             let device_lost = Arc::clone(&device_lost);
+            let wgpu_callback_fired = Arc::clone(&wgpu_callback_fired);
             let device_weak = Arc::downgrade(&device);
             move |reason, message| {
                 if reason == wgpu::DeviceLostReason::Destroyed {
@@ -192,6 +204,9 @@ impl Renderer {
                 // op; the returned previous value answers H-A vs H-B without a
                 // separate load. Thread name included to confirm worker-vs-main.
                 let prev = device_lost.swap(true, Ordering::AcqRel);
+                // Signal callback origin to the framework's reason classifier.
+                // Set with Release; consumer reads with AcqRel swap.
+                wgpu_callback_fired.store(true, Ordering::Release);
                 let tid = std::thread::current().id();
                 let tname = std::thread::current().name().unwrap_or("<unnamed>").to_string();
                 log::trace!(
@@ -264,6 +279,7 @@ impl Renderer {
             image_pipeline,
             glyph_pipeline,
             device_lost,
+            wgpu_callback_fired,
             generation: AtomicU64::new(1),
             observers: RefCell::new(Vec::new()),
         })
@@ -289,6 +305,18 @@ impl Renderer {
     /// RendererError::DeviceLost is returned from render operations.
     pub fn mark_device_lost(&self) {
         self.device_lost.store(true, Ordering::Release);
+    }
+
+    /// Consume the "wgpu callback fired" signal. Returns `true` exactly once
+    /// per callback invocation; subsequent calls return `false` until the
+    /// callback fires again.
+    ///
+    /// Used by AppState's reason classifier on the NotLost→DetectedLost edge
+    /// and on every redraw during a recovery cycle (upgrade rule). Also
+    /// called on Retrying→Recovered transition to discard any late-arriving
+    /// signal so it cannot leak into the next cycle's classification.
+    pub fn consume_wgpu_callback_fired(&self) -> bool {
+        self.wgpu_callback_fired.swap(false, Ordering::AcqRel)
     }
 
     /// Proactively check device health via GetDeviceRemovedReason.
@@ -371,11 +399,27 @@ impl Renderer {
         );
 
         let prev = self.device_lost.swap(true, Ordering::AcqRel);
+        // Mirror production: signal callback origin so the classifier picks
+        // DeviceLossReason::WgpuCallback for `Unknown`-reason test fires.
+        self.wgpu_callback_fired.store(true, Ordering::Release);
         log::trace!(
             target: "slate::device_lost",
             "fire_device_lost_callback_for_test: prev_flag={}", prev
         );
         true
+    }
+
+    /// Test hook: simulate a LUID-migration-origin device loss without
+    /// setting the wgpu-callback atomic. The framework's reason classifier
+    /// will pick `DeviceLossReason::LuidMigration` because
+    /// `wgpu_callback_fired` stays `false`.
+    ///
+    /// Only available with the `test-hooks` feature or in `#[cfg(test)]`.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn force_device_lost_luid_migration(&self) {
+        self.device_lost.store(true, Ordering::Release);
+        // Intentionally do NOT touch wgpu_callback_fired — that is the
+        // signal that distinguishes LuidMigration from WgpuCallback.
     }
 
     /// Register an observer to receive device recreation notifications.

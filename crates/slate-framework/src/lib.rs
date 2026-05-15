@@ -29,6 +29,10 @@ pub mod app;
 pub mod app_state;
 #[cfg(not(any(test, feature = "test-hooks")))]
 pub(crate) mod app_state;
+
+// Re-export device-loss reason classification so integration tests can
+// match on it without enabling the `test-hooks` feature (Phase 2).
+pub use app_state::DeviceLossReason;
 pub mod color;
 pub mod context;
 pub mod element;

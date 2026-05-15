@@ -11,6 +11,9 @@ readme = "README.md"
 keywords = ["gui", "window", "platform", "event-loop", "native"]
 categories = ["gui", "os"]
 
+[features]
+test-hooks = []
+
 [dependencies]
 raw-window-handle.workspace = true
 log.workspace = true

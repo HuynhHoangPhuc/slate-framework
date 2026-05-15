@@ -227,6 +227,17 @@ impl Window for WinWindow {
         }
         None
     }
+
+    fn in_size_move(&self) -> bool {
+        self.inner.in_size_move.get()
+    }
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+impl WinWindow {
+    pub fn set_in_size_move_for_test(&self, v: bool) {
+        self.inner.in_size_move.set(v);
+    }
 }
 
 impl HasWindowHandle for WinWindow {

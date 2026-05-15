@@ -79,6 +79,13 @@ pub trait Window: HasWindowHandle + HasDisplayHandle + 'static {
     fn current_monitor_luid(&self) -> Option<u64> {
         None
     }
+
+    /// True while the window is inside a modal size/move loop
+    /// (`WM_ENTERSIZEMOVE..WM_EXITSIZEMOVE` on Win32). Non-Windows platforms
+    /// have no modal-loop concept and return `false`.
+    fn in_size_move(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Clone, Debug)]

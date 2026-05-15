@@ -154,27 +154,28 @@ fn image_survives_device_lost_recovery() {
             && !triggered.get()
             && matches!(recovery, RecoveryState::NotLost)
             && !state.renderer_is_device_lost()
+            && state.force_renderer_device_lost()
         {
-            if state.force_renderer_device_lost() {
-                triggered.set(true);
-                println!(
-                    "Device-lost triggered at gen={}, state={:?}",
-                    gen_now, recovery
-                );
-            }
+            triggered.set(true);
+            println!(
+                "Device-lost triggered at gen={}, state={:?}",
+                gen_now, recovery
+            );
         }
 
         // Track recovery completion
-        if triggered.get() && !recovered.get() {
-            if matches!(recovery, RecoveryState::NotLost) && gen_now > initial_gen.get() {
-                recovered.set(true);
-                println!(
-                    "Recovery completed: gen {} -> {}, state={:?}",
-                    initial_gen.get(),
-                    gen_now,
-                    recovery
-                );
-            }
+        if triggered.get()
+            && !recovered.get()
+            && matches!(recovery, RecoveryState::NotLost)
+            && gen_now > initial_gen.get()
+        {
+            recovered.set(true);
+            println!(
+                "Recovery completed: gen {} -> {}, state={:?}",
+                initial_gen.get(),
+                gen_now,
+                recovery
+            );
         }
 
         // Count frames after recovery to verify image still renders
@@ -188,7 +189,7 @@ fn image_survives_device_lost_recovery() {
         }
 
         // Give up if recovery failed
-        if matches!(recovery, RecoveryState::GiveUp) {
+        if matches!(recovery, RecoveryState::GiveUp { .. }) {
             println!("Recovery gave up");
             platform.quit();
             return;
