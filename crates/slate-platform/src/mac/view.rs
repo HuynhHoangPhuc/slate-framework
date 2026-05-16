@@ -9,7 +9,9 @@ use objc2_app_kit::{
     NSEvent, NSEventModifierFlags, NSTrackingArea, NSTrackingAreaOptions, NSView, NSWindow,
     NSWindowDelegate,
 };
-use objc2_foundation::{MainThreadMarker, NSNotification, NSObject, NSObjectProtocol, NSRect, NSSize};
+use objc2_foundation::{
+    MainThreadMarker, NSNotification, NSObject, NSObjectProtocol, NSRect, NSSize,
+};
 use objc2_quartz_core::CAMetalLayer;
 
 use super::{
