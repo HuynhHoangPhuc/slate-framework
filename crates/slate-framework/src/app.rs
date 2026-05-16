@@ -12,6 +12,7 @@ use slate_platform::{
 };
 
 use crate::app_state::{AppSignal, AppState};
+use crate::event::{KeyEvent, KeyHandler, TextInputEvent, TextInputHandler};
 use crate::executor::{BackgroundExecutor, Executor, RedrawRequester};
 use crate::view::View;
 
@@ -73,6 +74,9 @@ impl AppContext {
 pub struct App {
     platform: DefaultPlatform,
     window: Arc<DefaultWindow>,
+    on_key_down: Vec<KeyHandler>,
+    on_key_up: Vec<KeyHandler>,
+    on_text_input: Vec<TextInputHandler>,
 }
 
 impl App {
@@ -83,7 +87,39 @@ impl App {
         let platform = DefaultPlatform::new();
         let window = platform.create_window(options);
 
-        Self { platform, window }
+        Self {
+            platform,
+            window,
+            on_key_down: Vec::new(),
+            on_key_up: Vec::new(),
+            on_text_input: Vec::new(),
+        }
+    }
+
+    /// Register an App-level handler for `KeyDown` events. Multiple handlers
+    /// may be registered; they fire in registration order. Handlers must not
+    /// re-enter `App::run` or other dispatch paths — the framework holds a
+    /// `RefCell` borrow on the handler vec for the duration of the call.
+    ///
+    /// Call before [`App::run`]; the type system enforces this (`run` consumes
+    /// `self`).
+    pub fn on_key_down(mut self, handler: impl FnMut(&KeyEvent) + 'static) -> Self {
+        self.on_key_down.push(Box::new(handler));
+        self
+    }
+
+    /// Register an App-level handler for `KeyUp` events. See [`App::on_key_down`].
+    pub fn on_key_up(mut self, handler: impl FnMut(&KeyEvent) + 'static) -> Self {
+        self.on_key_up.push(Box::new(handler));
+        self
+    }
+
+    /// Register an App-level handler for composed text input. Fires once per
+    /// keystroke that produces visible text (or per surrogate pair on Windows).
+    /// See [`App::on_key_down`].
+    pub fn on_text_input(mut self, handler: impl FnMut(&TextInputEvent) + 'static) -> Self {
+        self.on_text_input.push(Box::new(handler));
+        self
     }
 
     /// Run the application with the given view factory.
@@ -94,7 +130,13 @@ impl App {
     /// This method enters the platform event loop and does not return until
     /// the application exits.
     pub fn run<V: View>(self, mut view_fn: impl FnMut(&AppContext) -> V + 'static) {
-        let App { platform, window } = self;
+        let App {
+            platform,
+            window,
+            on_key_down,
+            on_key_up,
+            on_text_input,
+        } = self;
 
         // Create executor and reactive runtime
         let redraw_requester = RedrawRequester::new(wake_run_loop);
@@ -114,6 +156,11 @@ impl App {
             redraw_requester,
             runtime,
         ));
+
+        // Move keyboard handlers into AppState before the platform loop starts.
+        // Setter pattern (rather than ctor args) keeps test call sites stable —
+        // headless harnesses that don't need keyboard dispatch never call this.
+        state.install_key_handlers(on_key_down, on_key_up, on_text_input);
 
         // Install render delegate on the platform window.
         //
@@ -204,10 +251,27 @@ impl App {
                 Event::CaptureLost { .. } => state_ref.dispatch_capture_lost(),
                 Event::DeviceLost { fatal, .. } => state_ref.dispatch_device_lost(fatal),
                 Event::DeviceRestored { .. } => state_ref.dispatch_device_restored(),
+                Event::KeyDown {
+                    code,
+                    key,
+                    modifiers,
+                    is_repeat,
+                    ..
+                } => state_ref.dispatch_key_down(code, key, modifiers, is_repeat),
+                Event::KeyUp {
+                    code,
+                    key,
+                    modifiers,
+                    ..
+                } => state_ref.dispatch_key_up(code, key, modifiers),
+                Event::TextInput { text, .. } => state_ref.dispatch_text_input(text),
                 Event::Exiting => {
                     log::info!("exiting");
                     AppSignal::None
                 }
+                // Slate's Event is #[non_exhaustive]; this final arm preserves
+                // forward compatibility — future Slate variants are observed
+                // but not yet routed.
                 _ => AppSignal::None,
             };
 

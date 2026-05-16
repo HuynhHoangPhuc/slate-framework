@@ -195,12 +195,11 @@ impl RecoveryHarness {
                     triggered.set(true);
                 }
                 schedule_next_tick();
-            } else if triggered.get()
+            } else if (triggered.get()
                 && matches!(recovery, RecoveryState::NotLost)
-                && gen_now > initial_gen.get()
+                && gen_now > initial_gen.get())
+                || matches!(recovery, RecoveryState::GiveUp)
             {
-                platform.quit();
-            } else if matches!(recovery, RecoveryState::GiveUp) {
                 platform.quit();
             } else {
                 schedule_next_tick();

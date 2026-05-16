@@ -21,7 +21,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use slate_platform::{
-    DefaultWindow, Modifiers, MouseButton, PhysicalSize, Platform, Window, WindowId,
+    DefaultWindow, Key, KeyCode, Modifiers, MouseButton, PhysicalSize, Platform, Window, WindowId,
     WindowRenderDelegate,
 };
 use slate_reactive::{ObserverId, Signal};
@@ -31,8 +31,8 @@ use smallvec::SmallVec;
 use crate::app::AppContext;
 use crate::context::{LayoutCtx, PaintCtx, PrepaintCtx};
 use crate::event::{
-    EventCtx, Handlers, MouseEvent, MouseHandler, PointerEvent, PointerEventKind, PointerHandler,
-    ScrollEvent, ScrollHandler,
+    EventCtx, Handlers, KeyEvent, KeyHandler, MouseEvent, MouseHandler, PointerEvent,
+    PointerEventKind, PointerHandler, ScrollEvent, ScrollHandler, TextInputEvent, TextInputHandler,
 };
 use crate::executor::{Executor, RedrawRequester};
 use crate::hit_test::HitTestList;
@@ -216,6 +216,13 @@ pub struct AppState<V: View> {
     // size we already rendered into. AppKit can fire setFrameSize: with the
     // same PhysicalSize twice in a tick (e.g. logical→backing rounding).
     pub last_resize_size: Cell<Option<PhysicalSize>>,
+
+    // App-level keyboard handlers (Phase 9a). Per-element key handlers ship
+    // separately in Phase 9b; these remain the permanent home for global
+    // shortcuts. Vecs preserve registration order; multiple handlers compose.
+    on_key_down: RefCell<Vec<KeyHandler>>,
+    on_key_up: RefCell<Vec<KeyHandler>>,
+    on_text_input: RefCell<Vec<TextInputHandler>>,
 }
 
 impl<V: View> AppState<V> {
@@ -296,7 +303,25 @@ impl<V: View> AppState<V> {
             pending_quit: Cell::new(false),
             sync_resize: Cell::new(false),
             last_resize_size: Cell::new(None),
+            on_key_down: RefCell::new(Vec::new()),
+            on_key_up: RefCell::new(Vec::new()),
+            on_text_input: RefCell::new(Vec::new()),
         }
+    }
+
+    /// Install App-level keyboard handlers. Called once by `App::run` after
+    /// construction and before the platform loop starts. Subsequent calls
+    /// replace previously-installed handlers — by design, only `App::run` ever
+    /// calls this and it does so exactly once.
+    pub(crate) fn install_key_handlers(
+        &self,
+        on_key_down: Vec<KeyHandler>,
+        on_key_up: Vec<KeyHandler>,
+        on_text_input: Vec<TextInputHandler>,
+    ) {
+        *self.on_key_down.borrow_mut() = on_key_down;
+        *self.on_key_up.borrow_mut() = on_key_up;
+        *self.on_text_input.borrow_mut() = on_text_input;
     }
 
     /// Initialize renderer + text_system + view. Called from Event::Resumed.
@@ -1212,6 +1237,85 @@ impl<V: View> AppState<V> {
     }
 
     // -----------------------------------------------------------------------
+    // Keyboard event dispatch methods (Phase 9a)
+    //
+    // Mirrors the mouse-dispatch pattern: build the framework event payload,
+    // walk the registered handler vec, return `RequestRedraw` when any handler
+    // ran (handler may have mutated reactive state) and `None` otherwise to
+    // avoid spurious repaints in apps that never register a key handler.
+    //
+    // Handlers must not re-enter `dispatch_key_*` — the `borrow_mut()` on the
+    // handler vec is held across invocation. This matches the platform's
+    // single-threaded UI contract and the existing mouse-dispatch borrow
+    // discipline (see ADR-001).
+    // -----------------------------------------------------------------------
+
+    /// Dispatch `KeyDown` to App-level handlers.
+    pub(crate) fn dispatch_key_down(
+        &self,
+        code: KeyCode,
+        key: Key,
+        modifiers: Modifiers,
+        is_repeat: bool,
+    ) -> AppSignal {
+        let mut handlers = self.on_key_down.borrow_mut();
+        if handlers.is_empty() {
+            return AppSignal::None;
+        }
+        let event = KeyEvent {
+            code,
+            key,
+            modifiers,
+            is_repeat,
+            timestamp: Instant::now(),
+        };
+        for handler in handlers.iter_mut() {
+            handler(&event);
+        }
+        AppSignal::RequestRedraw
+    }
+
+    /// Dispatch `KeyUp` to App-level handlers.
+    pub(crate) fn dispatch_key_up(
+        &self,
+        code: KeyCode,
+        key: Key,
+        modifiers: Modifiers,
+    ) -> AppSignal {
+        let mut handlers = self.on_key_up.borrow_mut();
+        if handlers.is_empty() {
+            return AppSignal::None;
+        }
+        let event = KeyEvent {
+            code,
+            key,
+            modifiers,
+            is_repeat: false,
+            timestamp: Instant::now(),
+        };
+        for handler in handlers.iter_mut() {
+            handler(&event);
+        }
+        AppSignal::RequestRedraw
+    }
+
+    /// Dispatch `TextInput` to App-level handlers.
+    pub(crate) fn dispatch_text_input(&self, text: String) -> AppSignal {
+        let mut handlers = self.on_text_input.borrow_mut();
+        if handlers.is_empty() {
+            return AppSignal::None;
+        }
+        let event = TextInputEvent {
+            text,
+            timestamp: Instant::now(),
+        };
+        for handler in handlers.iter_mut() {
+            handler(&event);
+        }
+        AppSignal::RequestRedraw
+    }
+
+    // -----------------------------------------------------------------------
     // Mouse event helpers (internal)
     // -----------------------------------------------------------------------
 
@@ -1611,5 +1715,42 @@ impl<V: View> AppState<V> {
     /// Request a redraw on the associated window.
     pub fn request_redraw(&self) {
         self.window.request_redraw();
+    }
+
+    /// Install App-level keyboard handlers. Test-only wrapper exposing the
+    /// `pub(crate)` setter so integration tests can wire handlers post-construction.
+    pub fn install_key_handlers_for_test(
+        &self,
+        on_key_down: Vec<KeyHandler>,
+        on_key_up: Vec<KeyHandler>,
+        on_text_input: Vec<TextInputHandler>,
+    ) {
+        self.install_key_handlers(on_key_down, on_key_up, on_text_input);
+    }
+
+    /// Dispatch a synthetic `KeyDown` to installed handlers. Test-only.
+    pub fn dispatch_key_down_for_test(
+        &self,
+        code: KeyCode,
+        key: Key,
+        modifiers: Modifiers,
+        is_repeat: bool,
+    ) -> AppSignal {
+        self.dispatch_key_down(code, key, modifiers, is_repeat)
+    }
+
+    /// Dispatch a synthetic `KeyUp` to installed handlers. Test-only.
+    pub fn dispatch_key_up_for_test(
+        &self,
+        code: KeyCode,
+        key: Key,
+        modifiers: Modifiers,
+    ) -> AppSignal {
+        self.dispatch_key_up(code, key, modifiers)
+    }
+
+    /// Dispatch a synthetic `TextInput` to installed handlers. Test-only.
+    pub fn dispatch_text_input_for_test(&self, text: String) -> AppSignal {
+        self.dispatch_text_input(text)
     }
 }

@@ -50,14 +50,17 @@ pub mod view;
 
 // Re-export underlying crates
 pub use slate_platform;
-pub use slate_platform::{Modifiers, MouseButton, WindowOptions};
+pub use slate_platform::{Key, KeyCode, Modifiers, MouseButton, NamedKey, WindowOptions};
 pub use slate_renderer;
 pub use slate_text;
 
 // Re-export core types
 pub use app::{App, AppContext};
 pub use color::Color;
-pub use event::{EventCtx, MouseEvent, PointerEvent, PointerEventKind, ScrollEvent};
+pub use event::{
+    EventCtx, KeyEvent, KeyHandler, MouseEvent, PointerEvent, PointerEventKind, ScrollEvent,
+    TextInputEvent, TextInputHandler,
+};
 pub use headless::{HeadlessApp, HeadlessError};
 
 /// Reactive primitives for building reactive UIs.
