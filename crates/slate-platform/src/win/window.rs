@@ -74,6 +74,7 @@ impl WinWindow {
             dxgi_factory,
             last_monitor: Cell::new(HMONITOR(std::ptr::null_mut())),
             pending_monitor_change: Cell::new(false),
+            pending_high_surrogate: Cell::new(None),
         });
 
         let inner_ptr = Arc::as_ptr(&inner);

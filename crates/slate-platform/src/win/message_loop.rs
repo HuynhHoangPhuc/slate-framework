@@ -20,15 +20,17 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CREATESTRUCTW, DefWindowProcW, GWLP_USERDATA, GetClientRect, GetWindowLongPtrW, KillTimer,
     MINMAXINFO, MSG, PM_REMOVE, PeekMessageW, PostQuitMessage, SIZE_MINIMIZED, SWP_NOACTIVATE,
     SWP_NOZORDER, SetTimer, SetWindowLongPtrW, SetWindowPos, USER_TIMER_MINIMUM, WM_CAPTURECHANGED,
-    WM_CLOSE, WM_DESTROY, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_ENTERSIZEMOVE, WM_ERASEBKGND,
-    WM_EXITSIZEMOVE, WM_GETMINMAXINFO, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP,
-    WM_MBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL,
-    WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE,
-    WM_TIMER, WM_WINDOWPOSCHANGED, WM_XBUTTONDBLCLK, WM_XBUTTONDOWN, WM_XBUTTONUP,
+    WM_CHAR, WM_CLOSE, WM_DESTROY, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_ENTERSIZEMOVE, WM_ERASEBKGND,
+    WM_EXITSIZEMOVE, WM_GETMINMAXINFO, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN,
+    WM_LBUTTONUP, WM_MBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE,
+    WM_MOUSEWHEEL, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN,
+    WM_RBUTTONUP, WM_SIZE, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_TIMER, WM_UNICHAR, WM_WINDOWPOSCHANGED,
+    WM_XBUTTONDBLCLK, WM_XBUTTONDOWN, WM_XBUTTONUP,
 };
 
+use super::keymap;
 use super::{IN_SIZE_MOVE, SIZE_MOVE_TIMER_ID, WM_APP_WAKE, clear_wake_hwnd, dispatch_event};
-use crate::{Event, Modifiers, MouseButton, PhysicalSize, WindowId, WindowRenderDelegate};
+use crate::{Event, Key, Modifiers, MouseButton, PhysicalSize, WindowId, WindowRenderDelegate};
 
 // ---------------------------------------------------------------------------
 // Mouse event decode helpers
@@ -112,6 +114,11 @@ pub struct WinWindowInner {
     /// Distinct from `pending_display_change` — different semantics, different
     /// probe call site.
     pub(crate) pending_monitor_change: Cell<bool>,
+    /// High half of a pending UTF-16 surrogate pair received via `WM_CHAR`.
+    /// Joined with the low half on the next `WM_CHAR`; cleared on any
+    /// `WM_KEYUP`/`WM_SYSKEYUP` so orphan highs from stalled sequences do not
+    /// leak into the next keypress.
+    pub(crate) pending_high_surrogate: Cell<Option<u16>>,
 }
 
 impl WinWindowInner {
@@ -463,6 +470,116 @@ impl WinWindowInner {
                     self.captured_buttons.set(0);
                     self.is_tracking_hover.set(false);
                     dispatch_event(Event::CaptureLost { window: self.id });
+                }
+                LRESULT(0)
+            }
+            // -----------------------------------------------------------------
+            // Keyboard events (Phase 9a)
+            // -----------------------------------------------------------------
+            WM_KEYDOWN | WM_SYSKEYDOWN => {
+                let vk = _wparam.0 as u32;
+                let lp = lparam.0 as u32;
+                let scancode = (lp >> 16) & 0xFF;
+                let extended = (lp >> 24) & 0x01 != 0;
+                let is_repeat = (lp >> 30) & 0x01 != 0;
+                let code = keymap::decode_keycode(vk, scancode, extended);
+                let key = keymap::vk_to_named_key(vk)
+                    .map(Key::Named)
+                    .unwrap_or(Key::Unidentified);
+                let modifiers = keymap::read_modifiers();
+                dispatch_event(Event::KeyDown {
+                    window: self.id,
+                    code,
+                    key,
+                    modifiers,
+                    is_repeat,
+                });
+                if msg == WM_SYSKEYDOWN {
+                    // Fall through so Alt-menu activation (Alt+F, Alt+Space, Alt+F4)
+                    // continues to work via the system's default handling.
+                    // SAFETY: default proc is always safe to call.
+                    unsafe { DefWindowProcW(hwnd, msg, _wparam, lparam) }
+                } else {
+                    LRESULT(0)
+                }
+            }
+            WM_KEYUP | WM_SYSKEYUP => {
+                let vk = _wparam.0 as u32;
+                let lp = lparam.0 as u32;
+                let scancode = (lp >> 16) & 0xFF;
+                let extended = (lp >> 24) & 0x01 != 0;
+                let code = keymap::decode_keycode(vk, scancode, extended);
+                let key = keymap::vk_to_named_key(vk)
+                    .map(Key::Named)
+                    .unwrap_or(Key::Unidentified);
+                let modifiers = keymap::read_modifiers();
+                // Drop any orphan high surrogate left by a stalled WM_CHAR sequence.
+                self.pending_high_surrogate.set(None);
+                dispatch_event(Event::KeyUp {
+                    window: self.id,
+                    code,
+                    key,
+                    modifiers,
+                });
+                if msg == WM_SYSKEYUP {
+                    // SAFETY: default proc is always safe to call.
+                    unsafe { DefWindowProcW(hwnd, msg, _wparam, lparam) }
+                } else {
+                    LRESULT(0)
+                }
+            }
+            WM_CHAR => {
+                let code_unit = _wparam.0 as u16;
+                // Filter ASCII control range except Tab (0x09) and CR (0x0D, normalized to LF).
+                if (code_unit < 0x20 && code_unit != 0x09 && code_unit != 0x0D)
+                    || code_unit == 0x7F
+                {
+                    return LRESULT(0);
+                }
+                let text: Option<String> = if (0xD800..=0xDBFF).contains(&code_unit) {
+                    // High surrogate — stash for join on next WM_CHAR.
+                    self.pending_high_surrogate.set(Some(code_unit));
+                    None
+                } else if (0xDC00..=0xDFFF).contains(&code_unit) {
+                    // Low surrogate — join with pending high.
+                    if let Some(high) = self.pending_high_surrogate.take() {
+                        let cp = 0x10000
+                            + (((high - 0xD800) as u32) << 10)
+                            + ((code_unit - 0xDC00) as u32);
+                        char::from_u32(cp).map(|c| c.to_string())
+                    } else {
+                        // Orphan low — drop silently.
+                        None
+                    }
+                } else {
+                    // BMP code unit; normalize CR → LF for text input.
+                    let unit = if code_unit == 0x0D { 0x0A } else { code_unit };
+                    String::from_utf16(&[unit]).ok().filter(|s| !s.is_empty())
+                };
+                if let Some(text) = text {
+                    dispatch_event(Event::TextInput {
+                        window: self.id,
+                        text,
+                    });
+                }
+                LRESULT(0)
+            }
+            WM_UNICHAR => {
+                const UNICODE_NOCHAR: usize = 0xFFFF;
+                if _wparam.0 == UNICODE_NOCHAR {
+                    // Advertise UTF-32 support to senders probing for it.
+                    return LRESULT(1);
+                }
+                let cp = _wparam.0 as u32;
+                if (cp < 0x20 && cp != 0x09 && cp != 0x0D) || cp == 0x7F {
+                    return LRESULT(0);
+                }
+                let cp = if cp == 0x0D { 0x0A } else { cp };
+                if let Some(c) = char::from_u32(cp) {
+                    dispatch_event(Event::TextInput {
+                        window: self.id,
+                        text: c.to_string(),
+                    });
                 }
                 LRESULT(0)
             }

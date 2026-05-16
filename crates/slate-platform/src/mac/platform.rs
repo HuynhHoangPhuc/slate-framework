@@ -32,6 +32,12 @@ define_class!(
     impl SlateApplication {
         /// Override sendEvent: to intercept our synthetic redraw and wake events before
         /// they reach the default (no-op) routing for ApplicationDefined events.
+        ///
+        /// Also intercepts Cmd+<key> KeyDown/KeyUp so they reach the view's
+        /// `keyDown:` / `keyUp:` selectors instead of being absorbed by the
+        /// main menu's key-equivalent matcher. The only carveout is Cmd+Q,
+        /// which falls through to `super` so the system Quit menu item still
+        /// terminates the app.
         #[unsafe(method(sendEvent:))]
         fn send_event(&self, event: &NSEvent) {
             if event.r#type() == NSEventType::ApplicationDefined {
@@ -50,6 +56,36 @@ define_class!(
                     return;
                 }
             }
+
+            // Cmd+key routing: bypass main-menu key-equivalent matching so
+            // Cmd+W/M/H/A/, all reach the view's keyDown: selector.
+            // Cmd+Q stays as terminate (system shortcut preserved).
+            let ev_ty = event.r#type();
+            if matches!(ev_ty, NSEventType::KeyDown | NSEventType::KeyUp) {
+                let flags = event.modifierFlags();
+                if flags.contains(NSEventModifierFlags::Command) {
+                    let vk = event.keyCode();
+                    // kVK_ANSI_Q = 0x0C. Let main-menu handle Cmd+Q.
+                    if vk != 0x0C
+                        && let Some(window) = self.keyWindow()
+                        && let Some(first_responder) = window.firstResponder()
+                    {
+                        // Send the key event directly to the first responder,
+                        // skipping the main menu's performKeyEquivalent: path.
+                        // SAFETY: NSResponder responds to keyDown:/keyUp: with
+                        // a single NSEvent argument; both selectors are valid.
+                        unsafe {
+                            if ev_ty == NSEventType::KeyDown {
+                                let _: () = msg_send![&*first_responder, keyDown: event];
+                            } else {
+                                let _: () = msg_send![&*first_responder, keyUp: event];
+                            }
+                        }
+                        return;
+                    }
+                }
+            }
+
             // Forward all other events to the default NSApplication handling.
             let _: () = unsafe { msg_send![super(self), sendEvent: event] };
         }

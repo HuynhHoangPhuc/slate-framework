@@ -14,6 +14,7 @@
 //! See the SAFETY comment in `run` for the full argument.
 
 mod display_link;
+mod keymap;
 mod platform;
 mod view;
 mod window;

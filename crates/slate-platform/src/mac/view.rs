@@ -17,7 +17,7 @@ use objc2_quartz_core::CAMetalLayer;
 use super::{
     dispatch_event, ffi_boundary, post_redraw_event, unregister_window, with_window_delegate,
 };
-use crate::{Event, Modifiers, MouseButton, PhysicalSize, WindowId};
+use crate::{Event, Key, KeyCode, Modifiers, MouseButton, NamedKey, PhysicalSize, WindowId};
 
 // ---------------------------------------------------------------------------
 // Mouse event decode helpers
@@ -73,6 +73,109 @@ fn decode_button(button_number: isize) -> Option<MouseButton> {
 }
 
 // ---------------------------------------------------------------------------
+// Keyboard event decode helpers (Phase 9a)
+// ---------------------------------------------------------------------------
+
+/// Map a [`KeyCode`] to the matching [`NamedKey`] when the key has no
+/// textual representation. Returns `None` for letters / digits / punctuation
+/// (those flow through `Key::Character`).
+fn named_key_for_code(code: KeyCode) -> Option<NamedKey> {
+    Some(match code {
+        KeyCode::Enter => NamedKey::Enter,
+        KeyCode::Tab => NamedKey::Tab,
+        KeyCode::Escape => NamedKey::Escape,
+        KeyCode::Backspace => NamedKey::Backspace,
+        KeyCode::Delete => NamedKey::Delete,
+        KeyCode::Space => NamedKey::Space,
+        KeyCode::ArrowUp => NamedKey::ArrowUp,
+        KeyCode::ArrowDown => NamedKey::ArrowDown,
+        KeyCode::ArrowLeft => NamedKey::ArrowLeft,
+        KeyCode::ArrowRight => NamedKey::ArrowRight,
+        KeyCode::Home => NamedKey::Home,
+        KeyCode::End => NamedKey::End,
+        KeyCode::PageUp => NamedKey::PageUp,
+        KeyCode::PageDown => NamedKey::PageDown,
+        KeyCode::F1 => NamedKey::F1,
+        KeyCode::F2 => NamedKey::F2,
+        KeyCode::F3 => NamedKey::F3,
+        KeyCode::F4 => NamedKey::F4,
+        KeyCode::F5 => NamedKey::F5,
+        KeyCode::F6 => NamedKey::F6,
+        KeyCode::F7 => NamedKey::F7,
+        KeyCode::F8 => NamedKey::F8,
+        KeyCode::F9 => NamedKey::F9,
+        KeyCode::F10 => NamedKey::F10,
+        KeyCode::F11 => NamedKey::F11,
+        KeyCode::F12 => NamedKey::F12,
+        KeyCode::ShiftLeft | KeyCode::ShiftRight => NamedKey::Shift,
+        KeyCode::ControlLeft | KeyCode::ControlRight => NamedKey::Control,
+        KeyCode::AltLeft | KeyCode::AltRight => NamedKey::Alt,
+        KeyCode::MetaLeft | KeyCode::MetaRight => NamedKey::Meta,
+        _ => return None,
+    })
+}
+
+/// Decode the logical [`Key`] for a `keyDown:`/`keyUp:` event.
+///
+/// Prefers `NamedKey` for known non-textual keys; otherwise falls back to
+/// `Key::Character` when AppKit produced text, or `Key::Unidentified`.
+fn decode_key(code: KeyCode, chars: &str) -> Key {
+    if let Some(named) = named_key_for_code(code) {
+        return Key::Named(named);
+    }
+    if chars.is_empty() {
+        Key::Unidentified
+    } else {
+        Key::Character(chars.to_string())
+    }
+}
+
+/// Returns true if the string contains at least one non-control character.
+/// Filters out arrow / F-key sequences AppKit places in `characters`.
+fn is_visible_text(s: &str) -> bool {
+    s.chars().any(|c| !c.is_control())
+}
+
+/// Diff `prev` vs `new` modifier flags and dispatch synthetic [`Event::KeyDown`]
+/// / [`Event::KeyUp`] for each modifier that toggled.
+fn emit_modifier_changes(
+    window: WindowId,
+    prev: NSEventModifierFlags,
+    new: NSEventModifierFlags,
+) {
+    let entries: [(NSEventModifierFlags, KeyCode, NamedKey); 4] = [
+        (NSEventModifierFlags::Shift, KeyCode::ShiftLeft, NamedKey::Shift),
+        (NSEventModifierFlags::Control, KeyCode::ControlLeft, NamedKey::Control),
+        (NSEventModifierFlags::Option, KeyCode::AltLeft, NamedKey::Alt),
+        (NSEventModifierFlags::Command, KeyCode::MetaLeft, NamedKey::Meta),
+    ];
+    let modifiers = decode_modifiers(new);
+    for (flag, code, named) in entries {
+        let was = prev.contains(flag);
+        let is = new.contains(flag);
+        if was == is {
+            continue;
+        }
+        if is {
+            dispatch_event(Event::KeyDown {
+                window,
+                code,
+                key: Key::Named(named),
+                modifiers,
+                is_repeat: false,
+            });
+        } else {
+            dispatch_event(Event::KeyUp {
+                window,
+                code,
+                key: Key::Named(named),
+                modifiers,
+            });
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // MetalView — custom NSView backed by CAMetalLayer
 // ---------------------------------------------------------------------------
 
@@ -84,6 +187,8 @@ pub struct MetalViewIvars {
     /// the setFrameSize: sync-dispatch path: programmatic frame changes still
     /// flow through windowDidResize: rather than the sync-present path.
     pub(crate) live_resize: Cell<bool>,
+    /// Previous modifier flags for flagsChanged: diff (Phase 9a).
+    pub(crate) prev_modifier_flags: Cell<NSEventModifierFlags>,
 }
 
 define_class!(
@@ -384,6 +489,82 @@ define_class!(
             });
         }
 
+        // -----------------------------------------------------------------------
+        // Keyboard event selectors (Phase 9a)
+        // -----------------------------------------------------------------------
+
+        /// `keyDown:` — physical key press. Decodes the W3C `KeyCode` from
+        /// the macOS virtual-key code, derives the logical `Key`, and emits
+        /// both `Event::KeyDown` and (when text was produced) `Event::TextInput`.
+        ///
+        /// Note: macOS may emit `Key::Character` inline in `KeyDown` via
+        /// AppKit's already-translated `characters`. Windows does not — see
+        /// `crates/slate-platform/src/win/keymap.rs` for the asymmetry doc.
+        #[unsafe(method(keyDown:))]
+        fn key_down(&self, event: &NSEvent) {
+            let id = self.ivars().window_id.get();
+            ffi_boundary(|| {
+                let vk = event.keyCode();
+                let code = super::keymap::decode_keycode(vk);
+                let modifiers = decode_modifiers(event.modifierFlags());
+                let is_repeat = event.isARepeat();
+                let chars = event
+                    .characters()
+                    .map(|s| s.to_string())
+                    .unwrap_or_default();
+                let key = decode_key(code, &chars);
+                dispatch_event(Event::KeyDown {
+                    window: id,
+                    code,
+                    key,
+                    modifiers,
+                    is_repeat,
+                });
+                if !chars.is_empty() && is_visible_text(&chars) {
+                    dispatch_event(Event::TextInput {
+                        window: id,
+                        text: chars,
+                    });
+                }
+            });
+        }
+
+        /// `keyUp:` — physical key release.
+        #[unsafe(method(keyUp:))]
+        fn key_up(&self, event: &NSEvent) {
+            let id = self.ivars().window_id.get();
+            ffi_boundary(|| {
+                let vk = event.keyCode();
+                let code = super::keymap::decode_keycode(vk);
+                let modifiers = decode_modifiers(event.modifierFlags());
+                let chars = event
+                    .characters()
+                    .map(|s| s.to_string())
+                    .unwrap_or_default();
+                let key = decode_key(code, &chars);
+                dispatch_event(Event::KeyUp {
+                    window: id,
+                    code,
+                    key,
+                    modifiers,
+                });
+            });
+        }
+
+        /// `flagsChanged:` — modifier-only press/release. AppKit does not
+        /// produce keyDown:/keyUp: for bare Shift/Ctrl/Alt/Meta; we diff the
+        /// previous flag bitfield against the new one and synthesize the
+        /// corresponding events.
+        #[unsafe(method(flagsChanged:))]
+        fn flags_changed(&self, event: &NSEvent) {
+            let id = self.ivars().window_id.get();
+            ffi_boundary(|| {
+                let new_flags = event.modifierFlags();
+                let prev_flags = self.ivars().prev_modifier_flags.replace(new_flags);
+                emit_modifier_changes(id, prev_flags, new_flags);
+            });
+        }
+
         /// Called by AppKit when view bounds change. Reinstall tracking area.
         #[unsafe(method(updateTrackingAreas))]
         fn update_tracking_areas(&self) {
@@ -426,6 +607,7 @@ impl MetalView {
             window_id: Cell::new(window_id),
             tracking_area: RefCell::new(None),
             live_resize: Cell::new(false),
+            prev_modifier_flags: Cell::new(NSEventModifierFlags::empty()),
         });
         // SAFETY: `NSView`'s designated initializer `initWithFrame:` takes an
         // `NSRect` and returns `Retained<NSView>`. The super-call signature matches.
@@ -583,6 +765,33 @@ define_class!(
             let id = self.ivars().window_id.get();
             ffi_boundary(|| {
                 post_redraw_event(id);
+            });
+        }
+
+        /// Called when the window becomes key. Snapshot the current modifier
+        /// flags onto the content view so `flagsChanged:` diffs are aligned
+        /// with the actual hardware state — absorbs cross-app modifier drift
+        /// (e.g. Shift pressed in another app during Alt-Tab).
+        #[unsafe(method(windowDidBecomeKey:))]
+        fn window_did_become_key(&self, notification: &NSNotification) {
+            ffi_boundary(|| {
+                let Some(win) = notification
+                    .object()
+                    .and_then(|obj| obj.downcast::<NSWindow>().ok())
+                else {
+                    return;
+                };
+                let Some(view) = win.contentView() else { return };
+                let Ok(metal_view) = view.downcast::<MetalView>() else { return };
+                let mtm = MainThreadMarker::new()
+                    .expect("windowDidBecomeKey: invoked off main thread");
+                let app = objc2_app_kit::NSApplication::sharedApplication(mtm);
+                if let Some(event) = app.currentEvent() {
+                    metal_view
+                        .ivars()
+                        .prev_modifier_flags
+                        .set(event.modifierFlags());
+                }
             });
         }
     }
