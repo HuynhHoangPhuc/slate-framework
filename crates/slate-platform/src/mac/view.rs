@@ -9,7 +9,7 @@ use objc2_app_kit::{
     NSEvent, NSEventModifierFlags, NSTrackingArea, NSTrackingAreaOptions, NSView, NSWindow,
     NSWindowDelegate,
 };
-use objc2_foundation::{MainThreadMarker, NSNotification, NSObject, NSObjectProtocol, NSRect};
+use objc2_foundation::{MainThreadMarker, NSNotification, NSObject, NSObjectProtocol, NSRect, NSSize};
 use objc2_quartz_core::CAMetalLayer;
 
 use super::{
@@ -78,6 +78,10 @@ pub struct MetalViewIvars {
     pub(crate) window_id: Cell<WindowId>,
     /// Current tracking area for mouse move/enter/exit events.
     tracking_area: RefCell<Option<Retained<NSTrackingArea>>>,
+    /// True between viewWillStartLiveResize and viewDidEndLiveResize. Gates
+    /// the setFrameSize: sync-dispatch path: programmatic frame changes still
+    /// flow through windowDidResize: rather than the sync-present path.
+    pub(crate) live_resize: Cell<bool>,
 }
 
 define_class!(
@@ -123,6 +127,60 @@ define_class!(
             ffi_boundary(|| {
                 with_window_delegate(id, |d| d.on_redraw(id));
                 dispatch_event(Event::WindowRedrawRequested { window: id });
+            });
+        }
+
+        /// Live-resize hook: AppKit calls setFrameSize: once per drag tick
+        /// inside an open implicit CATransaction. We let super update the
+        /// view bounds (the transaction stays open), then — while still
+        /// inside the selector — dispatch a sync resize + render. The
+        /// renderer's present_sync calls CATransaction::flush() to commit
+        /// the open transaction with the new framebuffer in place. Without
+        /// this the new bounds commit one selector before the new pixels
+        /// land, producing the right/bottom edge flash.
+        ///
+        /// Gated on live_resize so steady-state size-from-code paths
+        /// (programmatic frame changes) flow through windowDidResize:
+        /// instead and aren't pulled onto the sync-present path unnecessarily.
+        #[unsafe(method(setFrameSize:))]
+        fn set_frame_size(&self, size: NSSize) {
+            // SAFETY: NSView::setFrameSize: takes NSSize; super signature matches.
+            let _: () = unsafe { msg_send![super(self), setFrameSize: size] };
+            ffi_boundary(|| {
+                if !self.ivars().live_resize.get() {
+                    return;
+                }
+                let scale = self.window().map(|w| w.backingScaleFactor()).unwrap_or(1.0);
+                let pw = (size.width * scale).round() as u32;
+                let ph = (size.height * scale).round() as u32;
+                if pw == 0 || ph == 0 {
+                    return;
+                }
+                let id = self.ivars().window_id.get();
+                with_window_delegate(id, |d| {
+                    d.on_resize_sync(id, PhysicalSize::new(pw, ph))
+                });
+            });
+        }
+
+        /// AppKit signals start of live resize. Sets the gate so the
+        /// setFrameSize: override above only dispatches during a drag.
+        #[unsafe(method(viewWillStartLiveResize))]
+        fn view_will_start_live_resize(&self) {
+            // SAFETY: super signature is `- (void)viewWillStartLiveResize`.
+            let _: () = unsafe { msg_send![super(self), viewWillStartLiveResize] };
+            ffi_boundary(|| {
+                self.ivars().live_resize.set(true);
+            });
+        }
+
+        /// AppKit signals end of live resize. Clears the gate.
+        #[unsafe(method(viewDidEndLiveResize))]
+        fn view_did_end_live_resize(&self) {
+            // SAFETY: super signature is `- (void)viewDidEndLiveResize`.
+            let _: () = unsafe { msg_send![super(self), viewDidEndLiveResize] };
+            ffi_boundary(|| {
+                self.ivars().live_resize.set(false);
             });
         }
 
@@ -365,6 +423,7 @@ impl MetalView {
         let this = Self::alloc(mtm).set_ivars(MetalViewIvars {
             window_id: Cell::new(window_id),
             tracking_area: RefCell::new(None),
+            live_resize: Cell::new(false),
         });
         // SAFETY: `NSView`'s designated initializer `initWithFrame:` takes an
         // `NSRect` and returns `Retained<NSView>`. The super-call signature matches.

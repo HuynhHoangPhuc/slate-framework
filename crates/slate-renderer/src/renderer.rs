@@ -59,6 +59,14 @@ pub struct Renderer {
     adapter_luid: Option<u64>,
     device: Arc<Device>,
     queue: Queue,
+    // Concrete on each platform so macOS-only sync-present can reach
+    // `MacSurface::present_sync` without polluting the trait or any-downcast
+    // scaffolding. Both impls still satisfy `CompositionTarget`, so the
+    // trait-style call sites (`self.target.configure(...)`, etc.) work via
+    // auto-deref.
+    #[cfg(target_os = "macos")]
+    target: Box<mac_surface::MacSurface>,
+    #[cfg(target_os = "windows")]
     target: Box<dyn CompositionTarget>,
     _window: Arc<dyn Window>,
 
@@ -512,6 +520,23 @@ impl Renderer {
     /// Takes `&mut Scene` so it can call `finish()` internally — callers never
     /// need to remember.
     pub fn render_scene(&mut self, scene: &mut Scene) -> Result<(), RenderError> {
+        self.render_scene_with_present_mode(scene, false)
+    }
+
+    /// macOS-only: render + present inside AppKit's currently open resize
+    /// CATransaction. Use during live resize to land the new framebuffer in
+    /// the same transaction as the bounds change. See
+    /// [`mac_surface::MacSurface::present_sync`] for the GPU-sync details.
+    #[cfg(target_os = "macos")]
+    pub fn render_scene_sync(&mut self, scene: &mut Scene) -> Result<(), RenderError> {
+        self.render_scene_with_present_mode(scene, true)
+    }
+
+    fn render_scene_with_present_mode(
+        &mut self,
+        scene: &mut Scene,
+        sync_present: bool,
+    ) -> Result<(), RenderError> {
         scene.finish();
         self.image_atlas.begin_frame();
         self.glyph_atlas.begin_frame();
@@ -628,8 +653,24 @@ impl Renderer {
 
         self.queue.submit(std::iter::once(encoder.finish()));
 
-        // Handle present errors - check for device-lost
-        if let Err(e) = self.target.present(frame) {
+        // Present — on macOS, route through `present_sync` during live resize
+        // so the new framebuffer lands inside AppKit's open CATransaction.
+        let present_result = {
+            #[cfg(target_os = "macos")]
+            {
+                if sync_present {
+                    self.target.present_sync(frame, &self.device)
+                } else {
+                    self.target.present(frame)
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                let _ = sync_present; // unused off-macOS
+                self.target.present(frame)
+            }
+        };
+        if let Err(e) = present_result {
             if self.check_hr_for_device_lost(e.hr()) {
                 return Err(RenderError::DeviceLost(format!("present failed: {:?}", e)));
             }
@@ -820,7 +861,7 @@ fn build_target(
     adapter: &Adapter,
     _device: &Device,
     window: Arc<dyn Window>,
-) -> Result<Box<dyn CompositionTarget>, RendererError> {
+) -> Result<Box<mac_surface::MacSurface>, RendererError> {
     Ok(Box::new(mac_surface::MacSurface::new(
         instance, adapter, window,
     )?))

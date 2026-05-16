@@ -114,6 +114,25 @@ impl Drop for RenderingGuard<'_> {
     }
 }
 
+/// RAII guard that holds the sync-resize flag true for the duration of the
+/// AppKit selector that opened the resize CATransaction, then clears it
+/// unconditionally on Drop so a panic in the resize/dispatch path cannot
+/// leave subsequent normal redraws stuck on the sync-present codepath.
+struct SyncResizeGuard<'a>(&'a Cell<bool>);
+
+impl<'a> SyncResizeGuard<'a> {
+    fn new(flag: &'a Cell<bool>) -> Self {
+        flag.set(true);
+        Self(flag)
+    }
+}
+
+impl Drop for SyncResizeGuard<'_> {
+    fn drop(&mut self) {
+        self.0.set(false);
+    }
+}
+
 /// Shared application state accessible by both event handler and resize callback.
 ///
 /// Generic over `V: View` to hold the user's root view type.
@@ -186,6 +205,17 @@ pub struct AppState<V: View> {
 
     // Sync-path quit signal: set by sync delegate methods, read at next event tick
     pub pending_quit: Cell<bool>,
+
+    // Sync-resize flag: set inside on_resize_sync so the redraw it dispatches
+    // routes through the renderer's sync-present path (lands the new
+    // framebuffer in AppKit's currently open resize CATransaction). Cleared
+    // by SyncResizeGuard's Drop. macOS only — Windows ignores it.
+    pub sync_resize: Cell<bool>,
+
+    // Idempotency for sync resize: skip work when the new bounds equal the
+    // size we already rendered into. AppKit can fire setFrameSize: with the
+    // same PhysicalSize twice in a tick (e.g. logical→backing rounding).
+    pub last_resize_size: Cell<Option<PhysicalSize>>,
 }
 
 impl<V: View> AppState<V> {
@@ -264,6 +294,8 @@ impl<V: View> AppState<V> {
             renderer_generation: Signal::new(runtime, 0u64),
             rendering: Cell::new(false),
             pending_quit: Cell::new(false),
+            sync_resize: Cell::new(false),
+            last_resize_size: Cell::new(None),
         }
     }
 
@@ -754,7 +786,19 @@ impl<V: View> AppState<V> {
             let mut r = self.renderer.borrow_mut();
             let r = r.as_mut().expect("renderer not initialized");
 
-            if let Err(e) = r.render_scene(&mut s) {
+            // On macOS during a sync-resize tick, present inside AppKit's
+            // open CATransaction so the new framebuffer lands in the same
+            // transaction as the bounds change.
+            #[cfg(target_os = "macos")]
+            let render_result = if self.sync_resize.get() {
+                r.render_scene_sync(&mut s)
+            } else {
+                r.render_scene(&mut s)
+            };
+            #[cfg(not(target_os = "macos"))]
+            let render_result = r.render_scene(&mut s);
+
+            if let Err(e) = render_result {
                 log::warn!("render skipped: {e:?}");
             }
         }
@@ -779,10 +823,20 @@ impl<V: View> AppState<V> {
 
     /// Run synchronous resize: resize the renderer.
     /// Caller is responsible for triggering redraw (sync path calls dispatch_redraw after).
+    ///
+    /// Idempotent: skips work when the requested size matches the last
+    /// size we already configured. AppKit can fire setFrameSize: with the
+    /// same PhysicalSize twice per drag tick (logical→backing rounding),
+    /// and re-running configure on the wgpu surface for the same dimensions
+    /// would be wasted GPU work mid-drag.
     pub(crate) fn run_resize_sync(&self, size: PhysicalSize) {
+        if self.last_resize_size.get() == Some(size) {
+            return;
+        }
         if let Some(r) = self.renderer.borrow_mut().as_mut() {
             r.resize(size.as_tuple());
         }
+        self.last_resize_size.set(Some(size));
     }
 
     /// Event::WindowResized arm — currently a no-op.
@@ -1237,6 +1291,12 @@ impl<V: View> Drop for AppState<V> {
 impl<V: View> WindowRenderDelegate for AppState<V> {
     fn on_resize_sync(&self, _window_id: WindowId, new_size: PhysicalSize) {
         // Single-window today: window_id ignored.
+
+        // Hold the sync-resize flag for both the resize and the dispatched
+        // redraw so the renderer routes the present through CATransaction::flush()
+        // and lands the new framebuffer in AppKit's open resize transaction.
+        // RAII guard clears the flag on Drop even if a panic unwinds through here.
+        let _sync_guard = SyncResizeGuard::new(&self.sync_resize);
 
         // Step 1: resize the swap chain (cheap, in-place).
         self.run_resize_sync(new_size);

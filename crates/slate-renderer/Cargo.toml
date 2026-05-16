@@ -36,3 +36,8 @@ windows = { version = "0.62", features = [
     "Win32_Graphics_Dxgi_Common",
     "Win32_System_Threading",
 ] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Needed by MacSurface::present_sync to call CATransaction::flush() inside
+# AppKit's open resize transaction (edge-flash fix).
+objc2-quartz-core = "0.3.2"

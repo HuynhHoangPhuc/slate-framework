@@ -2290,6 +2290,7 @@ dependencies = [
  "etagere",
  "glam",
  "log",
+ "objc2-quartz-core",
  "pollster",
  "raw-window-handle",
  "slate-platform",
