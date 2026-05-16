@@ -21,8 +21,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use slate_platform::{
-    DefaultWindow, Key, KeyCode, Modifiers, MouseButton, PhysicalSize, Platform, Window, WindowId,
-    WindowRenderDelegate,
+    DefaultWindow, Key, KeyCode, Modifiers, MouseButton, NamedKey, PhysicalSize, Platform, Window,
+    WindowId, WindowRenderDelegate,
 };
 use slate_reactive::{ObserverId, Signal};
 use slate_renderer::{Renderer, RendererObserver, Scene};
@@ -31,9 +31,11 @@ use smallvec::SmallVec;
 use crate::app::AppContext;
 use crate::context::{LayoutCtx, PaintCtx, PrepaintCtx};
 use crate::event::{
-    EventCtx, Handlers, KeyEvent, KeyHandler, MouseEvent, MouseHandler, PointerEvent,
-    PointerEventKind, PointerHandler, ScrollEvent, ScrollHandler, TextInputEvent, TextInputHandler,
+    ElementKeyHandler, ElementTextInputHandler, EventCtx, Handlers, KeyEvent, KeyHandler,
+    KeyHandlers, MouseEvent, MouseHandler, PendingFocusOp, PointerEvent, PointerEventKind,
+    PointerHandler, ScrollEvent, ScrollHandler, TextInputEvent, TextInputHandler,
 };
+use crate::focus::FocusRegistry;
 use crate::executor::{Executor, RedrawRequester};
 use crate::hit_test::HitTestList;
 use crate::image_cache::{ImageCache, ImageSystemObserver};
@@ -223,6 +225,21 @@ pub struct AppState<V: View> {
     on_key_down: RefCell<Vec<KeyHandler>>,
     on_key_up: RefCell<Vec<KeyHandler>>,
     on_text_input: RefCell<Vec<TextInputHandler>>,
+
+    // Per-element keyboard handlers (Phase 9b). Looked up by ElementId during
+    // the focused-chain bubble dispatch. Mirrors `handler_map` for mouse.
+    pub(crate) key_handler_map: RefCell<HashMap<ElementId, KeyHandlers>>,
+
+    // Focus registry (Phase 9b). `Rc<RefCell<_>>` so `AppContext` can hold a
+    // clone for the outside-handler focus API. Repopulated each prepaint via
+    // `clear` + `register` calls; `prune_missing` after the walk auto-clears
+    // focus if the previously-focused element was unmounted.
+    pub(crate) focus_registry: Rc<RefCell<FocusRegistry>>,
+
+    // Painted bounds of focusable elements (Phase 9b focus ring). Populated
+    // during prepaint, consumed once per paint pass when emitting the focus
+    // ring overlay. Sparse — only focusable elements contribute entries.
+    pub(crate) focus_bounds: RefCell<HashMap<ElementId, crate::focus_ring::FocusBounds>>,
 }
 
 impl<V: View> AppState<V> {
@@ -306,6 +323,23 @@ impl<V: View> AppState<V> {
             on_key_down: RefCell::new(Vec::new()),
             on_key_up: RefCell::new(Vec::new()),
             on_text_input: RefCell::new(Vec::new()),
+            key_handler_map: RefCell::new(HashMap::new()),
+            focus_registry: Rc::new(RefCell::new(FocusRegistry::new())),
+            focus_bounds: RefCell::new(HashMap::new()),
+        }
+    }
+
+    /// Apply a queued focus op (drained from an `EventCtx` after the handler
+    /// chain unwinds). No-op when `op` is `None`. Phase 2 surface; Phase 3
+    /// wires per-element key dispatch through this same drain point.
+    pub(crate) fn apply_pending_focus_op(&self, op: Option<PendingFocusOp>) {
+        let Some(op) = op else { return };
+        let mut reg = self.focus_registry.borrow_mut();
+        match op {
+            PendingFocusOp::Focus(id) => {
+                reg.set_focus(id);
+            }
+            PendingFocusOp::Blur => reg.clear_focus(),
         }
     }
 
@@ -736,11 +770,17 @@ impl<V: View> AppState<V> {
             let mut tsc = self.text_shaping_cache.borrow_mut();
             let mut hm = self.handler_map.borrow_mut();
             let mut pm = self.parent_map.borrow_mut();
+            let mut khm = self.key_handler_map.borrow_mut();
+            let mut fr = self.focus_registry.borrow_mut();
+            let mut fb = self.focus_bounds.borrow_mut();
 
             hit.clear();
             a11y.clear();
             hm.clear();
             pm.clear();
+            khm.clear();
+            fr.clear();
+            fb.clear();
 
             let mut cx = PrepaintCtx::new(
                 tree.inner(),
@@ -753,6 +793,9 @@ impl<V: View> AppState<V> {
                 &mut tsc,
                 &mut hm,
                 &mut pm,
+                &mut khm,
+                &mut fr,
+                &mut fb,
             );
 
             cx.init_root_frame();
@@ -769,6 +812,9 @@ impl<V: View> AppState<V> {
                 "unbalanced a11y stack at frame end: {} unclosed nodes",
                 cx.a11y_stack.len()
             );
+
+            // Phase 9b: clear focus if the focused element was unmounted this frame.
+            fr.prune_missing();
         }
 
         // 4a. Coalesced move flush
@@ -803,6 +849,24 @@ impl<V: View> AppState<V> {
             );
 
             root.paint(root_bounds, &mut cx);
+
+            // Phase 9b: focus ring overlay — emitted last so it sits on top of
+            // element content. Only painted when the focused element opted into
+            // a visible ring via `focus_ring(true)` (default for `focusable`).
+            let focused = self.focus_registry.borrow().focused();
+            if let Some(id) = focused {
+                let registry = self.focus_registry.borrow();
+                let show_ring = registry
+                    .entry(id)
+                    .map(|e| e.focus_ring)
+                    .unwrap_or(false);
+                drop(registry);
+                if show_ring
+                    && let Some(info) = self.focus_bounds.borrow().get(&id).copied()
+                {
+                    crate::focus_ring::emit_focus_ring(&mut s, info);
+                }
+            }
         }
 
         // 6. Render
@@ -952,6 +1016,21 @@ impl<V: View> AppState<V> {
         };
 
         if let Some(t) = target {
+            // Phase 9b: click-to-focus. Auto-focus the deepest focusable
+            // ancestor on the hit chain BEFORE invoking handlers, so the
+            // handler observes the updated `focused_element()`. Non-focusable
+            // hits preserve previous focus (no auto-blur — design lock D6).
+            {
+                let registry = self.focus_registry.borrow();
+                let pm = self.parent_map.borrow();
+                let focus_target = ancestors(t, &pm).find(|id| registry.is_focusable(*id));
+                drop(pm);
+                drop(registry);
+                if let Some(id) = focus_target {
+                    self.focus_registry.borrow_mut().set_focus(id);
+                }
+            }
+
             // Collect handlers first, then invoke (clone-before-drop pattern)
             let mouse_handlers: SmallVec<[MouseHandler; 8]> = {
                 let hm = self.handler_map.borrow();
@@ -968,24 +1047,32 @@ impl<V: View> AppState<V> {
                     .collect()
             };
 
-            // Invoke handlers (borrows released)
+            // Invoke handlers (borrows released).
+            // `pending_focus_op` accumulates focus requests across the chain
+            // (last-write-wins); Phase 3 drains and applies after the loop.
             let mut stopped = false;
+            let mut pending_focus_op: Option<PendingFocusOp> = None;
+            let focused = self.focus_registry.borrow().focused();
             for handler in &mouse_handlers {
-                let mut ctx = EventCtx::new(&mut stopped);
+                let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused);
                 handler(&mouse_event, &mut ctx);
                 if stopped {
                     break;
                 }
             }
+            self.apply_pending_focus_op(pending_focus_op);
 
             stopped = false;
+            let mut pending_focus_op: Option<PendingFocusOp> = None;
+            let focused = self.focus_registry.borrow().focused();
             for handler in &pointer_handlers {
-                let mut ctx = EventCtx::new(&mut stopped);
+                let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused);
                 handler(&pointer_event, &mut ctx);
                 if stopped {
                     break;
                 }
             }
+            self.apply_pending_focus_op(pending_focus_op);
         }
 
         *self.last_mouse_pos.borrow_mut() = Some(position);
@@ -1055,33 +1142,42 @@ impl<V: View> AppState<V> {
                     SmallVec::new()
                 };
 
-            // Invoke handlers (borrows released)
+            // Invoke handlers (borrows released).
             let mut stopped = false;
+            let mut pending_focus_op: Option<PendingFocusOp> = None;
+            let focused = self.focus_registry.borrow().focused();
             for handler in &mouse_up_handlers {
-                let mut ctx = EventCtx::new(&mut stopped);
+                let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused);
                 handler(&mouse_event, &mut ctx);
                 if stopped {
                     break;
                 }
             }
+            self.apply_pending_focus_op(pending_focus_op);
 
             stopped = false;
+            let mut pending_focus_op: Option<PendingFocusOp> = None;
+            let focused = self.focus_registry.borrow().focused();
             for handler in &pointer_handlers {
-                let mut ctx = EventCtx::new(&mut stopped);
+                let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused);
                 handler(&pointer_event, &mut ctx);
                 if stopped {
                     break;
                 }
             }
+            self.apply_pending_focus_op(pending_focus_op);
 
             stopped = false;
+            let mut pending_focus_op: Option<PendingFocusOp> = None;
+            let focused = self.focus_registry.borrow().focused();
             for handler in &click_handlers {
-                let mut ctx = EventCtx::new(&mut stopped);
+                let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused);
                 handler(&mouse_event, &mut ctx);
                 if stopped {
                     break;
                 }
             }
+            self.apply_pending_focus_op(pending_focus_op);
         }
 
         // Release capture when all buttons are up
@@ -1130,13 +1226,16 @@ impl<V: View> AppState<V> {
 
             // Invoke handlers
             let mut stopped = false;
+            let mut pending_focus_op: Option<PendingFocusOp> = None;
+            let focused = self.focus_registry.borrow().focused();
             for handler in &handlers {
-                let mut ctx = EventCtx::new(&mut stopped);
+                let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused);
                 handler(&pointer_event, &mut ctx);
                 if stopped {
                     break;
                 }
             }
+            self.apply_pending_focus_op(pending_focus_op);
         }
 
         *self.coalesced_move_pos.borrow_mut() = Some(position);
@@ -1179,13 +1278,16 @@ impl<V: View> AppState<V> {
 
             // Invoke handlers
             let mut stopped = false;
+            let mut pending_focus_op: Option<PendingFocusOp> = None;
+            let focused = self.focus_registry.borrow().focused();
             for handler in &handlers {
-                let mut ctx = EventCtx::new(&mut stopped);
+                let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused);
                 handler(&scroll_event, &mut ctx);
                 if stopped {
                     break;
                 }
             }
+            self.apply_pending_focus_op(pending_focus_op);
         }
 
         AppSignal::RequestRedraw
@@ -1218,8 +1320,11 @@ impl<V: View> AppState<V> {
                     timestamp: Instant::now(),
                 };
                 let mut stopped = false;
-                let mut ctx = EventCtx::new(&mut stopped);
+                let mut pending_focus_op: Option<PendingFocusOp> = None;
+                let focused = self.focus_registry.borrow().focused();
+                let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused);
                 handler(&event, &mut ctx);
+                self.apply_pending_focus_op(pending_focus_op);
             }
 
             *self.hovered_element.borrow_mut() = None;
@@ -1250,7 +1355,26 @@ impl<V: View> AppState<V> {
     // discipline (see ADR-001).
     // -----------------------------------------------------------------------
 
-    /// Dispatch `KeyDown` to App-level handlers.
+    /// Snapshot the focused element + its ancestor chain (leaf → root).
+    ///
+    /// Returns an empty SmallVec when no element is focused, so the caller
+    /// can skip the per-element bubble entirely without paying for the walk.
+    fn build_focused_chain(&self) -> SmallVec<[ElementId; 8]> {
+        let mut chain: SmallVec<[ElementId; 8]> = SmallVec::new();
+        let Some(start) = self.focus_registry.borrow().focused() else {
+            return chain;
+        };
+        let parent_map = self.parent_map.borrow();
+        let mut cur = Some(start);
+        while let Some(id) = cur {
+            chain.push(id);
+            cur = parent_map.get(&id).copied();
+        }
+        chain
+    }
+
+    /// Dispatch `KeyDown`: focused-chain bubble (leaf → root), then App-level
+    /// fall-through if propagation was not stopped. Drains pending focus op.
     pub(crate) fn dispatch_key_down(
         &self,
         code: KeyCode,
@@ -1258,10 +1382,12 @@ impl<V: View> AppState<V> {
         modifiers: Modifiers,
         is_repeat: bool,
     ) -> AppSignal {
-        let mut handlers = self.on_key_down.borrow_mut();
-        if handlers.is_empty() {
+        let has_app_handlers = !self.on_key_down.borrow().is_empty();
+        let chain = self.build_focused_chain();
+        if chain.is_empty() && !has_app_handlers {
             return AppSignal::None;
         }
+
         let event = KeyEvent {
             code,
             key,
@@ -1269,23 +1395,73 @@ impl<V: View> AppState<V> {
             is_repeat,
             timestamp: Instant::now(),
         };
-        for handler in handlers.iter_mut() {
-            handler(&event);
+        let mut stopped = false;
+        let mut pending_focus_op: Option<PendingFocusOp> = None;
+        let focused = self.focus_registry.borrow().focused();
+
+        // Snapshot per-element handlers up-front so we never hold the
+        // `key_handler_map` borrow while invoking user code (re-entrant
+        // tree mutation must not invalidate our iteration).
+        let element_handlers: SmallVec<[ElementKeyHandler; 8]> = {
+            let map = self.key_handler_map.borrow();
+            chain
+                .iter()
+                .filter_map(|id| map.get(id).and_then(|h| h.on_key_down.clone()))
+                .collect()
+        };
+        for handler in &element_handlers {
+            let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused);
+            handler(&event, &mut ctx);
+            if stopped {
+                break;
+            }
         }
+
+        if !stopped && has_app_handlers {
+            let mut handlers = self.on_key_down.borrow_mut();
+            for handler in handlers.iter_mut() {
+                let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused);
+                handler(&event, &mut ctx);
+                if stopped {
+                    break;
+                }
+            }
+            drop(handlers);
+        }
+
+        self.apply_pending_focus_op(pending_focus_op);
+
+        // Phase 9b: Tab / Shift+Tab default focus shift. Suppressed when any
+        // handler in the chain called `cx.stop_propagation()`. Authors who
+        // want Tab to insert a tab character (text input) intercept here.
+        if !stopped && matches!(event.key, Key::Named(NamedKey::Tab)) {
+            let mut registry = self.focus_registry.borrow_mut();
+            let new_id = if event.modifiers.shift {
+                registry.shift_backward()
+            } else {
+                registry.shift_forward()
+            };
+            if let Some(id) = new_id {
+                registry.set_focus(id);
+            }
+        }
+
         AppSignal::RequestRedraw
     }
 
-    /// Dispatch `KeyUp` to App-level handlers.
+    /// Dispatch `KeyUp`: same bubble shape as `dispatch_key_down`, no Tab default.
     pub(crate) fn dispatch_key_up(
         &self,
         code: KeyCode,
         key: Key,
         modifiers: Modifiers,
     ) -> AppSignal {
-        let mut handlers = self.on_key_up.borrow_mut();
-        if handlers.is_empty() {
+        let has_app_handlers = !self.on_key_up.borrow().is_empty();
+        let chain = self.build_focused_chain();
+        if chain.is_empty() && !has_app_handlers {
             return AppSignal::None;
         }
+
         let event = KeyEvent {
             code,
             key,
@@ -1293,25 +1469,85 @@ impl<V: View> AppState<V> {
             is_repeat: false,
             timestamp: Instant::now(),
         };
-        for handler in handlers.iter_mut() {
-            handler(&event);
+        let mut stopped = false;
+        let mut pending_focus_op: Option<PendingFocusOp> = None;
+        let focused = self.focus_registry.borrow().focused();
+
+        let element_handlers: SmallVec<[ElementKeyHandler; 8]> = {
+            let map = self.key_handler_map.borrow();
+            chain
+                .iter()
+                .filter_map(|id| map.get(id).and_then(|h| h.on_key_up.clone()))
+                .collect()
+        };
+        for handler in &element_handlers {
+            let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused);
+            handler(&event, &mut ctx);
+            if stopped {
+                break;
+            }
         }
+
+        if !stopped && has_app_handlers {
+            let mut handlers = self.on_key_up.borrow_mut();
+            for handler in handlers.iter_mut() {
+                let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused);
+                handler(&event, &mut ctx);
+                if stopped {
+                    break;
+                }
+            }
+            drop(handlers);
+        }
+
+        self.apply_pending_focus_op(pending_focus_op);
         AppSignal::RequestRedraw
     }
 
-    /// Dispatch `TextInput` to App-level handlers.
+    /// Dispatch `TextInput`: same bubble shape; composes text from the platform layer.
     pub(crate) fn dispatch_text_input(&self, text: String) -> AppSignal {
-        let mut handlers = self.on_text_input.borrow_mut();
-        if handlers.is_empty() {
+        let has_app_handlers = !self.on_text_input.borrow().is_empty();
+        let chain = self.build_focused_chain();
+        if chain.is_empty() && !has_app_handlers {
             return AppSignal::None;
         }
+
         let event = TextInputEvent {
             text,
             timestamp: Instant::now(),
         };
-        for handler in handlers.iter_mut() {
-            handler(&event);
+        let mut stopped = false;
+        let mut pending_focus_op: Option<PendingFocusOp> = None;
+        let focused = self.focus_registry.borrow().focused();
+
+        let element_handlers: SmallVec<[ElementTextInputHandler; 8]> = {
+            let map = self.key_handler_map.borrow();
+            chain
+                .iter()
+                .filter_map(|id| map.get(id).and_then(|h| h.on_text_input.clone()))
+                .collect()
+        };
+        for handler in &element_handlers {
+            let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused);
+            handler(&event, &mut ctx);
+            if stopped {
+                break;
+            }
         }
+
+        if !stopped && has_app_handlers {
+            let mut handlers = self.on_text_input.borrow_mut();
+            for handler in handlers.iter_mut() {
+                let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused);
+                handler(&event, &mut ctx);
+                if stopped {
+                    break;
+                }
+            }
+            drop(handlers);
+        }
+
+        self.apply_pending_focus_op(pending_focus_op);
         AppSignal::RequestRedraw
     }
 
@@ -1488,13 +1724,18 @@ pub(crate) fn bubble_mouse_handler<F>(
     }
 
     let mut stopped = false;
+    let mut pending_focus_op: Option<PendingFocusOp> = None;
     for handler in &chain {
-        let mut ctx = EventCtx::new(&mut stopped);
+        let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, None);
         handler(event, &mut ctx);
         if stopped {
             break;
         }
     }
+    // Phase 2 surface: dropped here (no AppState reference inside these
+    // helpers). Phase 3 routes mouse-down through a path that has access to
+    // `apply_pending_focus_op`.
+    let _ = pending_focus_op;
 }
 
 /// Bubble a pointer event through the ancestor chain, invoking handlers.
@@ -1518,13 +1759,18 @@ pub(crate) fn bubble_pointer_handler<F>(
     }
 
     let mut stopped = false;
+    let mut pending_focus_op: Option<PendingFocusOp> = None;
     for handler in &chain {
-        let mut ctx = EventCtx::new(&mut stopped);
+        let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, None);
         handler(event, &mut ctx);
         if stopped {
             break;
         }
     }
+    // Phase 2 surface: dropped here (no AppState reference inside these
+    // helpers). Phase 3 routes mouse-down through a path that has access to
+    // `apply_pending_focus_op`.
+    let _ = pending_focus_op;
 }
 
 /// Bubble a scroll event through the ancestor chain, invoking handlers.
@@ -1545,13 +1791,18 @@ pub(crate) fn bubble_scroll_handler(
     }
 
     let mut stopped = false;
+    let mut pending_focus_op: Option<PendingFocusOp> = None;
     for handler in &chain {
-        let mut ctx = EventCtx::new(&mut stopped);
+        let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, None);
         handler(event, &mut ctx);
         if stopped {
             break;
         }
     }
+    // Phase 2 surface: dropped here (no AppState reference inside these
+    // helpers). Phase 3 routes mouse-down through a path that has access to
+    // `apply_pending_focus_op`.
+    let _ = pending_focus_op;
 }
 
 /// Fire hover transitions between old and new hover targets.
@@ -1615,7 +1866,8 @@ pub(crate) fn fire_hover_transitions(
             timestamp: Instant::now(),
         };
         let mut stopped = false;
-        let mut ctx = EventCtx::new(&mut stopped);
+        let mut pending_focus_op: Option<PendingFocusOp> = None;
+        let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, None);
         handler(&event, &mut ctx);
     }
 
@@ -1628,7 +1880,8 @@ pub(crate) fn fire_hover_transitions(
             timestamp: Instant::now(),
         };
         let mut stopped = false;
-        let mut ctx = EventCtx::new(&mut stopped);
+        let mut pending_focus_op: Option<PendingFocusOp> = None;
+        let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, None);
         handler(&event, &mut ctx);
     }
 }
@@ -1752,5 +2005,37 @@ impl<V: View> AppState<V> {
     /// Dispatch a synthetic `TextInput` to installed handlers. Test-only.
     pub fn dispatch_text_input_for_test(&self, text: String) -> AppSignal {
         self.dispatch_text_input(text)
+    }
+
+    /// Register a per-element keyboard handler bundle. Test-only — production
+    /// code wires this through `PrepaintCtx::register_key_handlers` from Div.
+    pub fn install_element_key_handlers_for_test(
+        &self,
+        id: ElementId,
+        handlers: crate::event::KeyHandlers,
+    ) {
+        self.key_handler_map.borrow_mut().insert(id, handlers);
+    }
+
+    /// Register a focusable entry directly into the registry. Test-only.
+    pub fn register_focusable_for_test(&self, entry: crate::focus::FocusableEntry) {
+        self.focus_registry.borrow_mut().register(entry);
+    }
+
+    /// Set focus to the given element. Test-only — bypasses the focusable check
+    /// (mirrors `AppContext::set_focus` minus the redraw request).
+    pub fn set_focus_for_test(&self, id: ElementId) {
+        self.focus_registry.borrow_mut().set_focus(id);
+    }
+
+    /// Insert a parent_map edge for building the focused-chain. Test-only —
+    /// production code wires this through `PrepaintCtx::register_handlers`.
+    pub fn set_parent_for_test(&self, child: ElementId, parent: ElementId) {
+        self.parent_map.borrow_mut().insert(child, parent);
+    }
+
+    /// Read the current focused element. Test-only.
+    pub fn focused_for_test(&self) -> Option<ElementId> {
+        self.focus_registry.borrow().focused()
     }
 }

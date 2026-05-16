@@ -25,7 +25,8 @@ use slate_framework::elements::Div;
 use slate_framework::executor::{Executor, RedrawRequester};
 use slate_framework::view::{IntoAny, View};
 use slate_framework::{
-    Key, KeyCode, KeyEvent, KeyHandler, Modifiers, NamedKey, TextInputEvent, TextInputHandler,
+    EventCtx, Key, KeyCode, KeyEvent, KeyHandler, Modifiers, NamedKey, TextInputEvent,
+    TextInputHandler,
 };
 use slate_platform::{DefaultPlatform, Platform, WindowOptions, wake_run_loop};
 
@@ -62,7 +63,9 @@ fn dispatch_key_down_fires_registered_handler() {
     let f = fired.clone();
     let state = make_state();
     state.install_key_handlers_for_test(
-        vec![Box::new(move |_e: &KeyEvent| f.set(f.get() + 1))],
+        vec![Box::new(move |_e: &KeyEvent, _cx: &mut EventCtx| {
+            f.set(f.get() + 1)
+        })],
         vec![],
         vec![],
     );
@@ -86,9 +89,9 @@ fn dispatch_key_down_invokes_all_handlers_in_order() {
     let o3 = order.clone();
     let state = make_state();
     let handlers: Vec<KeyHandler> = vec![
-        Box::new(move |_e: &KeyEvent| o1.borrow_mut().push(1)),
-        Box::new(move |_e: &KeyEvent| o2.borrow_mut().push(2)),
-        Box::new(move |_e: &KeyEvent| o3.borrow_mut().push(3)),
+        Box::new(move |_e: &KeyEvent, _cx: &mut EventCtx| o1.borrow_mut().push(1)),
+        Box::new(move |_e: &KeyEvent, _cx: &mut EventCtx| o2.borrow_mut().push(2)),
+        Box::new(move |_e: &KeyEvent, _cx: &mut EventCtx| o3.borrow_mut().push(3)),
     ];
     state.install_key_handlers_for_test(handlers, vec![], vec![]);
 
@@ -118,9 +121,10 @@ fn dispatch_text_input_passes_string_to_handler() {
     let captured = Rc::new(RefCell::new(String::new()));
     let c = captured.clone();
     let state = make_state();
-    let text_handlers: Vec<TextInputHandler> = vec![Box::new(move |e: &TextInputEvent| {
-        *c.borrow_mut() = e.text.clone()
-    })];
+    let text_handlers: Vec<TextInputHandler> =
+        vec![Box::new(move |e: &TextInputEvent, _cx: &mut EventCtx| {
+            *c.borrow_mut() = e.text.clone()
+        })];
     state.install_key_handlers_for_test(vec![], vec![], text_handlers);
 
     let signal = state.dispatch_text_input_for_test("hello".into());
@@ -135,7 +139,9 @@ fn dispatch_key_event_carries_is_repeat_flag() {
     let l = last.clone();
     let state = make_state();
     state.install_key_handlers_for_test(
-        vec![Box::new(move |e: &KeyEvent| l.set(e.is_repeat))],
+        vec![Box::new(move |e: &KeyEvent, _cx: &mut EventCtx| {
+            l.set(e.is_repeat)
+        })],
         vec![],
         vec![],
     );
@@ -160,7 +166,9 @@ fn dispatch_key_up_clears_is_repeat_flag() {
     let state = make_state();
     state.install_key_handlers_for_test(
         vec![],
-        vec![Box::new(move |e: &KeyEvent| o.set(e.is_repeat))],
+        vec![Box::new(move |e: &KeyEvent, _cx: &mut EventCtx| {
+            o.set(e.is_repeat)
+        })],
         vec![],
     );
 

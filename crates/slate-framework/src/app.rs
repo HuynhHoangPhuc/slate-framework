@@ -3,6 +3,7 @@
 //! `App` owns all framework resources and provides `run()` to enter
 //! the platform event loop with a View.
 
+use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -12,8 +13,10 @@ use slate_platform::{
 };
 
 use crate::app_state::{AppSignal, AppState};
-use crate::event::{KeyEvent, KeyHandler, TextInputEvent, TextInputHandler};
+use crate::event::{EventCtx, KeyEvent, KeyHandler, TextInputEvent, TextInputHandler};
 use crate::executor::{BackgroundExecutor, Executor, RedrawRequester};
+use crate::focus::FocusRegistry;
+use crate::types::ElementId;
 use crate::view::View;
 
 // Synthetic device-lost trigger for Phase 2.1 closure on the real visible-window
@@ -31,8 +34,9 @@ static FORCE_DEVICE_LOST_ARMED: std::sync::atomic::AtomicBool =
 
 /// Application context passed to the view factory.
 ///
-/// Provides access to the reactive runtime and background executor for constructing
-/// signals and spawning background tasks.
+/// Provides access to the reactive runtime, background executor, and the
+/// focus registry (Phase 9b) for constructing signals, spawning background
+/// tasks, and driving focus from outside of event handlers.
 ///
 /// Note: `ForegroundExecutor` is intentionally not exposed here because it's `!Send`
 /// and bound to the UI thread. UI-thread tasks should use the foreground executor
@@ -41,6 +45,7 @@ static FORCE_DEVICE_LOST_ARMED: std::sync::atomic::AtomicBool =
 pub struct AppContext {
     runtime: Arc<slate_reactive::Runtime>,
     background_executor: BackgroundExecutor,
+    focus_registry: Rc<RefCell<FocusRegistry>>,
 }
 
 impl AppContext {
@@ -54,6 +59,27 @@ impl AppContext {
         self.background_executor.clone()
     }
 
+    /// Set focus to `id` immediately (outside-handler entry point).
+    ///
+    /// Returns `true` when `id` is currently registered with the focus
+    /// registry. Inside an event handler, prefer
+    /// [`EventCtx::request_focus`](crate::event::EventCtx::request_focus) so
+    /// the change is deferred until after the chain unwinds.
+    pub fn set_focus(&self, id: ElementId) -> bool {
+        self.focus_registry.borrow_mut().set_focus(id)
+    }
+
+    /// Clear focus immediately. Inside a handler, prefer
+    /// [`EventCtx::blur`](crate::event::EventCtx::blur).
+    pub fn clear_focus(&self) {
+        self.focus_registry.borrow_mut().clear_focus();
+    }
+
+    /// Read the currently-focused element id.
+    pub fn focused_element(&self) -> Option<ElementId> {
+        self.focus_registry.borrow().focused()
+    }
+
     /// Construct an `AppContext` directly. Test-only.
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn new_for_test(
@@ -63,6 +89,7 @@ impl AppContext {
         Self {
             runtime,
             background_executor,
+            focus_registry: Rc::new(RefCell::new(FocusRegistry::new())),
         }
     }
 }
@@ -103,13 +130,16 @@ impl App {
     ///
     /// Call before [`App::run`]; the type system enforces this (`run` consumes
     /// `self`).
-    pub fn on_key_down(mut self, handler: impl FnMut(&KeyEvent) + 'static) -> Self {
+    pub fn on_key_down(
+        mut self,
+        handler: impl FnMut(&KeyEvent, &mut EventCtx) + 'static,
+    ) -> Self {
         self.on_key_down.push(Box::new(handler));
         self
     }
 
     /// Register an App-level handler for `KeyUp` events. See [`App::on_key_down`].
-    pub fn on_key_up(mut self, handler: impl FnMut(&KeyEvent) + 'static) -> Self {
+    pub fn on_key_up(mut self, handler: impl FnMut(&KeyEvent, &mut EventCtx) + 'static) -> Self {
         self.on_key_up.push(Box::new(handler));
         self
     }
@@ -117,7 +147,10 @@ impl App {
     /// Register an App-level handler for composed text input. Fires once per
     /// keystroke that produces visible text (or per surrogate pair on Windows).
     /// See [`App::on_key_down`].
-    pub fn on_text_input(mut self, handler: impl FnMut(&TextInputEvent) + 'static) -> Self {
+    pub fn on_text_input(
+        mut self,
+        handler: impl FnMut(&TextInputEvent, &mut EventCtx) + 'static,
+    ) -> Self {
         self.on_text_input.push(Box::new(handler));
         self
     }
@@ -143,19 +176,26 @@ impl App {
         let executor = Executor::new(redraw_requester.clone());
         let runtime = slate_reactive::Runtime::new();
 
-        // AppContext for view factory
-        let cx = AppContext {
-            runtime: runtime.clone(),
-            background_executor: executor.background.clone(),
-        };
+        // Capture handles needed by AppContext before AppState consumes the
+        // owned originals (Executor is not Clone — only its inner
+        // BackgroundExecutor is).
+        let background_executor = executor.background.clone();
 
-        // Create shared application state
+        // Create shared application state first so AppContext can share its
+        // focus registry (Phase 9b: AppContext::set_focus / focused_element
+        // need to operate on the same registry AppState dispatches against).
         let state = Rc::new(AppState::new(
             window.clone(),
             executor,
             redraw_requester,
-            runtime,
+            runtime.clone(),
         ));
+
+        let cx = AppContext {
+            runtime,
+            background_executor,
+            focus_registry: state.focus_registry.clone(),
+        };
 
         // Move keyboard handlers into AppState before the platform loop starts.
         // Setter pattern (rather than ctor args) keeps test call sites stable —

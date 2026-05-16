@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Phase 9b: per-element keyboard handlers + focus management
+- `Div::focusable(bool)`, `.tab_index(i32)`, `.focus_ring(bool)`, `.on_key_down(...)`, `.on_key_up(...)`, `.on_text_input(...)` builders for per-element keyboard wiring.
+- `EventCtx::request_focus(id) / release_focus()` — deferred focus ops applied after the handler chain unwinds.
+- `AppContext::set_focus(id) / clear_focus()` — programmatic focus moves from outside a handler.
+- `FocusRegistry` (public) — Tab / Shift+Tab traversal sorted by `(tab_index ascending, registration index)`; `tab_index < 0` skipped by Tab but still focusable programmatically.
+- Focused-chain bubble dispatch in `AppState::dispatch_key_down / key_up / text_input` (leaf → root → App-level), `cx.stop_propagation()` halts the bubble.
+- Tab / Shift+Tab default focus shift (suppressed by `stop_propagation`).
+- Mouse-down auto-focus: deepest focusable ancestor of the hit target gains focus before the handler runs.
+- Framework-emitted 2px accent-blue focus ring overlay; opt-out via `Div::focus_ring(false)`.
+- `reactive-counter` rebuilt as a 3-card focusable demo (click / Tab / Shift+Tab cycle; per-card `+ / - / Space / Enter / Backspace`; middle card opts out of the ring).
+
+### Changed — App-level handler signature (breaking)
+- `App::on_key_down`, `App::on_key_up`, `App::on_text_input` now take `FnMut(&Event, &mut EventCtx)` instead of `FnMut(&Event)`. The added `EventCtx` lets App-level handlers participate in `stop_propagation` and `request_focus` semantics. Migrate by adding `, _cx` to the closure parameter list.
+
 ## [0.0.2] - 2026-05-05
 
 ### Added

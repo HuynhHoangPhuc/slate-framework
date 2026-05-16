@@ -20,8 +20,37 @@ use std::time::Instant;
 
 pub use slate_platform::{Key, KeyCode, Modifiers, MouseButton, NamedKey};
 
+use crate::types::ElementId;
+
 /// Handler closure type for mouse events (click, down, up, move).
 pub(crate) type MouseHandler = Arc<dyn Fn(&MouseEvent, &mut EventCtx) + Send + Sync + 'static>;
+
+/// Per-element keyboard handler closure (used by `Div::on_key_down / on_key_up`).
+pub(crate) type ElementKeyHandler =
+    Arc<dyn Fn(&KeyEvent, &mut EventCtx) + Send + Sync + 'static>;
+
+/// Per-element text-input handler closure (used by `Div::on_text_input`).
+pub(crate) type ElementTextInputHandler =
+    Arc<dyn Fn(&TextInputEvent, &mut EventCtx) + Send + Sync + 'static>;
+
+/// Per-element keyboard handler bundle. Mirrors [`Handlers`] for mouse; stored
+/// in `AppState::key_handler_map` (Phase 3) and looked up during the focused-chain
+/// bubble dispatch.
+#[allow(dead_code)] // Populated by Div::prepaint and consumed by AppState in Phase 3.
+#[derive(Clone, Default)]
+#[doc(hidden)]
+pub struct KeyHandlers {
+    pub on_key_down: Option<ElementKeyHandler>,
+    pub on_key_up: Option<ElementKeyHandler>,
+    pub on_text_input: Option<ElementTextInputHandler>,
+}
+
+impl KeyHandlers {
+    #[allow(dead_code)] // Used by AppState::dispatch_key_* in Phase 3 to skip empty bundles.
+    pub fn has_any(&self) -> bool {
+        self.on_key_down.is_some() || self.on_key_up.is_some() || self.on_text_input.is_some()
+    }
+}
 
 /// Handler closure type for scroll events.
 pub(crate) type ScrollHandler = Arc<dyn Fn(&ScrollEvent, &mut EventCtx) + Send + Sync + 'static>;
@@ -114,10 +143,14 @@ pub struct PointerEvent {
 
 /// Closure type for App-level `KeyDown` / `KeyUp` handlers. Not `Send` —
 /// keyboard dispatch runs on the UI thread.
-pub type KeyHandler = Box<dyn FnMut(&KeyEvent)>;
+///
+/// Phase 9b: signature gained `&mut EventCtx` for parity with per-element
+/// keyboard handlers — App-level handlers can now call `cx.stop_propagation()`,
+/// `cx.request_focus(id)`, and `cx.focused_element()`.
+pub type KeyHandler = Box<dyn FnMut(&KeyEvent, &mut EventCtx)>;
 
 /// Closure type for App-level `TextInput` handlers.
-pub type TextInputHandler = Box<dyn FnMut(&TextInputEvent)>;
+pub type TextInputHandler = Box<dyn FnMut(&TextInputEvent, &mut EventCtx)>;
 
 /// Keyboard event payload for `KeyDown` / `KeyUp` handlers.
 ///
@@ -173,19 +206,42 @@ pub enum PointerEventKind {
     Leave,
 }
 
-/// Event dispatch context passed to handlers.
-///
-/// Provides control over event propagation. The handler can call
-/// `stop_propagation()` to prevent the event from bubbling to parent elements.
-pub struct EventCtx<'a> {
-    propagation_stopped: &'a mut bool,
+/// Deferred focus operation. Set by handlers via [`EventCtx::request_focus`] or
+/// [`EventCtx::blur`]; drained by `AppState` after the handler chain unwinds so
+/// focus only mutates at a single, well-defined point per dispatch.
+#[derive(Clone, Copy, Debug)]
+pub enum PendingFocusOp {
+    /// Focus the given element after the chain completes.
+    Focus(ElementId),
+    /// Clear focus after the chain completes.
+    Blur,
 }
 
-impl EventCtx<'_> {
-    /// Create a new EventCtx. Crate-private — only app.rs creates these.
-    pub(crate) fn new(flag: &mut bool) -> EventCtx<'_> {
+/// Event dispatch context passed to handlers.
+///
+/// Provides control over event propagation and focus changes. Handlers can call
+/// `stop_propagation()` to prevent bubbling, `request_focus(id)` / `blur()` to
+/// queue a focus change (applied after the chain), and `focused_element()` to
+/// read the focus snapshot taken at dispatch start.
+pub struct EventCtx<'a> {
+    propagation_stopped: &'a mut bool,
+    pending_focus_op: &'a mut Option<PendingFocusOp>,
+    focused: Option<ElementId>,
+}
+
+impl<'a> EventCtx<'a> {
+    /// Create a new EventCtx. Crate-private — dispatch sites in `app_state.rs`
+    /// allocate the backing state then thread the borrow through the handler
+    /// chain.
+    pub(crate) fn new(
+        propagation_stopped: &'a mut bool,
+        pending_focus_op: &'a mut Option<PendingFocusOp>,
+        focused: Option<ElementId>,
+    ) -> EventCtx<'a> {
         EventCtx {
-            propagation_stopped: flag,
+            propagation_stopped,
+            pending_focus_op,
+            focused,
         }
     }
 
@@ -198,12 +254,42 @@ impl EventCtx<'_> {
     pub fn is_propagation_stopped(&self) -> bool {
         *self.propagation_stopped
     }
+
+    /// Queue a focus change. Applied by `AppState` after the handler chain
+    /// completes — multiple `request_focus` calls in a chain are last-write-wins.
+    ///
+    /// Inside a handler, prefer this over `AppContext::set_focus` (which is the
+    /// outside-handler entry point and applies immediately).
+    pub fn request_focus(&mut self, id: ElementId) {
+        *self.pending_focus_op = Some(PendingFocusOp::Focus(id));
+    }
+
+    /// Queue a focus clear. Applied after the handler chain completes.
+    pub fn blur(&mut self) {
+        *self.pending_focus_op = Some(PendingFocusOp::Blur);
+    }
+
+    /// Currently focused element id, snapshot at dispatch start. Does NOT
+    /// reflect `request_focus` / `blur` calls made during this chain — focus
+    /// only mutates after the chain unwinds.
+    pub fn focused_element(&self) -> Option<ElementId> {
+        self.focused
+    }
+
+    /// Take the queued focus op, leaving `None` behind. Crate-private — used
+    /// by AppState to apply the op after a handler chain completes.
+    #[allow(dead_code)] // Drained by AppState in Phase 3 after dispatch chain unwinds.
+    pub(crate) fn take_pending_focus_op(&mut self) -> Option<PendingFocusOp> {
+        self.pending_focus_op.take()
+    }
 }
 
 impl std::fmt::Debug for EventCtx<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EventCtx")
             .field("propagation_stopped", &*self.propagation_stopped)
+            .field("pending_focus_op", &*self.pending_focus_op)
+            .field("focused", &self.focused)
             .finish()
     }
 }

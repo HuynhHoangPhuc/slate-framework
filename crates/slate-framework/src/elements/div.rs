@@ -14,9 +14,11 @@ use taffy::prelude::*;
 use crate::context::{LayoutCtx, PaintCtx, PrepaintCtx};
 use crate::element::{AnyElement, Element, IntoElement, Sealed};
 use crate::event::{
-    EventCtx, Handlers, MouseEvent, MouseHandler, PointerEvent, PointerHandler, ScrollEvent,
-    ScrollHandler,
+    ElementKeyHandler, ElementTextInputHandler, EventCtx, Handlers, KeyEvent, KeyHandlers,
+    MouseEvent, MouseHandler, PointerEvent, PointerHandler, ScrollEvent, ScrollHandler,
+    TextInputEvent,
 };
+use crate::focus::FocusableEntry;
 use crate::hit_test::{CursorStyle, HitRegion};
 use crate::layout::resolve_child_bounds;
 use crate::style::Style;
@@ -63,6 +65,25 @@ pub struct Div {
     pub(crate) on_pointer_enter: Option<PointerHandler>,
     /// Handler for pointer leave events.
     pub(crate) on_pointer_leave: Option<PointerHandler>,
+    // -------------------------------------------------------------------------
+    // Focus configuration (Phase 9b)
+    // -------------------------------------------------------------------------
+    /// True if this element opts in to keyboard focus (registers with `FocusRegistry`).
+    pub(crate) focusable: bool,
+    /// W3C-style tab index. Negative excludes from Tab cycle but still allows
+    /// programmatic focus via `AppContext::set_focus`.
+    pub(crate) tab_index: i32,
+    /// Whether the framework-provided focus ring is painted when focused.
+    pub(crate) focus_ring: bool,
+    // -------------------------------------------------------------------------
+    // Per-element keyboard handlers (Phase 9b)
+    // -------------------------------------------------------------------------
+    /// Handler for KeyDown events while this element is on the focused chain.
+    pub(crate) on_key_down: Option<ElementKeyHandler>,
+    /// Handler for KeyUp events while this element is on the focused chain.
+    pub(crate) on_key_up: Option<ElementKeyHandler>,
+    /// Handler for composed text input while this element is on the focused chain.
+    pub(crate) on_text_input: Option<ElementTextInputHandler>,
 }
 
 /// Visual styling for a Div (non-layout properties).
@@ -99,6 +120,12 @@ impl Div {
             on_pointer_event: None,
             on_pointer_enter: None,
             on_pointer_leave: None,
+            focusable: false,
+            tab_index: 0,
+            focus_ring: true,
+            on_key_down: None,
+            on_key_up: None,
+            on_text_input: None,
         }
     }
 
@@ -292,6 +319,87 @@ impl Div {
         self.on_pointer_leave = Some(Arc::new(handler));
         self
     }
+
+    // -------------------------------------------------------------------------
+    // Focus configuration builders (Phase 9b)
+    // -------------------------------------------------------------------------
+
+    /// Opt this element in to keyboard focus.
+    ///
+    /// Without this call (or with `false`), the element is invisible to the
+    /// focus system — it will not register with `FocusRegistry`, will not be
+    /// reachable via Tab, and `AppContext::set_focus` will fail for its id.
+    pub fn focusable(mut self, focusable: bool) -> Self {
+        self.focusable = focusable;
+        self
+    }
+
+    /// Set the W3C-style `tab_index`.
+    ///
+    /// - `0` (default): joins the Tab cycle at registration order.
+    /// - Positive: hoisted earlier in the Tab cycle by ascending value, then
+    ///   registration order within equal indices.
+    /// - Negative: excluded from the Tab cycle but still focusable via
+    ///   `AppContext::set_focus` or `EventCtx::request_focus`.
+    pub fn tab_index(mut self, tab_index: i32) -> Self {
+        self.tab_index = tab_index;
+        self
+    }
+
+    /// Toggle the framework's hardcoded 2px accent-color focus ring.
+    ///
+    /// Defaults to `true` and is only consulted when [`Div::focusable`] is
+    /// also `true`. Set to `false` when the element renders its own focus
+    /// indicator.
+    pub fn focus_ring(mut self, focus_ring: bool) -> Self {
+        self.focus_ring = focus_ring;
+        self
+    }
+
+    // -------------------------------------------------------------------------
+    // Per-element keyboard handler builders (Phase 9b)
+    // -------------------------------------------------------------------------
+
+    /// Register a `KeyDown` handler that fires while this element is on the
+    /// focused chain.
+    ///
+    /// # Example
+    /// ```ignore
+    /// Div::new()
+    ///     .focusable(true)
+    ///     .on_key_down(|ev, cx| {
+    ///         if ev.key == Key::Named(NamedKey::Enter) {
+    ///             // ...
+    ///             cx.stop_propagation();
+    ///         }
+    ///     })
+    /// ```
+    pub fn on_key_down<F>(mut self, handler: F) -> Self
+    where
+        F: Fn(&KeyEvent, &mut EventCtx) + Send + Sync + 'static,
+    {
+        self.on_key_down = Some(Arc::new(handler));
+        self
+    }
+
+    /// Register a `KeyUp` handler. See [`Div::on_key_down`].
+    pub fn on_key_up<F>(mut self, handler: F) -> Self
+    where
+        F: Fn(&KeyEvent, &mut EventCtx) + Send + Sync + 'static,
+    {
+        self.on_key_up = Some(Arc::new(handler));
+        self
+    }
+
+    /// Register a composed text-input handler. Fires once per keystroke that
+    /// produces visible text (or per surrogate pair on Windows).
+    pub fn on_text_input<F>(mut self, handler: F) -> Self
+    where
+        F: Fn(&TextInputEvent, &mut EventCtx) + Send + Sync + 'static,
+    {
+        self.on_text_input = Some(Arc::new(handler));
+        self
+    }
 }
 
 impl Default for Div {
@@ -366,6 +474,27 @@ impl Element for Div {
                 on_pointer_leave: self.on_pointer_leave.clone(),
             },
         );
+
+        // Phase 9b: register per-element keyboard handlers + focusable entry.
+        cx.register_key_handlers(
+            element_id,
+            KeyHandlers {
+                on_key_down: self.on_key_down.clone(),
+                on_key_up: self.on_key_up.clone(),
+                on_text_input: self.on_text_input.clone(),
+            },
+        );
+        if self.focusable {
+            cx.register_focusable(
+                FocusableEntry {
+                    id: element_id,
+                    tab_index: self.tab_index,
+                    focus_ring: self.focus_ring,
+                },
+                bounds,
+                self.visual.corner_radius,
+            );
+        }
 
         // Register hit region if Div has background OR any mouse handler.
         // Bug D fix: transparent divs with handlers still need hit regions.

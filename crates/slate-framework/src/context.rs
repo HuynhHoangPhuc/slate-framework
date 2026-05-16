@@ -14,8 +14,10 @@ use slate_renderer::atlas::Atlas;
 use slate_renderer::scene::Scene;
 use taffy::TaffyTree;
 
-use crate::event::Handlers;
+use crate::event::{Handlers, KeyHandlers};
 use crate::executor::ForegroundExecutor;
+use crate::focus::{FocusRegistry, FocusableEntry};
+use crate::focus_ring::FocusBounds;
 use crate::hit_test::{HitRegion, HitTestList};
 use crate::image_cache::ImageCache;
 use crate::paint_cache::TextShapingCache;
@@ -113,6 +115,17 @@ pub struct PrepaintCtx<'a> {
     pub(crate) handler_map: &'a mut HashMap<ElementId, Handlers>,
     /// Parent map for ancestor iteration during event dispatch.
     pub(crate) parent_map: &'a mut HashMap<ElementId, ElementId>,
+
+    // --- Keyboard handler collection + focus registry (Phase 9b) ---
+    /// Per-element keyboard handlers (populated during prepaint).
+    /// Consumed by `AppState::dispatch_key_*` via focused-chain bubble.
+    pub(crate) key_handler_map: &'a mut HashMap<ElementId, KeyHandlers>,
+    /// Focus registry built each prepaint via `register_focusable`. Tab
+    /// traversal + focused-chain dispatch read this after the prepaint walk.
+    pub(crate) focus_registry: &'a mut FocusRegistry,
+    /// Painted bounds for focusable elements — consumed once per paint pass
+    /// when emitting the focus ring overlay.
+    pub(crate) focus_bounds: &'a mut HashMap<ElementId, FocusBounds>,
 }
 
 impl<'a> PrepaintCtx<'a> {
@@ -137,6 +150,9 @@ impl<'a> PrepaintCtx<'a> {
         text_shaping_cache: &'a mut TextShapingCache,
         handler_map: &'a mut HashMap<ElementId, Handlers>,
         parent_map: &'a mut HashMap<ElementId, ElementId>,
+        key_handler_map: &'a mut HashMap<ElementId, KeyHandlers>,
+        focus_registry: &'a mut FocusRegistry,
+        focus_bounds: &'a mut HashMap<ElementId, FocusBounds>,
     ) -> Self {
         Self {
             taffy,
@@ -153,6 +169,9 @@ impl<'a> PrepaintCtx<'a> {
             a11y_stack: Vec::new(),
             handler_map,
             parent_map,
+            key_handler_map,
+            focus_registry,
+            focus_bounds,
         }
     }
 
@@ -217,6 +236,41 @@ impl<'a> PrepaintCtx<'a> {
         if handlers.has_any() {
             self.handler_map.insert(id, handlers);
         }
+    }
+
+    /// Register per-element keyboard handlers (Phase 9b).
+    ///
+    /// Call during prepaint after allocating the element ID. Only elements
+    /// with at least one key handler need to call this; empty bundles are
+    /// skipped to keep `key_handler_map` lookups cheap during dispatch.
+    pub(crate) fn register_key_handlers(&mut self, id: ElementId, handlers: KeyHandlers) {
+        if handlers.has_any() {
+            self.key_handler_map.insert(id, handlers);
+        }
+    }
+
+    /// Register a focusable entry along with its painted bounds (Phase 9b).
+    ///
+    /// Call during prepaint when the element opts in via `Div::focusable(true)`.
+    /// `bounds` + `corner_radius` are cached for the focus-ring overlay so the
+    /// paint pass doesn't need to walk the element tree a second time. The
+    /// registry is cleared at frame start; `prune_missing` runs after the
+    /// prepaint walk to clear focus on unmounted elements.
+    pub(crate) fn register_focusable(
+        &mut self,
+        entry: FocusableEntry,
+        bounds: Bounds,
+        corner_radius: f32,
+    ) {
+        let id = entry.id;
+        self.focus_registry.register(entry);
+        self.focus_bounds.insert(
+            id,
+            FocusBounds {
+                bounds,
+                corner_radius,
+            },
+        );
     }
 
     /// Pop the current frame after recursing children.

@@ -39,7 +39,9 @@ use slate_renderer::shadow_pipeline::ShadowPipeline;
 
 use crate::context::{LayoutCtx, PaintCtx, PrepaintCtx};
 use crate::element::AnyElement;
-use crate::event::Handlers;
+use crate::event::{Handlers, KeyHandlers};
+use crate::focus::FocusRegistry;
+use crate::focus_ring::FocusBounds;
 use crate::executor::{Executor, RedrawRequester};
 use crate::hit_test::HitTestList;
 use crate::image_cache::ImageCache;
@@ -104,6 +106,11 @@ pub struct HeadlessApp {
     // Phase 5a: Event handler collection (for headless testing parity)
     handler_map: HashMap<ElementId, Handlers>,
     parent_map: HashMap<ElementId, ElementId>,
+
+    // Phase 9b: keyboard + focus state collected each prepaint (headless parity).
+    key_handler_map: HashMap<ElementId, KeyHandlers>,
+    focus_registry: FocusRegistry,
+    focus_bounds: HashMap<ElementId, FocusBounds>,
 }
 
 /// Error creating or rendering with HeadlessApp.
@@ -258,6 +265,9 @@ impl HeadlessApp {
         // Phase 5a: Event handler collection (for headless testing parity)
         let handler_map = HashMap::new();
         let parent_map = HashMap::new();
+        let key_handler_map = HashMap::new();
+        let focus_registry = FocusRegistry::new();
+        let focus_bounds = HashMap::new();
 
         // Phase 2: Image cache
         let image_cache = ImageCache::new();
@@ -293,6 +303,9 @@ impl HeadlessApp {
             image_cache,
             handler_map,
             parent_map,
+            key_handler_map,
+            focus_registry,
+            focus_bounds,
         })
     }
 
@@ -341,6 +354,9 @@ impl HeadlessApp {
         self.a11y_nodes.clear();
         self.handler_map.clear();
         self.parent_map.clear();
+        self.key_handler_map.clear();
+        self.focus_registry.clear();
+        self.focus_bounds.clear();
         {
             let mut cx = PrepaintCtx::new(
                 self.layout_tree.inner(),
@@ -353,6 +369,9 @@ impl HeadlessApp {
                 &mut self.text_shaping_cache,
                 &mut self.handler_map,
                 &mut self.parent_map,
+                &mut self.key_handler_map,
+                &mut self.focus_registry,
+                &mut self.focus_bounds,
             );
 
             // Initialize tree-position keying for stable ElementIds
