@@ -11,9 +11,8 @@ use std::sync::Arc;
 use slate_reactive::Signal;
 
 use crate::event::{
-    ElementImeCommitHandler, ElementImePreeditHandler, ElementKeyHandler,
-    ElementTextInputHandler, EventCtx, ImeCommitEvent, ImePreeditEvent, Key, KeyEvent,
-    NamedKey, TextInputEvent,
+    ElementImeCommitHandler, ElementImePreeditHandler, ElementKeyHandler, ElementTextInputHandler,
+    EventCtx, ImeCommitEvent, ImePreeditEvent, Key, KeyEvent, NamedKey, TextInputEvent,
 };
 use crate::ime::Preedit;
 

@@ -74,11 +74,7 @@ fn card(label: &'static str, counter: Signal<i32>, ring: bool) -> Div {
             Key::Character(s) if s == "-" => c_handler.update(|n| *n -= 1),
             _ => {}
         })
-        .child(
-            Text::new(label)
-                .font_size(13.0)
-                .color(Color::WHITE.into()),
-        )
+        .child(Text::new(label).font_size(13.0).color(Color::WHITE.into()))
         .child(
             Text::new_reactive(move || c_text.get().to_string())
                 .font_size(28.0)

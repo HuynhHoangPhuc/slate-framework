@@ -15,14 +15,12 @@ use std::sync::Arc;
 use slate_framework::app_state::{AppSignal, AppState};
 use slate_framework::element::AnyElement;
 use slate_framework::elements::Div;
+use slate_framework::event::KeyHandlers;
 use slate_framework::executor::{Executor, RedrawRequester};
 use slate_framework::focus::FocusableEntry;
 use slate_framework::types::ElementId;
 use slate_framework::view::{IntoAny, View};
-use slate_framework::{
-    EventCtx, Key, KeyCode, KeyEvent, Modifiers, NamedKey, TextInputEvent,
-};
-use slate_framework::event::KeyHandlers;
+use slate_framework::{EventCtx, Key, KeyCode, KeyEvent, Modifiers, NamedKey, TextInputEvent};
 use slate_platform::{DefaultPlatform, Platform, WindowOptions, wake_run_loop};
 
 struct NoopView;
@@ -180,8 +178,14 @@ fn stop_propagation_halts_bubble() {
         false,
     );
 
-    assert!(!parent_fired.get(), "parent must not fire after stop_propagation");
-    assert!(!app_fired.get(), "app-level must not fire after stop_propagation");
+    assert!(
+        !parent_fired.get(),
+        "parent must not fire after stop_propagation"
+    );
+    assert!(
+        !app_fired.get(),
+        "app-level must not fire after stop_propagation"
+    );
 }
 
 #[test]
@@ -278,5 +282,9 @@ fn tab_key_with_stop_propagation_suppresses_default_shift() {
         false,
     );
 
-    assert_eq!(state.focused_for_test(), Some(a), "Tab default must be suppressed");
+    assert_eq!(
+        state.focused_for_test(),
+        Some(a),
+        "Tab default must be suppressed"
+    );
 }

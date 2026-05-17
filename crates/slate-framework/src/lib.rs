@@ -38,9 +38,9 @@ pub mod executor;
 pub mod focus;
 pub(crate) mod focus_ring;
 pub mod headless;
-pub mod ime;
 pub mod hit_test;
 pub(crate) mod image_cache;
+pub mod ime;
 pub mod layout;
 pub(crate) mod paint_cache;
 pub(crate) mod reactive_state;
@@ -84,11 +84,13 @@ pub mod reactive {
 // Re-export smol::Timer for async timing (Phase 5: F1)
 pub use context::{LayoutCtx, PaintCtx, PrepaintCtx};
 pub use element::{AnyElement, Element, IntoElement};
-pub use elements::{Div, Image, MAX_IMAGE_DIM, Text, TextAlign, TextWrap, TextField, TextFieldStyle};
+pub use elements::{
+    Div, Image, MAX_IMAGE_DIM, Text, TextAlign, TextField, TextFieldStyle, TextWrap,
+};
 pub use executor::{BackgroundExecutor, Executor, ForegroundExecutor, RedrawRequester};
 pub use focus::{FocusRegistry, FocusableEntry};
-pub use ime::{CachedImeQuery, ImeRegistry, ImeState, PendingImeOp, Preedit};
 pub use hit_test::{CursorStyle, HitRegion, HitTestList, HitTestResult};
+pub use ime::{CachedImeQuery, ImeRegistry, ImeState, PendingImeOp, Preedit};
 pub use layout::{LayoutTree, compute_layout, resolve_bounds, resolve_child_bounds};
 pub use smol::Timer;
 pub use style::{DisplayMode, Length, Overflow, Position, SizeConstraint, Style};

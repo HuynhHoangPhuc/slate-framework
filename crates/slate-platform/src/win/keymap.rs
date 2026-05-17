@@ -215,10 +215,7 @@ mod tests {
 
     #[test]
     fn alt_extended_disambiguates() {
-        assert_eq!(
-            decode_keycode(VK_MENU.0 as u32, 0, false),
-            KeyCode::AltLeft
-        );
+        assert_eq!(decode_keycode(VK_MENU.0 as u32, 0, false), KeyCode::AltLeft);
         assert_eq!(decode_keycode(VK_MENU.0 as u32, 0, true), KeyCode::AltRight);
     }
 
@@ -245,10 +242,22 @@ mod tests {
     fn navigation_roundtrip() {
         assert_eq!(decode_keycode(VK_RETURN.0 as u32, 0, false), KeyCode::Enter);
         assert_eq!(decode_keycode(VK_TAB.0 as u32, 0, false), KeyCode::Tab);
-        assert_eq!(decode_keycode(VK_ESCAPE.0 as u32, 0, false), KeyCode::Escape);
-        assert_eq!(decode_keycode(VK_BACK.0 as u32, 0, false), KeyCode::Backspace);
-        assert_eq!(decode_keycode(VK_DELETE.0 as u32, 0, false), KeyCode::Delete);
-        assert_eq!(decode_keycode(VK_LEFT.0 as u32, 0, false), KeyCode::ArrowLeft);
+        assert_eq!(
+            decode_keycode(VK_ESCAPE.0 as u32, 0, false),
+            KeyCode::Escape
+        );
+        assert_eq!(
+            decode_keycode(VK_BACK.0 as u32, 0, false),
+            KeyCode::Backspace
+        );
+        assert_eq!(
+            decode_keycode(VK_DELETE.0 as u32, 0, false),
+            KeyCode::Delete
+        );
+        assert_eq!(
+            decode_keycode(VK_LEFT.0 as u32, 0, false),
+            KeyCode::ArrowLeft
+        );
     }
 
     #[test]

@@ -141,10 +141,7 @@ impl App {
     ///
     /// Call before [`App::run`]; the type system enforces this (`run` consumes
     /// `self`).
-    pub fn on_key_down(
-        mut self,
-        handler: impl FnMut(&KeyEvent, &mut EventCtx) + 'static,
-    ) -> Self {
+    pub fn on_key_down(mut self, handler: impl FnMut(&KeyEvent, &mut EventCtx) + 'static) -> Self {
         self.on_key_down.push(Box::new(handler));
         self
     }

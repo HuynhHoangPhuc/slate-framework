@@ -34,12 +34,12 @@ use crate::event::{
     ElementImeCommitHandler, ElementImeLifecycleHandler, ElementImePreeditHandler,
     ElementKeyHandler, ElementTextInputHandler, EventCtx, Handlers, ImeCommitEvent,
     ImeCommitHandler, ImeHandlers, ImeLifecycleEvent, ImeLifecycleHandler, ImePreeditEvent,
-    ImePreeditHandler, KeyEvent, KeyHandler, KeyHandlers, MouseEvent, MouseHandler,
-    PendingFocusOp, PointerEvent, PointerEventKind, PointerHandler, ScrollEvent, ScrollHandler,
-    TextInputEvent, TextInputHandler,
+    ImePreeditHandler, KeyEvent, KeyHandler, KeyHandlers, MouseEvent, MouseHandler, PendingFocusOp,
+    PointerEvent, PointerEventKind, PointerHandler, ScrollEvent, ScrollHandler, TextInputEvent,
+    TextInputHandler,
 };
-use crate::focus::FocusRegistry;
 use crate::executor::{Executor, RedrawRequester};
+use crate::focus::FocusRegistry;
 use crate::hit_test::HitTestList;
 use crate::image_cache::{ImageCache, ImageSystemObserver};
 use crate::ime::{CachedImeQuery, ImeRegistry, PendingImeOp};
@@ -930,14 +930,9 @@ impl<V: View> AppState<V> {
             let focused = self.focus_registry.borrow().focused();
             if let Some(id) = focused {
                 let registry = self.focus_registry.borrow();
-                let show_ring = registry
-                    .entry(id)
-                    .map(|e| e.focus_ring)
-                    .unwrap_or(false);
+                let show_ring = registry.entry(id).map(|e| e.focus_ring).unwrap_or(false);
                 drop(registry);
-                if show_ring
-                    && let Some(info) = self.focus_bounds.borrow().get(&id).copied()
-                {
+                if show_ring && let Some(info) = self.focus_bounds.borrow().get(&id).copied() {
                     crate::focus_ring::emit_focus_ring(&mut s, info);
                 }
             }
@@ -2492,7 +2487,12 @@ impl<V: View> AppState<V> {
         on_ime_enabled: Vec<ImeLifecycleHandler>,
         on_ime_disabled: Vec<ImeLifecycleHandler>,
     ) {
-        self.install_ime_handlers(on_ime_preedit, on_ime_commit, on_ime_enabled, on_ime_disabled);
+        self.install_ime_handlers(
+            on_ime_preedit,
+            on_ime_commit,
+            on_ime_enabled,
+            on_ime_disabled,
+        );
     }
 
     /// Register a per-element IME handler bundle. Test-only.
@@ -2522,18 +2522,12 @@ impl<V: View> AppState<V> {
     }
 
     /// Dispatch a synthetic `ImeEnabled` event. Test-only.
-    pub fn dispatch_ime_enabled_for_test(
-        &self,
-        window: slate_platform::WindowId,
-    ) -> AppSignal {
+    pub fn dispatch_ime_enabled_for_test(&self, window: slate_platform::WindowId) -> AppSignal {
         self.dispatch_ime_enabled(window)
     }
 
     /// Dispatch a synthetic `ImeDisabled` event. Test-only.
-    pub fn dispatch_ime_disabled_for_test(
-        &self,
-        window: slate_platform::WindowId,
-    ) -> AppSignal {
+    pub fn dispatch_ime_disabled_for_test(&self, window: slate_platform::WindowId) -> AppSignal {
         self.dispatch_ime_disabled(window)
     }
 
@@ -2575,10 +2569,7 @@ impl<V: View> AppState<V> {
     }
 
     /// Query a text substring from the cached IME snapshot. Test-only.
-    pub fn ime_text_query_for_test(
-        &self,
-        range: std::ops::Range<usize>,
-    ) -> Option<String> {
+    pub fn ime_text_query_for_test(&self, range: std::ops::Range<usize>) -> Option<String> {
         use slate_platform::WindowImeDelegate;
         WindowImeDelegate::ime_text(self, self.window_id_for_test(), range)
     }

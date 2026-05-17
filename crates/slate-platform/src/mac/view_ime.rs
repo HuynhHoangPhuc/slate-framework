@@ -256,8 +256,7 @@ impl MetalView {
     /// to a screen-default placement, which is acceptable for v1).
     pub(super) fn ime_handle_first_rect(&self, _range: NSRange) -> NSRect {
         let id = self.ivars().window_id.get();
-        let Some(rect_phys) =
-            with_window_ime_delegate(id, |d| d.ime_caret_rect(id)).flatten()
+        let Some(rect_phys) = with_window_ime_delegate(id, |d| d.ime_caret_rect(id)).flatten()
         else {
             return NSRect::ZERO;
         };
@@ -276,10 +275,7 @@ impl MetalView {
             return NSRect::ZERO;
         };
         let screen_frame = screen.frame();
-        let scale = self
-            .window()
-            .map(|w| w.backingScaleFactor())
-            .unwrap_or(1.0);
+        let scale = self.window().map(|w| w.backingScaleFactor()).unwrap_or(1.0);
 
         physical_screen_rect_to_logical_nsrect(
             rect_phys,
@@ -308,11 +304,8 @@ mod tests {
         // Screen is 1000 pt tall; caret is at (100, 200) sized 2×16 in
         // physical pixels @ 1× scale. AppKit Y origin = bottom, so
         // result.y = 1000 - 200 - 16 = 784.
-        let nsrect = physical_screen_rect_to_logical_nsrect(
-            PhysicalRect::new(100, 200, 2, 16),
-            1000.0,
-            1.0,
-        );
+        let nsrect =
+            physical_screen_rect_to_logical_nsrect(PhysicalRect::new(100, 200, 2, 16), 1000.0, 1.0);
         assert_eq!(nsrect.origin.x, 100.0);
         assert_eq!(nsrect.origin.y, 784.0);
         assert_eq!(nsrect.size.width, 2.0);
@@ -323,11 +316,8 @@ mod tests {
     fn screen_rect_divides_by_scale_at_2x() {
         // 2× retina: physical (200, 400) sized 4×32 → logical (100, 200) sized 2×16.
         // Screen height 1000 pt; flipped y = 1000 - 200 - 16 = 784.
-        let nsrect = physical_screen_rect_to_logical_nsrect(
-            PhysicalRect::new(200, 400, 4, 32),
-            1000.0,
-            2.0,
-        );
+        let nsrect =
+            physical_screen_rect_to_logical_nsrect(PhysicalRect::new(200, 400, 4, 32), 1000.0, 2.0);
         assert_eq!(nsrect.origin.x, 100.0);
         assert_eq!(nsrect.origin.y, 784.0);
         assert_eq!(nsrect.size.width, 2.0);
@@ -348,11 +338,8 @@ mod tests {
     #[test]
     fn screen_rect_handles_zero_scale_defensively() {
         // Bad input: scale 0.0 would divide-by-zero; helper returns ZERO.
-        let nsrect = physical_screen_rect_to_logical_nsrect(
-            PhysicalRect::new(100, 200, 2, 16),
-            1000.0,
-            0.0,
-        );
+        let nsrect =
+            physical_screen_rect_to_logical_nsrect(PhysicalRect::new(100, 200, 2, 16), 1000.0, 0.0);
         assert_eq!(nsrect.origin.x, 0.0);
         assert_eq!(nsrect.origin.y, 0.0);
     }

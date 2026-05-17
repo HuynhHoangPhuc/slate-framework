@@ -71,19 +71,17 @@ pub(crate) fn read_composition_string_utf8(
         return None;
     }
     let byte_len = byte_len as usize;
-    debug_assert!(byte_len.is_multiple_of(2), "UTF-16 byte length must be even");
+    debug_assert!(
+        byte_len.is_multiple_of(2),
+        "UTF-16 byte length must be even"
+    );
     let u16_len = byte_len / 2;
     let mut buf = vec![0u16; u16_len];
 
     // Second call: fill the buffer.
     // SAFETY: buf is valid for byte_len bytes (= u16_len * 2).
     let written = unsafe {
-        ImmGetCompositionStringW(
-            imc,
-            flag,
-            Some(buf.as_mut_ptr() as *mut _),
-            byte_len as u32,
-        )
+        ImmGetCompositionStringW(imc, flag, Some(buf.as_mut_ptr() as *mut _), byte_len as u32)
     };
     if written <= 0 {
         return None;
@@ -205,10 +203,7 @@ pub(crate) fn utf16_units_to_utf8_bytes(utf16: &[u16], cursor_u16: usize) -> usi
 /// the UTF-16 text length: some IMEs (per winit issue #1234) report per-code-
 /// point attrs rather than per-UTF-16-unit attrs. We accept the degradation
 /// (no selection highlight) rather than mis-aligning the selection range.
-pub(crate) fn find_target_converted_run(
-    attrs: &[u8],
-    utf16_text: &[u16],
-) -> Option<Range<usize>> {
+pub(crate) fn find_target_converted_run(attrs: &[u8], utf16_text: &[u16]) -> Option<Range<usize>> {
     if attrs.len() != utf16_text.len() {
         return None;
     }

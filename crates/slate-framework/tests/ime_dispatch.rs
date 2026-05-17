@@ -18,7 +18,7 @@ use std::sync::Arc;
 use slate_framework::app_state::{AppSignal, AppState};
 use slate_framework::element::AnyElement;
 use slate_framework::elements::Div;
-use slate_framework::event::{ImeHandlers, ImeLifecycleEvent, ImeCommitEvent, ImePreeditEvent};
+use slate_framework::event::{ImeCommitEvent, ImeHandlers, ImeLifecycleEvent, ImePreeditEvent};
 use slate_framework::executor::{Executor, RedrawRequester};
 use slate_framework::focus::FocusableEntry;
 use slate_framework::ime::{ImeState, Preedit};
@@ -132,7 +132,11 @@ fn dispatch_ime_preedit_routes_to_focused_element_with_stop_propagation() {
     state.dispatch_ime_preedit_for_test(window, "hi".into(), 2, None);
 
     assert_eq!(elem_fired.get(), 1, "element handler must fire");
-    assert_eq!(app_fired.get(), 0, "app handler must not fire after stop_propagation");
+    assert_eq!(
+        app_fired.get(),
+        0,
+        "app handler must not fire after stop_propagation"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -186,7 +190,11 @@ fn dispatch_ime_commit_with_empty_text_only_clears_preedit() {
     // element handler. Here we installed only an app handler — preedit state
     // is therefore unchanged by the dispatch (no element handler ran). The
     // app handler count is what we can test from outside.
-    assert_eq!(app_called.get(), 1, "app handler must fire for empty commit too");
+    assert_eq!(
+        app_called.get(),
+        1,
+        "app handler must fire for empty commit too"
+    );
 }
 
 #[test]
@@ -224,9 +232,9 @@ fn dispatch_ime_enabled_fires_app_handler() {
     state.install_ime_handlers_for_test(
         vec![],
         vec![],
-        vec![Box::new(move |_e: &ImeLifecycleEvent, _cx: &mut EventCtx| {
-            f.set(f.get() + 1)
-        })],
+        vec![Box::new(
+            move |_e: &ImeLifecycleEvent, _cx: &mut EventCtx| f.set(f.get() + 1),
+        )],
         vec![],
     );
 
@@ -247,9 +255,9 @@ fn dispatch_ime_disabled_fires_app_handler() {
         vec![],
         vec![],
         vec![],
-        vec![Box::new(move |_e: &ImeLifecycleEvent, _cx: &mut EventCtx| {
-            f.set(f.get() + 1)
-        })],
+        vec![Box::new(
+            move |_e: &ImeLifecycleEvent, _cx: &mut EventCtx| f.set(f.get() + 1),
+        )],
     );
 
     let window = state.window_id_for_test();
@@ -366,7 +374,10 @@ fn tab_during_preedit_synthesises_commit() {
 
     let after = ime_rc.borrow();
     assert!(after.preedit.is_none(), "preedit must be cleared after Tab");
-    assert_eq!(after.text, "abc", "preedit text must be committed into ImeState.text");
+    assert_eq!(
+        after.text, "abc",
+        "preedit text must be committed into ImeState.text"
+    );
     assert_eq!(
         user_commit_fired.get(),
         0,

@@ -10,8 +10,8 @@ use objc2_app_kit::{
     NSView, NSWindow, NSWindowDelegate,
 };
 use objc2_foundation::{
-    MainThreadMarker, NSArray, NSAttributedString, NSAttributedStringKey, NSNotification,
-    NSObject, NSObjectProtocol, NSPoint, NSRange, NSRangePointer, NSRect, NSSize, NSUInteger,
+    MainThreadMarker, NSArray, NSAttributedString, NSAttributedStringKey, NSNotification, NSObject,
+    NSObjectProtocol, NSPoint, NSRange, NSRangePointer, NSRect, NSSize, NSUInteger,
 };
 use objc2_quartz_core::CAMetalLayer;
 
@@ -139,16 +139,28 @@ fn is_visible_text(s: &str) -> bool {
 
 /// Diff `prev` vs `new` modifier flags and dispatch synthetic [`Event::KeyDown`]
 /// / [`Event::KeyUp`] for each modifier that toggled.
-fn emit_modifier_changes(
-    window: WindowId,
-    prev: NSEventModifierFlags,
-    new: NSEventModifierFlags,
-) {
+fn emit_modifier_changes(window: WindowId, prev: NSEventModifierFlags, new: NSEventModifierFlags) {
     let entries: [(NSEventModifierFlags, KeyCode, NamedKey); 4] = [
-        (NSEventModifierFlags::Shift, KeyCode::ShiftLeft, NamedKey::Shift),
-        (NSEventModifierFlags::Control, KeyCode::ControlLeft, NamedKey::Control),
-        (NSEventModifierFlags::Option, KeyCode::AltLeft, NamedKey::Alt),
-        (NSEventModifierFlags::Command, KeyCode::MetaLeft, NamedKey::Meta),
+        (
+            NSEventModifierFlags::Shift,
+            KeyCode::ShiftLeft,
+            NamedKey::Shift,
+        ),
+        (
+            NSEventModifierFlags::Control,
+            KeyCode::ControlLeft,
+            NamedKey::Control,
+        ),
+        (
+            NSEventModifierFlags::Option,
+            KeyCode::AltLeft,
+            NamedKey::Alt,
+        ),
+        (
+            NSEventModifierFlags::Command,
+            KeyCode::MetaLeft,
+            NamedKey::Meta,
+        ),
     ];
     let modifiers = decode_modifiers(new);
     for (flag, code, named) in entries {
@@ -898,10 +910,14 @@ define_class!(
                 else {
                     return;
                 };
-                let Some(view) = win.contentView() else { return };
-                let Ok(metal_view) = view.downcast::<MetalView>() else { return };
-                let mtm = MainThreadMarker::new()
-                    .expect("windowDidBecomeKey: invoked off main thread");
+                let Some(view) = win.contentView() else {
+                    return;
+                };
+                let Ok(metal_view) = view.downcast::<MetalView>() else {
+                    return;
+                };
+                let mtm =
+                    MainThreadMarker::new().expect("windowDidBecomeKey: invoked off main thread");
                 let app = objc2_app_kit::NSApplication::sharedApplication(mtm);
                 if let Some(event) = app.currentEvent() {
                     metal_view

@@ -21,8 +21,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CREATESTRUCTW, DefWindowProcW, GWLP_USERDATA, GetClientRect, GetWindowLongPtrW, KillTimer,
     MINMAXINFO, MSG, PM_REMOVE, PeekMessageW, PostQuitMessage, SIZE_MINIMIZED, SWP_NOACTIVATE,
     SWP_NOZORDER, SetTimer, SetWindowLongPtrW, SetWindowPos, USER_TIMER_MINIMUM, WM_CAPTURECHANGED,
-    WM_CHAR, WM_CLOSE, WM_DESTROY, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_ENTERSIZEMOVE, WM_ERASEBKGND,
-    WM_EXITSIZEMOVE, WM_GETMINMAXINFO, WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION,
+    WM_CHAR, WM_CLOSE, WM_DESTROY, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_ENTERSIZEMOVE,
+    WM_ERASEBKGND, WM_EXITSIZEMOVE, WM_GETMINMAXINFO, WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION,
     WM_IME_STARTCOMPOSITION, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP,
     WM_MBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL,
     WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE,
@@ -553,8 +553,7 @@ impl WinWindowInner {
             WM_CHAR => {
                 let code_unit = _wparam.0 as u16;
                 // Filter ASCII control range except Tab (0x09) and CR (0x0D, normalized to LF).
-                if (code_unit < 0x20 && code_unit != 0x09 && code_unit != 0x0D)
-                    || code_unit == 0x7F
+                if (code_unit < 0x20 && code_unit != 0x09 && code_unit != 0x0D) || code_unit == 0x7F
                 {
                     return LRESULT(0);
                 }
@@ -634,9 +633,7 @@ impl WinWindowInner {
                     handled = true;
                 }
                 if flags & GCS_COMPSTR.0 != 0 {
-                    if let Some((text, utf16)) =
-                        read_composition_string_utf8(imc, GCS_COMPSTR)
-                    {
+                    if let Some((text, utf16)) = read_composition_string_utf8(imc, GCS_COMPSTR) {
                         let cursor_u16 = read_composition_cursor(imc).unwrap_or(0);
                         let cursor_byte_offset = utf16_units_to_utf8_bytes(&utf16, cursor_u16);
                         let selection = read_composition_attrs(imc)

@@ -15,16 +15,16 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 
+use slate_framework::EventCtx;
 use slate_framework::app_state::{AppSignal, AppState};
 use slate_framework::element::AnyElement;
 use slate_framework::elements::Div;
-use slate_framework::event::{ImeHandlers, ImeCommitEvent, ImePreeditEvent};
+use slate_framework::event::{ImeCommitEvent, ImeHandlers, ImePreeditEvent};
 use slate_framework::executor::{Executor, RedrawRequester};
 use slate_framework::focus::FocusableEntry;
 use slate_framework::ime::{ImeState, Preedit};
 use slate_framework::types::ElementId;
 use slate_framework::view::{IntoAny, View};
-use slate_framework::EventCtx;
 use slate_platform::{DefaultPlatform, PhysicalRect, Platform, WindowOptions, wake_run_loop};
 
 // ---------------------------------------------------------------------------
@@ -164,7 +164,10 @@ fn ime_preedit_followed_by_commit_updates_signal() {
         let s = ime_rc.borrow();
         assert!(s.preedit.is_some(), "preedit must be set after dispatch");
         assert_eq!(s.preedit.as_ref().unwrap().text, "你好");
-        assert!(s.text.is_empty(), "committed text must be unchanged during preedit");
+        assert!(
+            s.text.is_empty(),
+            "committed text must be unchanged during preedit"
+        );
     }
 
     // --- Step 2: commit finalises ---
@@ -173,9 +176,16 @@ fn ime_preedit_followed_by_commit_updates_signal() {
     {
         let s = ime_rc.borrow();
         assert!(s.preedit.is_none(), "preedit must be cleared after commit");
-        assert_eq!(s.text, "你好", "committed text must contain the commit payload");
+        assert_eq!(
+            s.text, "你好",
+            "committed text must contain the commit payload"
+        );
     }
-    assert_eq!(&*signal_value.borrow(), "你好", "signal must reflect committed text");
+    assert_eq!(
+        &*signal_value.borrow(),
+        "你好",
+        "signal must reflect committed text"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -222,9 +232,19 @@ fn empty_commit_only_clears_preedit() {
     state.dispatch_ime_commit_for_test(window, String::new());
 
     let s = ime_rc.borrow();
-    assert!(s.preedit.is_none(), "preedit must be cleared by empty commit");
-    assert!(s.text.is_empty(), "committed text must NOT be mutated by empty commit");
-    assert_eq!(setter_called.get(), 0, "setter must NOT be called for empty commit");
+    assert!(
+        s.preedit.is_none(),
+        "preedit must be cleared by empty commit"
+    );
+    assert!(
+        s.text.is_empty(),
+        "committed text must NOT be mutated by empty commit"
+    );
+    assert_eq!(
+        setter_called.get(),
+        0,
+        "setter must NOT be called for empty commit"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -276,7 +296,12 @@ fn set_ime_state_caret_rect_readable_via_query() {
     state.register_focusable_for_test(entry(13));
     state.set_focus_for_test(elem_id);
 
-    let rect = PhysicalRect { x: 5, y: 10, width: 2, height: 18 };
+    let rect = PhysicalRect {
+        x: 5,
+        y: 10,
+        width: 2,
+        height: 18,
+    };
     state.set_ime_state_for_test(
         elem_id,
         ImeState {

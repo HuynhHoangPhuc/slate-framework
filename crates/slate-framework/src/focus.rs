@@ -105,9 +105,7 @@ impl FocusRegistry {
 
     /// True if `id` is registered AND part of the Tab cycle (tab_index >= 0).
     pub fn is_tab_reachable(&self, id: ElementId) -> bool {
-        self.entries
-            .iter()
-            .any(|e| e.id == id && e.tab_index >= 0)
+        self.entries.iter().any(|e| e.id == id && e.tab_index >= 0)
     }
 
     /// Look up an entry by id.
@@ -174,11 +172,9 @@ impl FocusRegistry {
             return None;
         }
 
-        let cur_pos = self.focused.and_then(|id| {
-            tab_reachable
-                .iter()
-                .position(|&i| self.entries[i].id == id)
-        });
+        let cur_pos = self
+            .focused
+            .and_then(|id| tab_reachable.iter().position(|&i| self.entries[i].id == id));
 
         let next_idx = match (cur_pos, dir) {
             (None, ShiftDir::Forward) => tab_reachable[0],

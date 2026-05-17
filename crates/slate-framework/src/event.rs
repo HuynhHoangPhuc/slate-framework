@@ -30,8 +30,7 @@ use crate::types::ElementId;
 pub(crate) type MouseHandler = Arc<dyn Fn(&MouseEvent, &mut EventCtx) + Send + Sync + 'static>;
 
 /// Per-element keyboard handler closure (used by `Div::on_key_down / on_key_up`).
-pub(crate) type ElementKeyHandler =
-    Arc<dyn Fn(&KeyEvent, &mut EventCtx) + Send + Sync + 'static>;
+pub(crate) type ElementKeyHandler = Arc<dyn Fn(&KeyEvent, &mut EventCtx) + Send + Sync + 'static>;
 
 /// Per-element text-input handler closure (used by `Div::on_text_input`).
 pub(crate) type ElementTextInputHandler =

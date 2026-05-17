@@ -158,16 +158,16 @@ impl Element for TextField {
         // Measure current value for intrinsic width; fall back to style.width when empty
         let current = self.value.get_untracked();
         let (intrinsic_w, line_height) = if current.is_empty() {
-            let shaped = cx
-                .text
-                .shape_line(font, "M")
-                .unwrap_or_else(|_| slate_text::types::ShapedLine {
-                    glyphs: Vec::new(),
-                    width_lpx: 0.0,
-                    ascent_lpx: self.style.font_size,
-                    descent_lpx: 0.0,
-                    y_offset_lpx: 0.0,
-                });
+            let shaped =
+                cx.text
+                    .shape_line(font, "M")
+                    .unwrap_or_else(|_| slate_text::types::ShapedLine {
+                        glyphs: Vec::new(),
+                        width_lpx: 0.0,
+                        ascent_lpx: self.style.font_size,
+                        descent_lpx: 0.0,
+                        y_offset_lpx: 0.0,
+                    });
             (self.style.width, shaped.ascent_lpx - shaped.descent_lpx)
         } else {
             match cx.text.shape_line(font, &current) {
@@ -257,7 +257,10 @@ impl Element for TextField {
             },
         );
 
-        TextFieldPaintState { element_id, focused }
+        TextFieldPaintState {
+            element_id,
+            focused,
+        }
     }
 
     fn paint(
@@ -274,7 +277,12 @@ impl Element for TextField {
         // Optional background
         if let Some(bg) = self.style.background {
             cx.scene.push_rect(RectInstance {
-                rect: [bounds.origin.x, bounds.origin.y, bounds.size.width, line_height],
+                rect: [
+                    bounds.origin.x,
+                    bounds.origin.y,
+                    bounds.size.width,
+                    line_height,
+                ],
                 color: bg,
                 corner_radius: 0.0,
                 _pad: [0.0; 3],
@@ -300,7 +308,12 @@ impl Element for TextField {
         // Build display string: committed[..caret] + preedit.text + committed[caret..]
         let caret_safe = caret_byte.min(committed_text.len());
         let display_string = if let Some(ref p) = preedit_snapshot {
-            format!("{}{}{}", &committed_text[..caret_safe], &p.text, &committed_text[caret_safe..])
+            format!(
+                "{}{}{}",
+                &committed_text[..caret_safe],
+                &p.text,
+                &committed_text[caret_safe..]
+            )
         } else {
             committed_text.clone()
         };
@@ -339,7 +352,10 @@ impl Element for TextField {
             .unwrap_or(0);
 
         let get_advance = |char_idx: usize| -> f32 {
-            advances.get(char_idx).copied().unwrap_or_else(|| advances.last().copied().unwrap_or(0.0))
+            advances
+                .get(char_idx)
+                .copied()
+                .unwrap_or_else(|| advances.last().copied().unwrap_or(0.0))
         };
 
         let caret_pixel_x = get_advance(caret_char_idx);
@@ -369,7 +385,12 @@ impl Element for TextField {
         // Caret — 1px vertical line, visible only when focused
         if paint_state.focused {
             cx.scene.push_rect(RectInstance {
-                rect: [bounds.origin.x + caret_pixel_x, bounds.origin.y, 1.0, line_height],
+                rect: [
+                    bounds.origin.x + caret_pixel_x,
+                    bounds.origin.y,
+                    1.0,
+                    line_height,
+                ],
                 color: self.style.caret_color,
                 corner_radius: 0.0,
                 _pad: [0.0; 3],
@@ -384,7 +405,12 @@ impl Element for TextField {
             if preedit_width > 0.0 {
                 let underline_y = bounds.origin.y + shaped.ascent_lpx + 1.0;
                 cx.scene.push_rect(RectInstance {
-                    rect: [bounds.origin.x + preedit_start_px, underline_y, preedit_width, 1.0],
+                    rect: [
+                        bounds.origin.x + preedit_start_px,
+                        underline_y,
+                        preedit_width,
+                        1.0,
+                    ],
                     color: self.style.color,
                     corner_radius: 0.0,
                     _pad: [0.0; 3],
@@ -410,7 +436,12 @@ impl Element for TextField {
 
                 if sel_w > 0.0 {
                     cx.scene.push_rect(RectInstance {
-                        rect: [bounds.origin.x + sel_start_px, bounds.origin.y, sel_w, line_height],
+                        rect: [
+                            bounds.origin.x + sel_start_px,
+                            bounds.origin.y,
+                            sel_w,
+                            line_height,
+                        ],
                         color: self.style.preedit_selection_color,
                         corner_radius: 0.0,
                         _pad: [0.0; 3],
