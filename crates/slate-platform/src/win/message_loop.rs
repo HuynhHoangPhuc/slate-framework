@@ -12,6 +12,7 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::System::SystemServices::{MK_CONTROL, MK_SHIFT};
 use windows::Win32::UI::Controls::{HOVER_DEFAULT, WM_MOUSELEAVE};
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
+use windows::Win32::UI::Input::Ime::{GCS_COMPSTR, GCS_RESULTSTR};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, ReleaseCapture, SetCapture, TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent, VK_LWIN,
     VK_MENU, VK_RWIN,
@@ -21,16 +22,24 @@ use windows::Win32::UI::WindowsAndMessaging::{
     MINMAXINFO, MSG, PM_REMOVE, PeekMessageW, PostQuitMessage, SIZE_MINIMIZED, SWP_NOACTIVATE,
     SWP_NOZORDER, SetTimer, SetWindowLongPtrW, SetWindowPos, USER_TIMER_MINIMUM, WM_CAPTURECHANGED,
     WM_CHAR, WM_CLOSE, WM_DESTROY, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_ENTERSIZEMOVE, WM_ERASEBKGND,
-    WM_EXITSIZEMOVE, WM_GETMINMAXINFO, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN,
-    WM_LBUTTONUP, WM_MBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE,
-    WM_MOUSEWHEEL, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN,
-    WM_RBUTTONUP, WM_SIZE, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_TIMER, WM_UNICHAR, WM_WINDOWPOSCHANGED,
-    WM_XBUTTONDBLCLK, WM_XBUTTONDOWN, WM_XBUTTONUP,
+    WM_EXITSIZEMOVE, WM_GETMINMAXINFO, WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION,
+    WM_IME_STARTCOMPOSITION, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP,
+    WM_MBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL,
+    WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE,
+    WM_SYSKEYDOWN, WM_SYSKEYUP, WM_TIMER, WM_UNICHAR, WM_WINDOWPOSCHANGED, WM_XBUTTONDBLCLK,
+    WM_XBUTTONDOWN, WM_XBUTTONUP,
 };
 
+use super::ime::{
+    ImmContextGuard, find_target_converted_run, read_composition_attrs, read_composition_cursor,
+    read_composition_string_utf8, set_composition_window, utf16_units_to_utf8_bytes,
+};
 use super::keymap;
 use super::{IN_SIZE_MOVE, SIZE_MOVE_TIMER_ID, WM_APP_WAKE, clear_wake_hwnd, dispatch_event};
-use crate::{Event, Key, Modifiers, MouseButton, PhysicalSize, WindowId, WindowRenderDelegate};
+use crate::{
+    Event, Key, Modifiers, MouseButton, PhysicalSize, WindowId, WindowImeDelegate,
+    WindowRenderDelegate,
+};
 
 // ---------------------------------------------------------------------------
 // Mouse event decode helpers
@@ -90,6 +99,14 @@ pub struct WinWindowInner {
     pub(crate) is_tracking_hover: Cell<bool>,
     /// Render delegate for sync resize/redraw callbacks (Phase 4).
     pub(crate) delegate: RefCell<Option<Weak<dyn WindowRenderDelegate>>>,
+    /// IME query delegate for sync OS composition queries (Phase 9c).
+    /// Wired into `WM_IME_*` arms in Phase 3.
+    pub(crate) ime_delegate: RefCell<Option<Weak<dyn WindowImeDelegate>>>,
+    /// True iff a Win32 IME composition is currently active on this window.
+    /// Flipped on by `WM_IME_STARTCOMPOSITION`, off by `WM_IME_ENDCOMPOSITION`.
+    /// `WM_DESTROY` reads this to synthesise `Event::ImeDisabled` so the
+    /// one-Disabled-per-session contract holds across window teardown.
+    pub(crate) composition_active: Cell<bool>,
     /// True during modal size-move loop; WM_SIZE skips delegate (WM_TIMER handles it).
     pub(crate) in_size_move: Cell<bool>,
     /// Phase 5: Deferred device probe triggered during modal loop.
@@ -156,6 +173,11 @@ impl WinWindowInner {
                 unsafe { DefWindowProcW(hwnd, msg, _wparam, lparam) }
             }
             WM_DESTROY => {
+                // Synthesise ImeDisabled if a composition was still active at
+                // teardown, so consumers always see a clean session bracket.
+                if self.composition_active.replace(false) {
+                    dispatch_event(Event::ImeDisabled { window: self.id });
+                }
                 dispatch_event(Event::WindowDestroyed { window: self.id });
                 // SAFETY: PostQuitMessage is always safe to call from a WM_DESTROY handler.
                 unsafe { PostQuitMessage(0) };
@@ -582,6 +604,85 @@ impl WinWindowInner {
                     });
                 }
                 LRESULT(0)
+            }
+            // -----------------------------------------------------------------
+            // IME composition (Phase 9c)
+            // -----------------------------------------------------------------
+            WM_IME_STARTCOMPOSITION => {
+                self.composition_active.set(true);
+                dispatch_event(Event::ImeEnabled { window: self.id });
+                // Return 0 to suppress the IMM built-in preedit window; we
+                // render the composition ourselves inside the focused element.
+                LRESULT(0)
+            }
+            WM_IME_COMPOSITION => {
+                let flags = lparam.0 as u32;
+                let Some(guard) = ImmContextGuard::acquire(hwnd) else {
+                    // SAFETY: default proc is always safe to call.
+                    return unsafe { DefWindowProcW(hwnd, msg, _wparam, lparam) };
+                };
+                let imc = guard.handle();
+                let mut handled = false;
+
+                if flags & GCS_RESULTSTR.0 != 0 {
+                    if let Some((text, _)) = read_composition_string_utf8(imc, GCS_RESULTSTR) {
+                        dispatch_event(Event::ImeCommit {
+                            window: self.id,
+                            text,
+                        });
+                    }
+                    handled = true;
+                }
+                if flags & GCS_COMPSTR.0 != 0 {
+                    if let Some((text, utf16)) =
+                        read_composition_string_utf8(imc, GCS_COMPSTR)
+                    {
+                        let cursor_u16 = read_composition_cursor(imc).unwrap_or(0);
+                        let cursor_byte_offset = utf16_units_to_utf8_bytes(&utf16, cursor_u16);
+                        let selection = read_composition_attrs(imc)
+                            .and_then(|attrs| find_target_converted_run(&attrs, &utf16));
+                        dispatch_event(Event::ImePreedit {
+                            window: self.id,
+                            text,
+                            cursor_byte_offset,
+                            selection,
+                        });
+                    }
+                    // Query delegate for caret rect; convert screen → client (physical px under PMv2).
+                    let weak = self.ime_delegate.borrow().clone();
+                    if let Some(weak) = weak
+                        && let Some(strong) = weak.upgrade()
+                        && let Some(rect) = strong.ime_caret_rect(self.id)
+                    {
+                        let mut pt = POINT {
+                            x: rect.x,
+                            y: rect.y,
+                        };
+                        // SAFETY: hwnd is valid for the message lifetime; pt is owned.
+                        let _ = unsafe { ScreenToClient(hwnd, &mut pt) };
+                        let client_rect = RECT {
+                            left: pt.x,
+                            top: pt.y,
+                            right: pt.x + rect.width as i32,
+                            bottom: pt.y + rect.height as i32,
+                        };
+                        set_composition_window(imc, client_rect);
+                    }
+                    handled = true;
+                }
+                drop(guard);
+                if handled {
+                    LRESULT(0)
+                } else {
+                    // SAFETY: default proc is always safe to call.
+                    unsafe { DefWindowProcW(hwnd, msg, _wparam, lparam) }
+                }
+            }
+            WM_IME_ENDCOMPOSITION => {
+                self.composition_active.set(false);
+                dispatch_event(Event::ImeDisabled { window: self.id });
+                // SAFETY: default proc must run for IMM cleanup.
+                unsafe { DefWindowProcW(hwnd, msg, _wparam, lparam) }
             }
             _ if msg == WM_APP_WAKE => {
                 dispatch_event(Event::Wake);

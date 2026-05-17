@@ -203,3 +203,29 @@ fn dispatch_does_not_request_redraw_when_no_handlers() {
     assert_eq!(text_input, AppSignal::None);
 }
 
+#[test]
+fn keyboard_dispatch_unaffected_by_ime_registry() {
+    // Phase 9c back-compat sweep: with NO ime-capable elements registered,
+    // the 9a/9b keyboard dispatch path is identical in behaviour. Verifies
+    // that Phase 9c additions did not regress 9a/9b code paths.
+    let fired = Rc::new(Cell::new(0u32));
+    let f = fired.clone();
+    let state = make_state();
+    state.install_key_handlers_for_test(
+        vec![Box::new(move |_e: &KeyEvent, _cx: &mut EventCtx| {
+            f.set(f.get() + 1)
+        })],
+        vec![],
+        vec![],
+    );
+
+    let signal = state.dispatch_key_down_for_test(
+        KeyCode::KeyA,
+        Key::Character("a".into()),
+        Modifiers::default(),
+        false,
+    );
+
+    assert_eq!(fired.get(), 1);
+    assert_eq!(signal, AppSignal::RequestRedraw);
+}

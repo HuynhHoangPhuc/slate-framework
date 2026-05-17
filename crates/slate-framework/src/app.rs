@@ -8,12 +8,15 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use slate_platform::{
-    DefaultPlatform, DefaultWindow, Event, Platform, Window, WindowOptions, WindowRenderDelegate,
-    wake_run_loop,
+    DefaultPlatform, DefaultWindow, Event, Platform, Window, WindowImeDelegate, WindowOptions,
+    WindowRenderDelegate, wake_run_loop,
 };
 
 use crate::app_state::{AppSignal, AppState};
-use crate::event::{EventCtx, KeyEvent, KeyHandler, TextInputEvent, TextInputHandler};
+use crate::event::{
+    EventCtx, ImeCommitEvent, ImeCommitHandler, ImeLifecycleEvent, ImeLifecycleHandler,
+    ImePreeditEvent, ImePreeditHandler, KeyEvent, KeyHandler, TextInputEvent, TextInputHandler,
+};
 use crate::executor::{BackgroundExecutor, Executor, RedrawRequester};
 use crate::focus::FocusRegistry;
 use crate::types::ElementId;
@@ -104,6 +107,10 @@ pub struct App {
     on_key_down: Vec<KeyHandler>,
     on_key_up: Vec<KeyHandler>,
     on_text_input: Vec<TextInputHandler>,
+    on_ime_preedit: Vec<ImePreeditHandler>,
+    on_ime_commit: Vec<ImeCommitHandler>,
+    on_ime_enabled: Vec<ImeLifecycleHandler>,
+    on_ime_disabled: Vec<ImeLifecycleHandler>,
 }
 
 impl App {
@@ -120,6 +127,10 @@ impl App {
             on_key_down: Vec::new(),
             on_key_up: Vec::new(),
             on_text_input: Vec::new(),
+            on_ime_preedit: Vec::new(),
+            on_ime_commit: Vec::new(),
+            on_ime_enabled: Vec::new(),
+            on_ime_disabled: Vec::new(),
         }
     }
 
@@ -155,6 +166,49 @@ impl App {
         self
     }
 
+    /// Register an App-level handler for IME preedit (composition) updates.
+    /// Fires on each `setMarkedText:` (macOS) / `WM_IME_COMPOSITION GCS_COMPSTR`
+    /// (Windows). See [`App::on_key_down`].
+    pub fn on_ime_preedit(
+        mut self,
+        handler: impl FnMut(&ImePreeditEvent, &mut EventCtx) + 'static,
+    ) -> Self {
+        self.on_ime_preedit.push(Box::new(handler));
+        self
+    }
+
+    /// Register an App-level handler for IME commits. Empty `text` is the
+    /// "clear preedit, no insert" signal; handlers MUST skip `Signal::set`
+    /// in that case. See [`App::on_key_down`].
+    pub fn on_ime_commit(
+        mut self,
+        handler: impl FnMut(&ImeCommitEvent, &mut EventCtx) + 'static,
+    ) -> Self {
+        self.on_ime_commit.push(Box::new(handler));
+        self
+    }
+
+    /// Register an App-level handler for the start of an IME composition
+    /// session. Paired with [`App::on_ime_disabled`]. See [`App::on_key_down`].
+    pub fn on_ime_enabled(
+        mut self,
+        handler: impl FnMut(&ImeLifecycleEvent, &mut EventCtx) + 'static,
+    ) -> Self {
+        self.on_ime_enabled.push(Box::new(handler));
+        self
+    }
+
+    /// Register an App-level handler for the end of an IME composition
+    /// session. Always preceded by [`App::on_ime_enabled`]. See
+    /// [`App::on_key_down`].
+    pub fn on_ime_disabled(
+        mut self,
+        handler: impl FnMut(&ImeLifecycleEvent, &mut EventCtx) + 'static,
+    ) -> Self {
+        self.on_ime_disabled.push(Box::new(handler));
+        self
+    }
+
     /// Run the application with the given view factory.
     ///
     /// `view_fn` receives an [`AppContext`] with access to the reactive runtime
@@ -169,6 +223,10 @@ impl App {
             on_key_down,
             on_key_up,
             on_text_input,
+            on_ime_preedit,
+            on_ime_commit,
+            on_ime_enabled,
+            on_ime_disabled,
         } = self;
 
         // Create executor and reactive runtime
@@ -201,6 +259,12 @@ impl App {
         // Setter pattern (rather than ctor args) keeps test call sites stable —
         // headless harnesses that don't need keyboard dispatch never call this.
         state.install_key_handlers(on_key_down, on_key_up, on_text_input);
+        state.install_ime_handlers(
+            on_ime_preedit,
+            on_ime_commit,
+            on_ime_enabled,
+            on_ime_disabled,
+        );
 
         // Install render delegate on the platform window.
         //
@@ -213,6 +277,14 @@ impl App {
         let dyn_weak = Rc::downgrade(&dyn_strong);
         window.set_render_delegate(dyn_weak);
         drop(dyn_strong); // strong ref no longer needed; `state` keeps AppState alive.
+
+        // Phase 9c: install IME delegate via the same Rc<dyn …>-via-let-binding
+        // dance. Identical SAFETY argument as above (unsizing coercion needs a
+        // coercion site, not an `as` cast).
+        let ime_strong: Rc<dyn WindowImeDelegate> = state.clone();
+        let ime_weak = Rc::downgrade(&ime_strong);
+        window.set_ime_delegate(ime_weak);
+        drop(ime_strong);
 
         let platform_ref = &platform;
         let state_ref = state.clone();
@@ -305,6 +377,18 @@ impl App {
                     ..
                 } => state_ref.dispatch_key_up(code, key, modifiers),
                 Event::TextInput { text, .. } => state_ref.dispatch_text_input(text),
+                Event::ImeEnabled { window, .. } => state_ref.dispatch_ime_enabled(window),
+                Event::ImePreedit {
+                    window,
+                    text,
+                    cursor_byte_offset,
+                    selection,
+                    ..
+                } => state_ref.dispatch_ime_preedit(window, text, cursor_byte_offset, selection),
+                Event::ImeCommit { window, text, .. } => {
+                    state_ref.dispatch_ime_commit(window, text)
+                }
+                Event::ImeDisabled { window, .. } => state_ref.dispatch_ime_disabled(window),
                 Event::Exiting => {
                     log::info!("exiting");
                     AppSignal::None

@@ -3,14 +3,15 @@
 use std::cell::{Cell, RefCell};
 
 use objc2::rc::Retained;
-use objc2::runtime::AnyObject;
+use objc2::runtime::{AnyObject, Sel};
 use objc2::{AnyThread, DefinedClass, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
-    NSEvent, NSEventModifierFlags, NSTrackingArea, NSTrackingAreaOptions, NSView, NSWindow,
-    NSWindowDelegate,
+    NSEvent, NSEventModifierFlags, NSTextInputClient, NSTrackingArea, NSTrackingAreaOptions,
+    NSView, NSWindow, NSWindowDelegate,
 };
 use objc2_foundation::{
-    MainThreadMarker, NSNotification, NSObject, NSObjectProtocol, NSRect, NSSize,
+    MainThreadMarker, NSArray, NSAttributedString, NSAttributedStringKey, NSNotification,
+    NSObject, NSObjectProtocol, NSPoint, NSRange, NSRangePointer, NSRect, NSSize, NSUInteger,
 };
 use objc2_quartz_core::CAMetalLayer;
 
@@ -189,6 +190,12 @@ pub struct MetalViewIvars {
     pub(crate) live_resize: Cell<bool>,
     /// Previous modifier flags for flagsChanged: diff (Phase 9a).
     pub(crate) prev_modifier_flags: Cell<NSEventModifierFlags>,
+    /// True between the first `setMarkedText:` of a composition session and
+    /// the matching `insertText:` / `unmarkText`. Drives the IME state
+    /// machine so `insertText:` can tell IME commits apart from non-IME
+    /// typing (AppKit clears marked text BEFORE `insertText:` on commit,
+    /// so `hasMarkedText` is unreliable at that point).
+    pub(crate) was_composing: Cell<bool>,
 }
 
 define_class!(
@@ -493,9 +500,19 @@ define_class!(
         // Keyboard event selectors (Phase 9a)
         // -----------------------------------------------------------------------
 
-        /// `keyDown:` — physical key press. Decodes the W3C `KeyCode` from
-        /// the macOS virtual-key code, derives the logical `Key`, and emits
-        /// both `Event::KeyDown` and (when text was produced) `Event::TextInput`.
+        /// `keyDown:` — physical key press.
+        ///
+        /// Phase 9c: emit `Event::KeyDown` with the keymap-decoded `Key`
+        /// (handlers see Named keys like Enter/Backspace/Arrow), then
+        /// hand the event to `-[NSResponder interpretKeyEvents:]` so
+        /// AppKit can route it through the IME protocol methods below
+        /// (`insertText:` for non-IME ASCII / emoji-picker output;
+        /// `setMarkedText:` / `insertText:` for IME composition).
+        ///
+        /// `Event::TextInput` is NOT emitted here — it now flows from
+        /// `insertText:` when `was_composing == false`, which preserves
+        /// 9a back-compat for plain typing without double-emitting on
+        /// IME commits.
         ///
         /// Note: macOS may emit `Key::Character` inline in `KeyDown` via
         /// AppKit's already-translated `characters`. Windows does not — see
@@ -513,6 +530,7 @@ define_class!(
                     .map(|s| s.to_string())
                     .unwrap_or_default();
                 let key = decode_key(code, &chars);
+                let _ = is_visible_text; // retained for keyUp; suppress unused-fn warning here.
                 dispatch_event(Event::KeyDown {
                     window: id,
                     code,
@@ -520,12 +538,11 @@ define_class!(
                     modifiers,
                     is_repeat,
                 });
-                if !chars.is_empty() && is_visible_text(&chars) {
-                    dispatch_event(Event::TextInput {
-                        window: id,
-                        text: chars,
-                    });
-                }
+                // Route through IME. AppKit will either call `insertText:`
+                // directly (no IME / emoji-picker output) or call
+                // `setMarkedText:` / `insertText:` for composition.
+                let arr = NSArray::from_slice(&[event]);
+                self.interpretKeyEvents(&arr);
             });
         }
 
@@ -599,6 +616,105 @@ define_class!(
             *self.ivars().tracking_area.borrow_mut() = Some(tracking_area);
         }
     }
+
+    // SAFETY: All NSTextInputClient methods are implemented per the
+    // protocol contract; bodies are wrapped in `ffi_boundary` so Rust
+    // panics cannot cross the Obj-C ABI. String parameters arrive as
+    // either NSString or NSAttributedString (per Apple docs); the helper
+    // [`view_ime::ns_input_to_string`] handles both.
+    unsafe impl NSTextInputClient for MetalView {
+        #[unsafe(method(insertText:replacementRange:))]
+        fn insert_text_replacement_range(
+            &self,
+            string: &AnyObject,
+            replacement_range: NSRange,
+        ) {
+            ffi_boundary(|| self.ime_handle_insert_text(string, replacement_range));
+        }
+
+        #[unsafe(method(doCommandBySelector:))]
+        fn do_command_by_selector(&self, _selector: Sel) {
+            // No-op: the underlying Event::KeyDown was already dispatched
+            // from `key_down` before `interpretKeyEvents:` ran, so the
+            // framework / handler chain already saw the key. AppKit only
+            // calls this when the IME refuses to consume the keystroke.
+        }
+
+        #[unsafe(method(setMarkedText:selectedRange:replacementRange:))]
+        fn set_marked_text_selected_range_replacement_range(
+            &self,
+            string: &AnyObject,
+            selected_range: NSRange,
+            replacement_range: NSRange,
+        ) {
+            ffi_boundary(|| {
+                self.ime_handle_set_marked_text(string, selected_range, replacement_range)
+            });
+        }
+
+        #[unsafe(method(unmarkText))]
+        fn unmark_text(&self) {
+            ffi_boundary(|| self.ime_handle_unmark_text());
+        }
+
+        #[unsafe(method(selectedRange))]
+        fn selected_range(&self) -> NSRange {
+            let mut out = NSRange::new(0, 0);
+            ffi_boundary(|| out = self.ime_handle_selected_range());
+            out
+        }
+
+        #[unsafe(method(markedRange))]
+        fn marked_range(&self) -> NSRange {
+            let mut out = NSRange::new(0, 0);
+            ffi_boundary(|| out = self.ime_handle_marked_range());
+            out
+        }
+
+        #[unsafe(method(hasMarkedText))]
+        fn has_marked_text(&self) -> bool {
+            let mut out = false;
+            ffi_boundary(|| out = self.ime_handle_has_marked_text());
+            out
+        }
+
+        #[unsafe(method_id(attributedSubstringForProposedRange:actualRange:))]
+        fn attributed_substring_for_proposed_range_actual_range(
+            &self,
+            range: NSRange,
+            _actual_range: NSRangePointer,
+        ) -> Option<Retained<NSAttributedString>> {
+            let mut out = None;
+            ffi_boundary(|| out = self.ime_handle_attributed_substring(range));
+            out
+        }
+
+        #[unsafe(method_id(validAttributesForMarkedText))]
+        fn valid_attributes_for_marked_text(&self) -> Retained<NSArray<NSAttributedStringKey>> {
+            // Cannot return early on panic; default to empty array.
+            let mut out: Option<Retained<NSArray<NSAttributedStringKey>>> = None;
+            ffi_boundary(|| out = Some(self.ime_handle_valid_attributes()));
+            out.unwrap_or_default()
+        }
+
+        #[unsafe(method(firstRectForCharacterRange:actualRange:))]
+        fn first_rect_for_character_range_actual_range(
+            &self,
+            range: NSRange,
+            _actual_range: NSRangePointer,
+        ) -> NSRect {
+            let mut out = NSRect::ZERO;
+            ffi_boundary(|| out = self.ime_handle_first_rect(range));
+            out
+        }
+
+        #[unsafe(method(characterIndexForPoint:))]
+        fn character_index_for_point(&self, point: NSPoint) -> NSUInteger {
+            let mut out: NSUInteger = 0;
+            ffi_boundary(|| out = self.ime_handle_character_index(point));
+            out
+        }
+    }
 );
 
 impl MetalView {
@@ -608,6 +724,7 @@ impl MetalView {
             tracking_area: RefCell::new(None),
             live_resize: Cell::new(false),
             prev_modifier_flags: Cell::new(NSEventModifierFlags::empty()),
+            was_composing: Cell::new(false),
         });
         // SAFETY: `NSView`'s designated initializer `initWithFrame:` takes an
         // `NSRect` and returns `Retained<NSView>`. The super-call signature matches.

@@ -15,11 +15,15 @@
 //! })
 //! ```
 
+use std::cell::RefCell;
+use std::ops::Range;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
 pub use slate_platform::{Key, KeyCode, Modifiers, MouseButton, NamedKey};
 
+use crate::ime::{ImeRegistry, ImeState};
 use crate::types::ElementId;
 
 /// Handler closure type for mouse events (click, down, up, move).
@@ -32,6 +36,42 @@ pub(crate) type ElementKeyHandler =
 /// Per-element text-input handler closure (used by `Div::on_text_input`).
 pub(crate) type ElementTextInputHandler =
     Arc<dyn Fn(&TextInputEvent, &mut EventCtx) + Send + Sync + 'static>;
+
+/// Per-element handler for `ImePreedit` events (used by `Div::on_ime_preedit`).
+pub(crate) type ElementImePreeditHandler =
+    Arc<dyn Fn(&ImePreeditEvent, &mut EventCtx) + Send + Sync + 'static>;
+
+/// Per-element handler for `ImeCommit` events (used by `Div::on_ime_commit`).
+pub(crate) type ElementImeCommitHandler =
+    Arc<dyn Fn(&ImeCommitEvent, &mut EventCtx) + Send + Sync + 'static>;
+
+/// Per-element handler for `ImeEnabled` / `ImeDisabled` events. Both lifecycle
+/// edges share the same payload (no data) and the same handler shape.
+pub(crate) type ElementImeLifecycleHandler =
+    Arc<dyn Fn(&ImeLifecycleEvent, &mut EventCtx) + Send + Sync + 'static>;
+
+/// Per-element IME handler bundle. Mirrors [`KeyHandlers`]; stored in
+/// `AppState::ime_handler_map` and looked up during the focused-chain
+/// bubble dispatch for IME events.
+#[allow(dead_code)] // Populated by Div::prepaint and consumed by AppState dispatchers.
+#[derive(Clone, Default)]
+#[doc(hidden)]
+pub struct ImeHandlers {
+    pub on_ime_preedit: Option<ElementImePreeditHandler>,
+    pub on_ime_commit: Option<ElementImeCommitHandler>,
+    pub on_ime_enabled: Option<ElementImeLifecycleHandler>,
+    pub on_ime_disabled: Option<ElementImeLifecycleHandler>,
+}
+
+impl ImeHandlers {
+    #[allow(dead_code)] // Used by dispatch_ime_* to skip empty bundles.
+    pub fn has_any(&self) -> bool {
+        self.on_ime_preedit.is_some()
+            || self.on_ime_commit.is_some()
+            || self.on_ime_enabled.is_some()
+            || self.on_ime_disabled.is_some()
+    }
+}
 
 /// Per-element keyboard handler bundle. Mirrors [`Handlers`] for mouse; stored
 /// in `AppState::key_handler_map` (Phase 3) and looked up during the focused-chain
@@ -152,6 +192,16 @@ pub type KeyHandler = Box<dyn FnMut(&KeyEvent, &mut EventCtx)>;
 /// Closure type for App-level `TextInput` handlers.
 pub type TextInputHandler = Box<dyn FnMut(&TextInputEvent, &mut EventCtx)>;
 
+/// App-level handler for IME preedit composition events. Not `Send` — IME
+/// dispatch runs on the UI thread.
+pub type ImePreeditHandler = Box<dyn FnMut(&ImePreeditEvent, &mut EventCtx)>;
+
+/// App-level handler for IME commit events (composition finalised).
+pub type ImeCommitHandler = Box<dyn FnMut(&ImeCommitEvent, &mut EventCtx)>;
+
+/// App-level handler for IME enable/disable lifecycle edges.
+pub type ImeLifecycleHandler = Box<dyn FnMut(&ImeLifecycleEvent, &mut EventCtx)>;
+
 /// Keyboard event payload for `KeyDown` / `KeyUp` handlers.
 ///
 /// Carries both the layout-independent [`KeyCode`] (positional, W3C
@@ -187,6 +237,39 @@ pub struct KeyEvent {
 pub struct TextInputEvent {
     /// Composed text (UTF-8). 1+ characters per event.
     pub text: String,
+    /// When the event was received by the framework.
+    pub timestamp: Instant,
+}
+
+/// IME composition update payload. Replaces any prior preedit on the
+/// focused element each time it fires.
+#[derive(Clone, Debug)]
+pub struct ImePreeditEvent {
+    /// Composition text (UTF-8).
+    pub text: String,
+    /// UTF-8 byte offset of the IME caret inside `text`.
+    pub cursor_byte_offset: usize,
+    /// IME-highlighted target-converted range, if the OS provided one.
+    pub selection: Option<Range<usize>>,
+    /// When the event was received by the framework.
+    pub timestamp: Instant,
+}
+
+/// IME commit payload. Empty `text` is the canonical "clear preedit, no
+/// insert" signal (macOS `unmarkText`); consumers skip `Signal::set` when
+/// `text.is_empty()`.
+#[derive(Clone, Debug)]
+pub struct ImeCommitEvent {
+    /// Text to insert at the focused element's caret.
+    pub text: String,
+    /// When the event was received by the framework.
+    pub timestamp: Instant,
+}
+
+/// IME lifecycle edge payload (enabled / disabled). Carries only the
+/// timestamp; the edge itself is communicated by which handler ran.
+#[derive(Clone, Copy, Debug)]
+pub struct ImeLifecycleEvent {
     /// When the event was received by the framework.
     pub timestamp: Instant,
 }
@@ -227,6 +310,14 @@ pub struct EventCtx<'a> {
     propagation_stopped: &'a mut bool,
     pending_focus_op: &'a mut Option<PendingFocusOp>,
     focused: Option<ElementId>,
+    /// Element this handler is bound to (Phase 9c). `None` for App-level and
+    /// non-element dispatch sites; `Some(id)` when the dispatch loop is in
+    /// per-element bubble mode.
+    element_id: Option<ElementId>,
+    /// Reference to the framework IME registry (Phase 9c). `None` outside of
+    /// IME dispatch; per-element IME handlers receive `Some(_)` so they can
+    /// query/mutate their own `ImeState` via [`EventCtx::ime_state`].
+    ime_registry: Option<&'a RefCell<ImeRegistry>>,
 }
 
 impl<'a> EventCtx<'a> {
@@ -242,7 +333,35 @@ impl<'a> EventCtx<'a> {
             propagation_stopped,
             pending_focus_op,
             focused,
+            element_id: None,
+            ime_registry: None,
         }
+    }
+
+    /// Attach the per-element id + IME registry reference (Phase 9c).
+    /// Called by IME dispatch loops on the EventCtx they construct so
+    /// handlers can resolve their own `ImeState`.
+    pub(crate) fn with_ime(
+        mut self,
+        element_id: ElementId,
+        ime_registry: &'a RefCell<ImeRegistry>,
+    ) -> EventCtx<'a> {
+        self.element_id = Some(element_id);
+        self.ime_registry = Some(ime_registry);
+        self
+    }
+
+    /// Element this handler is bound to, if dispatch surfaced one.
+    pub fn element_id(&self) -> Option<ElementId> {
+        self.element_id
+    }
+
+    /// Look up the `ImeState` for `id` from the framework registry. Returns
+    /// `None` outside of IME dispatch (no registry bound), when the registry
+    /// is currently being borrowed elsewhere, or when `id` isn't registered.
+    pub fn ime_state(&self, id: ElementId) -> Option<Rc<RefCell<ImeState>>> {
+        let registry = self.ime_registry?;
+        registry.try_borrow().ok()?.get(id)
     }
 
     /// Stop event propagation. Prevents the event from bubbling to parent elements.

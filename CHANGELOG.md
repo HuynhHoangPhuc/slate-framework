@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Phase 9c: IME composition + TextField element
+- `slate-platform` `Event::ImePreedit`, `ImeCommit`, `ImeEnabled`, `ImeDisabled` for cross-platform composition events.
+- `WindowImeDelegate` trait (4 query methods: `ime_caret_rect`, `ime_text`, `ime_selected_range`, `ime_marked_range`) — cache-only reads per ADR-001 amendment.
+- macOS NSTextInputClient impl (setMarkedText, insertText, firstRectForCharacterRange, etc.); Windows IMM32 WM_IME_* message handling.
+- Framework `ImeRegistry` per-element state (`ImeState` + `Preedit` types); `AppState::dispatch_ime_*` focused-chain bubble.
+- Deferred ops: `pending_ime_ops` drained before `pending_focus_op` (Tab-during-composition commits preedit then moves focus).
+- `CachedImeQuery` cell (republished at dispatch_ime_preedit + every paint endpoint); `WindowImeDelegate` reads cache only (eliminates re-entrant-borrow panics).
+- New `TextField` element: single-line editable, `Signal<String>` binding, grapheme-aware caret motion, preedit underline overlay.
+- `examples/ime-textfield`: Demo with reactive echo and macOS/Windows IME instructions.
+- `unicode-segmentation = "1"` workspace dep.
+
 ### Added — Phase 9b: per-element keyboard handlers + focus management
 - `Div::focusable(bool)`, `.tab_index(i32)`, `.focus_ring(bool)`, `.on_key_down(...)`, `.on_key_up(...)`, `.on_text_input(...)` builders for per-element keyboard wiring.
 - `EventCtx::request_focus(id) / release_focus()` — deferred focus ops applied after the handler chain unwinds.

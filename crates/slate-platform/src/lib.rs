@@ -68,6 +68,21 @@ pub trait Window: HasWindowHandle + HasDisplayHandle + 'static {
     /// Setting to a `Weak` whose `Rc` has been dropped is a no-op on next call.
     fn set_render_delegate(&self, delegate: std::rc::Weak<dyn WindowRenderDelegate>);
 
+    /// Install an IME query delegate to satisfy synchronous OS queries during
+    /// composition (caret rect for candidate-window positioning, marked /
+    /// selected range, text near caret). Held as `Weak<dyn>` to mirror the
+    /// render delegate; setting to a dropped `Weak` is a no-op on next call.
+    ///
+    /// Implementers MUST follow the cache-then-query contract documented on
+    /// [`WindowImeDelegate`]; the platform layer will invoke these methods
+    /// from inside Obj-C / Win32 callbacks that may already hold borrows on
+    /// framework state.
+    ///
+    /// Default panics; concrete platform impls override.
+    fn set_ime_delegate(&self, _delegate: std::rc::Weak<dyn WindowImeDelegate>) {
+        panic!("set_ime_delegate not implemented for this Window");
+    }
+
     /// LUID of the DXGI adapter that drives the monitor the window currently
     /// occupies (Windows only). Used by the renderer to pick the adapter that
     /// matches the window's monitor so cross-monitor drag does not silently
@@ -367,6 +382,41 @@ pub enum Event {
         text: String,
     },
     // -------------------------------------------------------------------------
+    // Keyboard IME events (Phase 9c)
+    // -------------------------------------------------------------------------
+    /// IME composition session started. Fires exactly once per session at
+    /// the first `setMarkedText:` (macOS, synthesised from marked-range
+    /// transition) or `WM_IME_STARTCOMPOSITION` (Windows, 1:1).
+    /// Always paired with a later [`Event::ImeDisabled`].
+    ImeEnabled {
+        window: WindowId,
+    },
+    /// IME composition in progress — replaces any prior preedit.
+    /// `cursor_byte_offset` is a UTF-8 byte offset into `text`.
+    /// `selection`, when present, is the IME-highlighted target-converted
+    /// range (UTF-8 byte range into `text`).
+    ImePreedit {
+        window: WindowId,
+        text: String,
+        cursor_byte_offset: usize,
+        selection: Option<core::ops::Range<usize>>,
+    },
+    /// IME composition finalised. `text` is the committed text to insert
+    /// at the caret. **Empty `text` is the canonical "clear preedit, no
+    /// insert" event** (macOS `unmarkText`) — framework consumers should
+    /// only clear the preedit overlay and skip `Signal::set`.
+    ImeCommit {
+        window: WindowId,
+        text: String,
+    },
+    /// IME composition session ended. Fires exactly once per session at
+    /// commit or `unmarkText` (macOS) / `WM_IME_ENDCOMPOSITION` (Windows,
+    /// 1:1) / window destroy with active composition (synthesised).
+    /// Always preceded by [`Event::ImeEnabled`].
+    ImeDisabled {
+        window: WindowId,
+    },
+    // -------------------------------------------------------------------------
     // Device recovery events (Phase 5)
     // -------------------------------------------------------------------------
     /// GPU device was lost (driver reset, TDR, adapter change).
@@ -382,7 +432,7 @@ pub enum Event {
 }
 
 mod render_delegate;
-pub use render_delegate::{PhysicalSize, WindowRenderDelegate};
+pub use render_delegate::{PhysicalRect, PhysicalSize, WindowImeDelegate, WindowRenderDelegate};
 
 #[cfg(target_os = "macos")]
 mod mac;

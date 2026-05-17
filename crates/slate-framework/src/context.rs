@@ -8,18 +8,20 @@
 //! All contexts are `!Send + !Sync` because they hold `&mut TextSystem`
 //! which carries `PhantomData<*const ()>`.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 
 use slate_renderer::atlas::Atlas;
 use slate_renderer::scene::Scene;
 use taffy::TaffyTree;
 
-use crate::event::{Handlers, KeyHandlers};
+use crate::event::{Handlers, ImeHandlers, KeyHandlers};
 use crate::executor::ForegroundExecutor;
 use crate::focus::{FocusRegistry, FocusableEntry};
 use crate::focus_ring::FocusBounds;
 use crate::hit_test::{HitRegion, HitTestList};
 use crate::image_cache::ImageCache;
+use crate::ime::ImeRegistry;
 use crate::paint_cache::TextShapingCache;
 use crate::reactive_state::StateRegistry;
 use crate::text_system::TextSystem;
@@ -126,6 +128,20 @@ pub struct PrepaintCtx<'a> {
     /// Painted bounds for focusable elements — consumed once per paint pass
     /// when emitting the focus ring overlay.
     pub(crate) focus_bounds: &'a mut HashMap<ElementId, FocusBounds>,
+
+    // --- IME registry + handler collection (Phase 9c) ---
+    /// Per-frame IME state registry. Wrapped in a `RefCell` so the dispatch
+    /// path (via [`EventCtx::ime_state`](crate::event::EventCtx::ime_state))
+    /// can read the same store without taking an exclusive borrow.
+    pub(crate) ime_registry: &'a RefCell<ImeRegistry>,
+    /// Per-element IME handler bundles. Populated during prepaint via
+    /// [`register_ime_handlers`](Self::register_ime_handlers); drained during
+    /// focused-chain bubble dispatch.
+    pub(crate) ime_handler_map: &'a mut HashMap<ElementId, ImeHandlers>,
+    /// Set of element ids that re-registered with [`ImeRegistry`] this frame.
+    /// Used by the host after the prepaint walk to prune entries belonging to
+    /// unmounted elements (mirrors the focus registry lifecycle).
+    pub(crate) ime_registered_ids: &'a mut std::collections::HashSet<ElementId>,
 }
 
 impl<'a> PrepaintCtx<'a> {
@@ -153,6 +169,9 @@ impl<'a> PrepaintCtx<'a> {
         key_handler_map: &'a mut HashMap<ElementId, KeyHandlers>,
         focus_registry: &'a mut FocusRegistry,
         focus_bounds: &'a mut HashMap<ElementId, FocusBounds>,
+        ime_registry: &'a RefCell<ImeRegistry>,
+        ime_handler_map: &'a mut HashMap<ElementId, ImeHandlers>,
+        ime_registered_ids: &'a mut std::collections::HashSet<ElementId>,
     ) -> Self {
         Self {
             taffy,
@@ -172,6 +191,9 @@ impl<'a> PrepaintCtx<'a> {
             key_handler_map,
             focus_registry,
             focus_bounds,
+            ime_registry,
+            ime_handler_map,
+            ime_registered_ids,
         }
     }
 
@@ -249,6 +271,29 @@ impl<'a> PrepaintCtx<'a> {
         }
     }
 
+    /// Register per-element IME handlers (Phase 9c).
+    ///
+    /// Call during prepaint when the element opts into IME (e.g.
+    /// `Div::ime_capable(true)`). Empty bundles are skipped.
+    pub(crate) fn register_ime_handlers(&mut self, id: ElementId, handlers: ImeHandlers) {
+        if handlers.has_any() {
+            self.ime_handler_map.insert(id, handlers);
+        }
+    }
+
+    /// Mark `id` as ime-capable for this frame and ensure an [`ImeState`]
+    /// entry exists. Returns the shared `Rc<RefCell<_>>` so the caller can
+    /// keep a clone for its paint-time `caret_screen_rect` update.
+    ///
+    /// [`ImeState`]: crate::ime::ImeState
+    pub(crate) fn register_ime_state(
+        &mut self,
+        id: ElementId,
+    ) -> std::rc::Rc<RefCell<crate::ime::ImeState>> {
+        self.ime_registered_ids.insert(id);
+        self.ime_registry.borrow_mut().register(id)
+    }
+
     /// Register a focusable entry along with its painted bounds (Phase 9b).
     ///
     /// Call during prepaint when the element opts in via `Div::focusable(true)`.
@@ -286,6 +331,14 @@ impl<'a> PrepaintCtx<'a> {
     /// Use for dynamic lists where insertion/removal shifts indices.
     pub fn set_next_key(&mut self, k: impl Into<String>) {
         self.next_key = Some(k.into());
+    }
+
+    /// Return the currently focused element id, if any.
+    ///
+    /// Consumed by `TextField::prepaint` to capture focused state at prepaint
+    /// time so the paint pass can decide whether to draw the caret.
+    pub fn focused_element(&self) -> Option<ElementId> {
+        self.focus_registry.focused()
     }
 
     /// Register a hit region for pointer event handling.
@@ -378,6 +431,12 @@ pub struct PaintCtx<'a> {
     pub executor: &'a ForegroundExecutor,
     /// Display scale factor.
     pub scale_factor: f64,
+    /// Per-frame IME state registry. Elements use this in `paint` to update
+    /// their cached `caret_screen_rect` so the published `CachedImeQuery`
+    /// reflects the freshly-painted caret position. Wired here in Phase 9c;
+    /// first consumer is the TextField element added in Phase 5.
+    #[allow(dead_code)]
+    pub(crate) ime_registry: &'a RefCell<ImeRegistry>,
 }
 
 impl<'a> PaintCtx<'a> {
@@ -393,6 +452,7 @@ impl<'a> PaintCtx<'a> {
         queue: &'a wgpu::Queue,
         executor: &'a ForegroundExecutor,
         scale_factor: f64,
+        ime_registry: &'a RefCell<ImeRegistry>,
     ) -> Self {
         Self {
             taffy,
@@ -404,6 +464,7 @@ impl<'a> PaintCtx<'a> {
             queue,
             executor,
             scale_factor,
+            ime_registry,
         }
     }
 }

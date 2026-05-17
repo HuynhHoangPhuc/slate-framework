@@ -84,6 +84,19 @@ pub struct Div {
     pub(crate) on_key_up: Option<ElementKeyHandler>,
     /// Handler for composed text input while this element is on the focused chain.
     pub(crate) on_text_input: Option<ElementTextInputHandler>,
+    // -------------------------------------------------------------------------
+    // IME configuration + handlers (Phase 9c)
+    // -------------------------------------------------------------------------
+    /// True if this element opts in to IME composition. The framework
+    /// registers an `ImeState` entry each prepaint when this is set; OS
+    /// sync queries answered via the published `CachedImeQuery` snapshot.
+    pub(crate) ime_capable: bool,
+    /// Handler for IME preedit updates while this element is on the focused
+    /// chain.
+    pub(crate) on_ime_preedit: Option<crate::event::ElementImePreeditHandler>,
+    /// Handler for IME commits while this element is on the focused chain.
+    /// Empty commit text is the "clear preedit, no insert" signal.
+    pub(crate) on_ime_commit: Option<crate::event::ElementImeCommitHandler>,
 }
 
 /// Visual styling for a Div (non-layout properties).
@@ -126,6 +139,9 @@ impl Div {
             on_key_down: None,
             on_key_up: None,
             on_text_input: None,
+            ime_capable: false,
+            on_ime_preedit: None,
+            on_ime_commit: None,
         }
     }
 
@@ -400,6 +416,34 @@ impl Div {
         self.on_text_input = Some(Arc::new(handler));
         self
     }
+
+    /// Opt this element into IME composition. Required for `on_ime_preedit` /
+    /// `on_ime_commit` handlers to fire and for the OS sync-query channel to
+    /// see the element's caret rect and committed buffer.
+    pub fn ime_capable(mut self, ime_capable: bool) -> Self {
+        self.ime_capable = ime_capable;
+        self
+    }
+
+    /// Register an IME preedit handler. Receives composition updates while
+    /// this element is on the focused chain.
+    pub fn on_ime_preedit<F>(mut self, handler: F) -> Self
+    where
+        F: Fn(&crate::event::ImePreeditEvent, &mut EventCtx) + Send + Sync + 'static,
+    {
+        self.on_ime_preedit = Some(Arc::new(handler));
+        self
+    }
+
+    /// Register an IME commit handler. Empty `text` is the "clear preedit, no
+    /// insert" signal — handlers MUST skip `Signal::set` in that case.
+    pub fn on_ime_commit<F>(mut self, handler: F) -> Self
+    where
+        F: Fn(&crate::event::ImeCommitEvent, &mut EventCtx) + Send + Sync + 'static,
+    {
+        self.on_ime_commit = Some(Arc::new(handler));
+        self
+    }
 }
 
 impl Default for Div {
@@ -484,6 +528,20 @@ impl Element for Div {
                 on_text_input: self.on_text_input.clone(),
             },
         );
+
+        // Phase 9c: register IME state + handlers when the element opts in.
+        if self.ime_capable {
+            cx.register_ime_state(element_id);
+            cx.register_ime_handlers(
+                element_id,
+                crate::event::ImeHandlers {
+                    on_ime_preedit: self.on_ime_preedit.clone(),
+                    on_ime_commit: self.on_ime_commit.clone(),
+                    on_ime_enabled: None,
+                    on_ime_disabled: None,
+                },
+            );
+        }
         if self.focusable {
             cx.register_focusable(
                 FocusableEntry {

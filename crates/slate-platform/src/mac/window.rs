@@ -19,7 +19,7 @@ use raw_window_handle::{
 use super::display_link::DisplayLink;
 use super::view::{MetalView, WindowDelegate};
 use super::{next_window_id, post_redraw_event, register_window, unregister_window};
-use crate::{Window, WindowId, WindowOptions, WindowRenderDelegate};
+use crate::{Window, WindowId, WindowImeDelegate, WindowOptions, WindowRenderDelegate};
 
 // ---------------------------------------------------------------------------
 // MacWindow — public window handle
@@ -39,6 +39,9 @@ pub struct MacWindow {
     _display_link: Option<DisplayLink>,
     /// Render delegate for sync resize/redraw callbacks (Phase 4).
     pub(crate) render_delegate: RefCell<Option<Weak<dyn WindowRenderDelegate>>>,
+    /// IME query delegate for sync OS composition queries (Phase 9c).
+    /// Wired into `MetalView` via Phase 2 once `NSTextInputClient` is implemented.
+    pub(crate) ime_delegate: RefCell<Option<Weak<dyn WindowImeDelegate>>>,
 }
 
 impl MacWindow {
@@ -127,6 +130,7 @@ impl MacWindow {
             _delegate: delegate,
             _display_link: display_link,
             render_delegate: RefCell::new(None),
+            ime_delegate: RefCell::new(None),
         });
 
         // Register in thread-local registry for delegate dispatch from Obj-C callbacks.
@@ -191,6 +195,10 @@ impl Window for MacWindow {
 
     fn set_render_delegate(&self, delegate: Weak<dyn WindowRenderDelegate>) {
         *self.render_delegate.borrow_mut() = Some(delegate);
+    }
+
+    fn set_ime_delegate(&self, delegate: Weak<dyn WindowImeDelegate>) {
+        *self.ime_delegate.borrow_mut() = Some(delegate);
     }
 }
 
