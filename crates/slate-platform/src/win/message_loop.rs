@@ -507,6 +507,7 @@ impl WinWindowInner {
                 let code = keymap::decode_keycode(vk, scancode, extended);
                 let key = keymap::vk_to_named_key(vk)
                     .map(Key::Named)
+                    .or_else(|| keymap::vk_to_character(vk, scancode).map(Key::Character))
                     .unwrap_or(Key::Unidentified);
                 let modifiers = keymap::read_modifiers();
                 dispatch_event(Event::KeyDown {
@@ -533,6 +534,7 @@ impl WinWindowInner {
                 let code = keymap::decode_keycode(vk, scancode, extended);
                 let key = keymap::vk_to_named_key(vk)
                     .map(Key::Named)
+                    .or_else(|| keymap::vk_to_character(vk, scancode).map(Key::Character))
                     .unwrap_or(Key::Unidentified);
                 let modifiers = keymap::read_modifiers();
                 // Drop any orphan high surrogate left by a stalled WM_CHAR sequence.

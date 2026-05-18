@@ -1637,16 +1637,22 @@ impl<V: View> AppState<V> {
 
         // Snapshot per-element handlers up-front so we never hold the
         // `key_handler_map` borrow while invoking user code (re-entrant
-        // tree mutation must not invalidate our iteration).
-        let element_handlers: SmallVec<[ElementKeyHandler; 8]> = {
+        // tree mutation must not invalidate our iteration). Pair each
+        // handler with its ElementId so EventCtx can resolve ImeState.
+        let element_handlers: SmallVec<[(ElementId, ElementKeyHandler); 8]> = {
             let map = self.key_handler_map.borrow();
             chain
                 .iter()
-                .filter_map(|id| map.get(id).and_then(|h| h.on_key_down.clone()))
+                .filter_map(|id| {
+                    map.get(id)
+                        .and_then(|h| h.on_key_down.clone())
+                        .map(|h| (*id, h))
+                })
                 .collect()
         };
-        for handler in &element_handlers {
-            let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused);
+        for (id, handler) in &element_handlers {
+            let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused)
+                .with_ime(*id, &self.ime_registry);
             handler(&event, &mut ctx);
             if stopped {
                 break;
@@ -1733,15 +1739,20 @@ impl<V: View> AppState<V> {
         let mut pending_focus_op: Option<PendingFocusOp> = None;
         let focused = self.focus_registry.borrow().focused();
 
-        let element_handlers: SmallVec<[ElementKeyHandler; 8]> = {
+        let element_handlers: SmallVec<[(ElementId, ElementKeyHandler); 8]> = {
             let map = self.key_handler_map.borrow();
             chain
                 .iter()
-                .filter_map(|id| map.get(id).and_then(|h| h.on_key_up.clone()))
+                .filter_map(|id| {
+                    map.get(id)
+                        .and_then(|h| h.on_key_up.clone())
+                        .map(|h| (*id, h))
+                })
                 .collect()
         };
-        for handler in &element_handlers {
-            let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused);
+        for (id, handler) in &element_handlers {
+            let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused)
+                .with_ime(*id, &self.ime_registry);
             handler(&event, &mut ctx);
             if stopped {
                 break;
@@ -1780,15 +1791,20 @@ impl<V: View> AppState<V> {
         let mut pending_focus_op: Option<PendingFocusOp> = None;
         let focused = self.focus_registry.borrow().focused();
 
-        let element_handlers: SmallVec<[ElementTextInputHandler; 8]> = {
+        let element_handlers: SmallVec<[(ElementId, ElementTextInputHandler); 8]> = {
             let map = self.key_handler_map.borrow();
             chain
                 .iter()
-                .filter_map(|id| map.get(id).and_then(|h| h.on_text_input.clone()))
+                .filter_map(|id| {
+                    map.get(id)
+                        .and_then(|h| h.on_text_input.clone())
+                        .map(|h| (*id, h))
+                })
                 .collect()
         };
-        for handler in &element_handlers {
-            let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused);
+        for (id, handler) in &element_handlers {
+            let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused)
+                .with_ime(*id, &self.ime_registry);
             handler(&event, &mut ctx);
             if stopped {
                 break;

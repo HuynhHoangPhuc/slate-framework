@@ -6,9 +6,10 @@
 //! match the cross-platform [`KeyCode`] surface.
 
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyState, VK_BACK, VK_CONTROL, VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_F1, VK_F2, VK_F3,
-    VK_F4, VK_F5, VK_F6, VK_F7, VK_F8, VK_F9, VK_F10, VK_F11, VK_F12, VK_HOME, VK_LEFT, VK_LWIN,
-    VK_MENU, VK_NEXT, VK_PRIOR, VK_RETURN, VK_RIGHT, VK_RWIN, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP,
+    GetKeyState, GetKeyboardLayout, GetKeyboardState, ToUnicodeEx, VK_BACK, VK_CONTROL, VK_DELETE,
+    VK_DOWN, VK_END, VK_ESCAPE, VK_F1, VK_F2, VK_F3, VK_F4, VK_F5, VK_F6, VK_F7, VK_F8, VK_F9,
+    VK_F10, VK_F11, VK_F12, VK_HOME, VK_LEFT, VK_LWIN, VK_MENU, VK_NEXT, VK_PRIOR, VK_RETURN,
+    VK_RIGHT, VK_RWIN, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP,
 };
 
 use crate::{KeyCode, Modifiers, NamedKey};
@@ -119,6 +120,58 @@ pub(crate) fn vk_to_named_key(vk: u32) -> Option<NamedKey> {
         _ => return None,
     };
     Some(nk)
+}
+
+/// Translate a printable virtual-key + scancode into the character it would
+/// produce under the current keyboard layout + modifier state. Returns `None`
+/// for non-printable keys, dead keys, or when Ctrl is held (Ctrl+A must not
+/// produce `Key::Character("\x01")`).
+///
+/// Uses `ToUnicodeEx` with flag `0x02` ("don't change keyboard state") so dead
+/// keys still compose normally — supported since Windows 10 1607.
+pub(crate) fn vk_to_character(vk: u32, scancode: u32) -> Option<String> {
+    // Ctrl held → suppress character translation. Alt alone is OK (AltGr on
+    // EU layouts produces useful chars); Ctrl+Alt is AltGr too on Windows, so
+    // only block pure Ctrl.
+    // SAFETY: GetKeyState is thread-safe and reads in-process state.
+    let ctrl_held = unsafe { GetKeyState(VK_CONTROL.0 as i32) } < 0;
+    let alt_held = unsafe { GetKeyState(VK_MENU.0 as i32) } < 0;
+    if ctrl_held && !alt_held {
+        return None;
+    }
+
+    let mut keyboard_state = [0u8; 256];
+    // SAFETY: GetKeyboardState writes into a fixed-size 256-byte buffer.
+    if unsafe { GetKeyboardState(&mut keyboard_state) }.is_err() {
+        return None;
+    }
+
+    let layout = unsafe { GetKeyboardLayout(0) };
+    let mut buf = [0u16; 8];
+    // SAFETY: ToUnicodeEx writes up to buf.len() UTF-16 units into buf. Flag
+    // 0x02 = don't disturb kernel keyboard state (dead-key composition).
+    let n = unsafe {
+        ToUnicodeEx(
+            vk,
+            scancode,
+            &keyboard_state,
+            &mut buf,
+            0x02,
+            Some(layout),
+        )
+    };
+
+    if n <= 0 {
+        // 0 = no translation; -1 = dead key (no character produced yet).
+        return None;
+    }
+    let s = String::from_utf16(&buf[..n as usize]).ok()?;
+    // Filter ASCII control range (Backspace, Enter, Tab, Escape, etc. are
+    // delivered as NamedKey — never as Character).
+    if s.chars().all(|c| c.is_control()) {
+        return None;
+    }
+    Some(s)
 }
 
 /// Snapshot modifier state from `GetKeyState`. Used as the single source of
