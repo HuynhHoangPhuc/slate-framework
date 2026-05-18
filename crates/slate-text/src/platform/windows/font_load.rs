@@ -11,7 +11,7 @@ use windows::Win32::Graphics::DirectWrite::{
     IDWriteFactory5, IDWriteFontCollection1, IDWriteFontFace, IDWriteFontFile,
     IDWriteInMemoryFontFileLoader, IDWriteTextFormat,
 };
-use windows::core::{HSTRING, Interface};
+use windows::core::{BOOL, HSTRING, Interface};
 
 use super::DirectWriteFont;
 
@@ -142,6 +142,88 @@ pub fn load_font_from_bytes(
     Ok(DirectWriteFont {
         font_face,
         em_size_dip: size_lpx, // 1 lpx = 1 DIP
+        pixels_per_dip: scale,
+        size_lpx,
+        scale,
+        metrics,
+        text_format,
+        handle,
+    })
+}
+
+/// Load a font from the system font collection by family name.
+///
+/// Looks up `family` (case-insensitive) in the OS font collection, picks the
+/// Regular weight/style face, and builds an IDWriteTextFormat bound to the
+/// system collection so DirectWrite can resolve the family by name during
+/// shaping.
+pub fn load_system_font(
+    factory: &IDWriteFactory5,
+    family: &str,
+    size_lpx: f32,
+    scale: f32,
+) -> Result<super::DirectWriteFont, TextError> {
+    let mut collection: Option<IDWriteFontCollection1> = None;
+    unsafe { factory.GetSystemFontCollection(false, &mut collection, false) }
+        .map_err(|e| TextError::FontFileLoad(format!("GetSystemFontCollection: {e}")))?;
+    let collection = collection.ok_or_else(|| TextError::FontNotFound {
+        family: family.to_string(),
+    })?;
+
+    let family_w = HSTRING::from(family);
+    let mut index: u32 = 0;
+    let mut exists: BOOL = false.into();
+    unsafe { collection.FindFamilyName(&family_w, &mut index, &mut exists) }
+        .map_err(|e| TextError::FontFileLoad(format!("FindFamilyName({family}): {e}")))?;
+    if !exists.as_bool() {
+        return Err(TextError::FontNotFound {
+            family: family.to_string(),
+        });
+    }
+
+    let dw_family = unsafe { collection.GetFontFamily(index) }
+        .map_err(|e| TextError::FontFileLoad(format!("GetFontFamily: {e}")))?;
+    let dw_font = unsafe {
+        dw_family.GetFirstMatchingFont(
+            DWRITE_FONT_WEIGHT_REGULAR,
+            DWRITE_FONT_STRETCH_NORMAL,
+            DWRITE_FONT_STYLE_NORMAL,
+        )
+    }
+    .map_err(|e| TextError::FontFileLoad(format!("GetFirstMatchingFont: {e}")))?;
+
+    let font_face: IDWriteFontFace = unsafe { dw_font.CreateFontFace() }
+        .map_err(|e| TextError::FontFileLoad(format!("CreateFontFace: {e}")))?;
+
+    let metrics = extract_metrics(&font_face, size_lpx);
+
+    debug!(
+        "DirectWrite system font '{family}' (size={size_lpx}): ascent={:.2} descent={:.2} upem={}",
+        metrics.ascent_lpx, metrics.descent_lpx, metrics.units_per_em,
+    );
+
+    // text_format bound to the system collection (None = system). Shaping
+    // through this format will resolve `family` against the system fonts so
+    // DirectWrite picks the same face we just opened.
+    let text_format: IDWriteTextFormat = unsafe {
+        factory.CreateTextFormat(
+            &family_w,
+            None,
+            DWRITE_FONT_WEIGHT_REGULAR,
+            DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL,
+            size_lpx,
+            &HSTRING::from("en-US"),
+        )
+    }
+    .map_err(|e| TextError::FontFileLoad(format!("CreateTextFormat: {e}")))?;
+
+    let ptr = font_face.as_raw() as *const u8;
+    let handle = FontHandle::from_ptr_size_scale(ptr, size_lpx, scale);
+
+    Ok(super::DirectWriteFont {
+        font_face,
+        em_size_dip: size_lpx,
         pixels_per_dip: scale,
         size_lpx,
         scale,

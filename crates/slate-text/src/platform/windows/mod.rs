@@ -105,16 +105,13 @@ impl Font for DirectWriteFont {
 impl TextBackend for DirectWriteBackend {
     type Font = DirectWriteFont;
 
-    /// System-font lookup is deferred to Phase 2b.
     fn load_font(
         &mut self,
         family: &str,
-        _size_lpx: f32,
-        _scale: f32,
+        size_lpx: f32,
+        scale: f32,
     ) -> Result<Self::Font, TextError> {
-        Err(TextError::FontNotFound {
-            family: family.to_string(),
-        })
+        font_load::load_system_font(&self.factory, family, size_lpx, scale)
     }
 
     fn load_font_from_bytes(
