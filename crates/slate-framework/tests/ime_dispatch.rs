@@ -13,7 +13,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use slate_framework::app_state::{AppSignal, AppState};
 use slate_framework::element::AnyElement;
@@ -104,7 +104,7 @@ fn dispatch_ime_preedit_routes_to_focused_element_with_stop_propagation() {
     state.register_focusable_for_test(entry(1));
     state.set_focus_for_test(id(1));
 
-    let elem_fired = Rc::new(Cell::new(0u32));
+    let elem_fired = Arc::new(Mutex::new(0u32));
     let app_fired = Rc::new(Cell::new(0u32));
     let ef = elem_fired.clone();
     let af = app_fired.clone();
@@ -113,7 +113,7 @@ fn dispatch_ime_preedit_routes_to_focused_element_with_stop_propagation() {
         id(1),
         ImeHandlers {
             on_ime_preedit: Some(Arc::new(move |_e, cx| {
-                ef.set(ef.get() + 1);
+                *ef.lock().unwrap() += 1;
                 cx.stop_propagation();
             })),
             ..Default::default()
@@ -131,7 +131,7 @@ fn dispatch_ime_preedit_routes_to_focused_element_with_stop_propagation() {
     let window = state.window_id_for_test();
     state.dispatch_ime_preedit_for_test(window, "hi".into(), 2, None);
 
-    assert_eq!(elem_fired.get(), 1, "element handler must fire");
+    assert_eq!(*elem_fired.lock().unwrap(), 1, "element handler must fire");
     assert_eq!(
         app_fired.get(),
         0,

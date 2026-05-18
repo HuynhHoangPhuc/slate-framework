@@ -11,9 +11,8 @@
 
 #![cfg(all(target_os = "windows", feature = "test-hooks"))]
 
-use std::cell::{Cell, RefCell};
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use slate_framework::EventCtx;
 use slate_framework::app_state::{AppSignal, AppState};
@@ -91,11 +90,20 @@ fn text_field_module_smoke() {
 /// Build an `on_ime_preedit` handler closure that mirrors TextField's inner
 /// logic: write the preedit into `ImeState` without touching the committed
 /// text, then stop propagation so the app handler doesn't also fire.
+///
+/// Closure captures only `target_id` (Send + Sync) and fetches the
+/// `Rc<RefCell<ImeState>>` lazily via `cx.ime_state(id)` — mirrors production
+/// `text_field::handlers::make_preedit_handler` so the test exercises the real
+/// registry path rather than capturing a borrowed handle.
+#[allow(clippy::type_complexity)]
 fn make_preedit_handler(
-    ime_rc: Rc<RefCell<ImeState>>,
+    target_id: ElementId,
 ) -> Arc<dyn Fn(&ImePreeditEvent, &mut EventCtx) + Send + Sync + 'static> {
     Arc::new(move |e: &ImePreeditEvent, cx: &mut EventCtx| {
-        let mut s = ime_rc.borrow_mut();
+        let Some(state_rc) = cx.ime_state(target_id) else {
+            return;
+        };
+        let mut s = state_rc.borrow_mut();
         s.preedit = Some(Preedit {
             text: e.text.clone(),
             cursor_byte_offset: e.cursor_byte_offset,
@@ -110,12 +118,16 @@ fn make_preedit_handler(
 ///   - always clears preedit
 ///   - if `text` is non-empty: inserts at caret + advances caret + calls `signal_setter`
 ///   - if `text` is empty: only clears preedit (no-insert branch)
+#[allow(clippy::type_complexity)]
 fn make_commit_handler(
-    ime_rc: Rc<RefCell<ImeState>>,
-    signal_setter: Rc<dyn Fn(String)>,
+    target_id: ElementId,
+    signal_setter: Arc<dyn Fn(String) + Send + Sync>,
 ) -> Arc<dyn Fn(&ImeCommitEvent, &mut EventCtx) + Send + Sync + 'static> {
     Arc::new(move |e: &ImeCommitEvent, cx: &mut EventCtx| {
-        let mut s = ime_rc.borrow_mut();
+        let Some(state_rc) = cx.ime_state(target_id) else {
+            return;
+        };
+        let mut s = state_rc.borrow_mut();
         s.preedit = None;
         if !e.text.is_empty() {
             let caret = s.caret;
@@ -139,18 +151,20 @@ fn ime_preedit_followed_by_commit_updates_signal() {
     // Shared ImeState for handlers to read/write.
     let ime_rc = state.register_ime_state_for_test(elem_id);
 
-    // Simple in-test signal: just a RefCell<String>.
-    let signal_value: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
+    // Simple in-test signal: Arc<Mutex<String>> so the setter closure is
+    // Send + Sync (required because it is captured by the commit handler
+    // closure, which itself must be Send + Sync).
+    let signal_value: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
     let sv = signal_value.clone();
-    let setter: Rc<dyn Fn(String)> = Rc::new(move |s: String| {
-        *sv.borrow_mut() = s;
+    let setter: Arc<dyn Fn(String) + Send + Sync> = Arc::new(move |s: String| {
+        *sv.lock().unwrap() = s;
     });
 
     state.install_element_ime_handlers_for_test(
         elem_id,
         ImeHandlers {
-            on_ime_preedit: Some(make_preedit_handler(ime_rc.clone())),
-            on_ime_commit: Some(make_commit_handler(ime_rc.clone(), setter)),
+            on_ime_preedit: Some(make_preedit_handler(elem_id)),
+            on_ime_commit: Some(make_commit_handler(elem_id, setter)),
             ..Default::default()
         },
     );
@@ -182,7 +196,7 @@ fn ime_preedit_followed_by_commit_updates_signal() {
         );
     }
     assert_eq!(
-        &*signal_value.borrow(),
+        &*signal_value.lock().unwrap(),
         "你好",
         "signal must reflect committed text"
     );
@@ -211,17 +225,17 @@ fn empty_commit_only_clears_preedit() {
         });
     }
 
-    let setter_called = Rc::new(Cell::new(0u32));
+    let setter_called = Arc::new(Mutex::new(0u32));
     let sc = setter_called.clone();
-    let setter: Rc<dyn Fn(String)> = Rc::new(move |_s: String| {
-        sc.set(sc.get() + 1);
+    let setter: Arc<dyn Fn(String) + Send + Sync> = Arc::new(move |_s: String| {
+        *sc.lock().unwrap() += 1;
     });
 
     state.install_element_ime_handlers_for_test(
         elem_id,
         ImeHandlers {
-            on_ime_preedit: Some(make_preedit_handler(ime_rc.clone())),
-            on_ime_commit: Some(make_commit_handler(ime_rc.clone(), setter)),
+            on_ime_preedit: Some(make_preedit_handler(elem_id)),
+            on_ime_commit: Some(make_commit_handler(elem_id, setter)),
             ..Default::default()
         },
     );
@@ -241,7 +255,7 @@ fn empty_commit_only_clears_preedit() {
         "committed text must NOT be mutated by empty commit"
     );
     assert_eq!(
-        setter_called.get(),
+        *setter_called.lock().unwrap(),
         0,
         "setter must NOT be called for empty commit"
     );
@@ -260,17 +274,17 @@ fn sequential_commits_accumulate() {
 
     let ime_rc = state.register_ime_state_for_test(elem_id);
 
-    let signal_value: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
+    let signal_value: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
     let sv = signal_value.clone();
-    let setter: Rc<dyn Fn(String)> = Rc::new(move |s: String| {
-        *sv.borrow_mut() = s;
+    let setter: Arc<dyn Fn(String) + Send + Sync> = Arc::new(move |s: String| {
+        *sv.lock().unwrap() = s;
     });
 
     state.install_element_ime_handlers_for_test(
         elem_id,
         ImeHandlers {
-            on_ime_preedit: Some(make_preedit_handler(ime_rc.clone())),
-            on_ime_commit: Some(make_commit_handler(ime_rc.clone(), setter)),
+            on_ime_preedit: Some(make_preedit_handler(elem_id)),
+            on_ime_commit: Some(make_commit_handler(elem_id, setter)),
             ..Default::default()
         },
     );
@@ -281,7 +295,7 @@ fn sequential_commits_accumulate() {
     state.dispatch_ime_commit_for_test(window, " ".into());
     state.dispatch_ime_commit_for_test(window, "世界".into());
 
-    assert_eq!(&*signal_value.borrow(), "Hello 世界");
+    assert_eq!(&*signal_value.lock().unwrap(), "Hello 世界");
     assert_eq!(ime_rc.borrow().text, "Hello 世界");
 }
 

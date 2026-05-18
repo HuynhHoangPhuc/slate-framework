@@ -8,9 +8,8 @@
 
 #![cfg(all(target_os = "windows", feature = "test-hooks"))]
 
-use std::cell::{Cell, RefCell};
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use slate_framework::app_state::{AppSignal, AppState};
 use slate_framework::element::AnyElement;
@@ -18,9 +17,12 @@ use slate_framework::elements::Div;
 use slate_framework::event::KeyHandlers;
 use slate_framework::executor::{Executor, RedrawRequester};
 use slate_framework::focus::FocusableEntry;
-use slate_framework::types::ElementId;
+use slate_framework::hit_test::{HitRegion, HitTestList};
+use slate_framework::types::{Bounds, ElementId};
 use slate_framework::view::{IntoAny, View};
-use slate_framework::{EventCtx, Key, KeyCode, KeyEvent, Modifiers, NamedKey, TextInputEvent};
+use slate_framework::{
+    EventCtx, Key, KeyCode, KeyEvent, Modifiers, MouseButton, NamedKey, TextInputEvent,
+};
 use slate_platform::{DefaultPlatform, Platform, WindowOptions, wake_run_loop};
 
 struct NoopView;
@@ -67,12 +69,12 @@ fn focused_element_receives_key_down() {
     state.register_focusable_for_test(entry(1));
     state.set_focus_for_test(leaf);
 
-    let fired = Rc::new(Cell::new(0u32));
+    let fired = Arc::new(Mutex::new(0u32));
     let f = fired.clone();
     state.install_element_key_handlers_for_test(
         leaf,
         KeyHandlers {
-            on_key_down: Some(Arc::new(move |_e, _cx| f.set(f.get() + 1))),
+            on_key_down: Some(Arc::new(move |_e, _cx| *f.lock().unwrap() += 1)),
             on_key_up: None,
             on_text_input: None,
         },
@@ -85,7 +87,7 @@ fn focused_element_receives_key_down() {
         false,
     );
 
-    assert_eq!(fired.get(), 1);
+    assert_eq!(*fired.lock().unwrap(), 1);
     assert_eq!(signal, AppSignal::RequestRedraw);
 }
 
@@ -98,7 +100,7 @@ fn key_down_bubbles_leaf_to_root_to_app_level() {
     state.set_parent_for_test(leaf, parent);
     state.set_focus_for_test(leaf);
 
-    let order = Rc::new(RefCell::new(Vec::<&'static str>::new()));
+    let order = Arc::new(Mutex::new(Vec::<&'static str>::new()));
     let o1 = order.clone();
     let o2 = order.clone();
     let o3 = order.clone();
@@ -106,20 +108,20 @@ fn key_down_bubbles_leaf_to_root_to_app_level() {
     state.install_element_key_handlers_for_test(
         leaf,
         KeyHandlers {
-            on_key_down: Some(Arc::new(move |_e, _cx| o1.borrow_mut().push("leaf"))),
+            on_key_down: Some(Arc::new(move |_e, _cx| o1.lock().unwrap().push("leaf"))),
             ..Default::default()
         },
     );
     state.install_element_key_handlers_for_test(
         parent,
         KeyHandlers {
-            on_key_down: Some(Arc::new(move |_e, _cx| o2.borrow_mut().push("parent"))),
+            on_key_down: Some(Arc::new(move |_e, _cx| o2.lock().unwrap().push("parent"))),
             ..Default::default()
         },
     );
     state.install_key_handlers_for_test(
         vec![Box::new(move |_e: &KeyEvent, _cx: &mut EventCtx| {
-            o3.borrow_mut().push("app")
+            o3.lock().unwrap().push("app")
         })],
         vec![],
         vec![],
@@ -132,7 +134,7 @@ fn key_down_bubbles_leaf_to_root_to_app_level() {
         false,
     );
 
-    assert_eq!(&*order.borrow(), &vec!["leaf", "parent", "app"]);
+    assert_eq!(&*order.lock().unwrap(), &vec!["leaf", "parent", "app"]);
 }
 
 #[test]
@@ -144,8 +146,8 @@ fn stop_propagation_halts_bubble() {
     state.set_parent_for_test(leaf, parent);
     state.set_focus_for_test(leaf);
 
-    let parent_fired = Rc::new(Cell::new(false));
-    let app_fired = Rc::new(Cell::new(false));
+    let parent_fired = Arc::new(Mutex::new(false));
+    let app_fired = Arc::new(Mutex::new(false));
     let pf = parent_fired.clone();
     let af = app_fired.clone();
 
@@ -159,13 +161,13 @@ fn stop_propagation_halts_bubble() {
     state.install_element_key_handlers_for_test(
         parent,
         KeyHandlers {
-            on_key_down: Some(Arc::new(move |_e, _cx| pf.set(true))),
+            on_key_down: Some(Arc::new(move |_e, _cx| *pf.lock().unwrap() = true)),
             ..Default::default()
         },
     );
     state.install_key_handlers_for_test(
         vec![Box::new(move |_e: &KeyEvent, _cx: &mut EventCtx| {
-            af.set(true)
+            *af.lock().unwrap() = true
         })],
         vec![],
         vec![],
@@ -179,11 +181,11 @@ fn stop_propagation_halts_bubble() {
     );
 
     assert!(
-        !parent_fired.get(),
+        !*parent_fired.lock().unwrap(),
         "parent must not fire after stop_propagation"
     );
     assert!(
-        !app_fired.get(),
+        !*app_fired.lock().unwrap(),
         "app-level must not fire after stop_propagation"
     );
 }
@@ -195,13 +197,13 @@ fn text_input_bubbles_focused_chain() {
     state.register_focusable_for_test(entry(1));
     state.set_focus_for_test(leaf);
 
-    let captured = Rc::new(RefCell::new(String::new()));
+    let captured = Arc::new(Mutex::new(String::new()));
     let c = captured.clone();
     state.install_element_key_handlers_for_test(
         leaf,
         KeyHandlers {
             on_text_input: Some(Arc::new(move |e: &TextInputEvent, _cx| {
-                *c.borrow_mut() = e.text.clone()
+                *c.lock().unwrap() = e.text.clone()
             })),
             ..Default::default()
         },
@@ -209,7 +211,7 @@ fn text_input_bubbles_focused_chain() {
 
     state.dispatch_text_input_for_test("hi".into());
 
-    assert_eq!(&*captured.borrow(), "hi");
+    assert_eq!(&*captured.lock().unwrap(), "hi");
 }
 
 #[test]
@@ -286,5 +288,80 @@ fn tab_key_with_stop_propagation_suppresses_default_shift() {
         state.focused_for_test(),
         Some(a),
         "Tab default must be suppressed"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Mouse-down focus semantics (D6 reversal — clear focus on background-click)
+// ---------------------------------------------------------------------------
+
+/// Helper: install one hit region covering the given rect for `id`. Resets
+/// the list first so consecutive setups don't accumulate stale regions.
+fn install_hit_region(state: &AppState<NoopView>, id: ElementId, bounds: Bounds) {
+    let mut list = state.hit_test_list.borrow_mut();
+    *list = HitTestList::new();
+    list.push(HitRegion::new(id, bounds, 0));
+}
+
+#[test]
+fn mouse_down_on_non_focusable_clears_focus() {
+    // Pre-condition: `a` is focusable + currently focused. Hit region for
+    // `b` is staged where `b` is registered with no entry in focus registry.
+    // Clicking on `b` (non-focusable, no focusable ancestor) must blur `a`.
+    let state = make_state();
+    let a = id(1);
+    let b = id(2);
+    state.register_focusable_for_test(entry(1));
+    state.set_focus_for_test(a);
+    install_hit_region(&state, b, Bounds::from_origin_size(0.0, 0.0, 100.0, 100.0));
+
+    state.dispatch_mouse_down_for_test((10.0, 10.0), MouseButton::Left, Modifiers::default());
+
+    assert_eq!(
+        state.focused_for_test(),
+        None,
+        "background-click on non-focusable target must clear focus"
+    );
+}
+
+#[test]
+fn mouse_down_hit_test_miss_clears_focus() {
+    // Pre-condition: `a` is focusable + focused. Hit list contains no regions
+    // covering the click position — the hit-test returns None. Focus must
+    // clear (native-widget semantics for click on empty space).
+    let state = make_state();
+    let a = id(1);
+    state.register_focusable_for_test(entry(1));
+    state.set_focus_for_test(a);
+    // Empty hit list.
+    *state.hit_test_list.borrow_mut() = HitTestList::new();
+
+    state.dispatch_mouse_down_for_test((50.0, 50.0), MouseButton::Left, Modifiers::default());
+
+    assert_eq!(
+        state.focused_for_test(),
+        None,
+        "hit-test miss must clear focus"
+    );
+}
+
+#[test]
+fn mouse_down_on_focusable_preserves_focus_move() {
+    // Regression guard: clicking on a focusable element still moves focus
+    // there (the D6 reversal must not break the click-to-focus path).
+    let state = make_state();
+    let a = id(1);
+    let b = id(2);
+    state.register_focusable_for_test(entry(1));
+    state.register_focusable_for_test(entry(2));
+    state.set_focus_for_test(a);
+    install_hit_region(&state, b, Bounds::from_origin_size(0.0, 0.0, 100.0, 100.0));
+
+    state.dispatch_mouse_down_for_test((25.0, 25.0), MouseButton::Left, Modifiers::default());
+
+    assert_eq!(
+        state.focused_for_test(),
+        Some(b),
+        "click on a focusable element must move focus to it"
     );
 }

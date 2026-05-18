@@ -1251,22 +1251,34 @@ impl<V: View> AppState<V> {
             }
         };
 
-        if let Some(t) = target {
-            // Phase 9b: click-to-focus. Auto-focus the deepest focusable
-            // ancestor on the hit chain BEFORE invoking handlers, so the
-            // handler observes the updated `focused_element()`. Non-focusable
-            // hits preserve previous focus (no auto-blur — design lock D6).
-            {
-                let registry = self.focus_registry.borrow();
-                let pm = self.parent_map.borrow();
-                let focus_target = ancestors(t, &pm).find(|id| registry.is_focusable(*id));
-                drop(pm);
-                drop(registry);
-                if let Some(id) = focus_target {
-                    self.focus_registry.borrow_mut().set_focus(id);
+        // Click-to-focus / click-to-blur. Auto-focuses the deepest focusable
+        // ancestor on the hit chain BEFORE invoking handlers, so handlers
+        // observe the updated `focused_element()`. A background-click — no
+        // focusable ancestor on the hit chain, or a hit-test miss — clears
+        // focus (native-widget semantics; reverses the earlier "no auto-blur"
+        // design lock). Authors who need to keep focus on a draggable can opt
+        // into `focusable(true).focus_ring(false)`.
+        let focus_target: Option<ElementId> = if let Some(t) = target {
+            let registry = self.focus_registry.borrow();
+            let pm = self.parent_map.borrow();
+            let result = ancestors(t, &pm).find(|id| registry.is_focusable(*id));
+            drop(pm);
+            drop(registry);
+            result
+        } else {
+            None
+        };
+        {
+            let mut registry = self.focus_registry.borrow_mut();
+            match focus_target {
+                Some(id) => {
+                    registry.set_focus(id);
                 }
+                None => registry.clear_focus(),
             }
+        }
 
+        if let Some(t) = target {
             // Collect handlers first, then invoke (clone-before-drop pattern)
             let mouse_handlers: SmallVec<[MouseHandler; 8]> = {
                 let hm = self.handler_map.borrow();
@@ -2663,6 +2675,18 @@ impl<V: View> AppState<V> {
     /// Dispatch a synthetic `TextInput` to installed handlers. Test-only.
     pub fn dispatch_text_input_for_test(&self, text: String) -> AppSignal {
         self.dispatch_text_input(text)
+    }
+
+    /// Dispatch a synthetic `MouseDown` at `position` to installed handlers.
+    /// Test-only. Use together with direct writes to `hit_test_list` to
+    /// stage hit-test geometry for the synthetic click.
+    pub fn dispatch_mouse_down_for_test(
+        &self,
+        position: (f32, f32),
+        button: crate::event::MouseButton,
+        modifiers: Modifiers,
+    ) -> AppSignal {
+        self.dispatch_mouse_down(position, button, modifiers)
     }
 
     /// Register a per-element keyboard handler bundle. Test-only — production
