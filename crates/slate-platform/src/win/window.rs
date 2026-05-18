@@ -27,7 +27,7 @@ use windows::core::PCWSTR;
 use super::message_loop::WinWindowInner;
 use super::platform::CLASS_NAME;
 use super::{next_window_id, register_wake_hwnd, to_wide};
-use crate::{Window, WindowId, WindowOptions, WindowRenderDelegate};
+use crate::{Window, WindowId, WindowImeDelegate, WindowOptions, WindowRenderDelegate};
 
 // ---------------------------------------------------------------------------
 // WinWindow — public window handle (thin Arc wrapper)
@@ -67,6 +67,8 @@ impl WinWindow {
             captured_buttons: Cell::new(0),
             is_tracking_hover: Cell::new(false),
             delegate: RefCell::new(None),
+            ime_delegate: RefCell::new(None),
+            composition_active: Cell::new(false),
             in_size_move: Cell::new(false),
             pending_display_change: Cell::new(false),
             logged_no_delegate: Cell::new(false),
@@ -74,6 +76,7 @@ impl WinWindow {
             dxgi_factory,
             last_monitor: Cell::new(HMONITOR(std::ptr::null_mut())),
             pending_monitor_change: Cell::new(false),
+            pending_high_surrogate: Cell::new(None),
         });
 
         let inner_ptr = Arc::as_ptr(&inner);
@@ -189,6 +192,10 @@ impl Window for WinWindow {
 
     fn set_render_delegate(&self, delegate: Weak<dyn WindowRenderDelegate>) {
         *self.inner.delegate.borrow_mut() = Some(delegate);
+    }
+
+    fn set_ime_delegate(&self, delegate: Weak<dyn WindowImeDelegate>) {
+        *self.inner.ime_delegate.borrow_mut() = Some(delegate);
     }
 
     fn current_monitor_luid(&self) -> Option<u64> {

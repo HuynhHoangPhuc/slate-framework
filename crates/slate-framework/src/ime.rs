@@ -1,0 +1,305 @@
+//! IME state registry + per-element composition state.
+//!
+//! Phase 9c. Mirrors the [`FocusRegistry`](crate::focus::FocusRegistry) lifecycle:
+//! cleared at the start of every prepaint, re-registered per ime-capable
+//! element during the prepaint walk, then [`prune_missing`](ImeRegistry::prune_missing)
+//! collapses any state belonging to unmounted elements.
+//!
+//! # Cache-then-query (ADR-001 amendment)
+//!
+//! The platform `WindowImeDelegate` query channel does NOT traverse this
+//! registry directly. Instead, `AppState` republishes a snapshot
+//! ([`CachedImeQuery`]) at deterministic points (end of `dispatch_ime_preedit`,
+//! end of every paint), and the delegate methods read that cache only. The
+//! registry is the source of truth; the cache is the safe read path.
+//!
+//! # Per-element state
+//!
+//! Each ime-capable element owns one [`ImeState`] held inside an `Rc<RefCell<_>>`
+//! so per-element handlers can mutate it without re-borrowing the registry
+//! while the dispatch loop holds a registry-level borrow.
+
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
+use std::ops::Range;
+use std::rc::Rc;
+
+use slate_platform::{PhysicalRect, WindowId};
+
+use crate::types::ElementId;
+
+// ---------------------------------------------------------------------------
+// Preedit (composition payload)
+// ---------------------------------------------------------------------------
+
+/// In-flight composition. Empty preedit ≡ `None` (the framework never holds a
+/// zero-length `Preedit`; callers clear to `None` instead).
+#[derive(Clone, Debug, Default)]
+pub struct Preedit {
+    /// Composition text (UTF-8). Replaces any prior preedit on each
+    /// `ImePreedit` event.
+    pub text: String,
+    /// UTF-8 byte offset into `text` of the IME caret (where the next
+    /// keystroke would land).
+    pub cursor_byte_offset: usize,
+    /// IME-highlighted target-converted range, UTF-8 byte range into `text`.
+    /// `None` if the OS provided no highlight (e.g. macOS Roman, raw mode).
+    pub selection: Option<Range<usize>>,
+}
+
+// ---------------------------------------------------------------------------
+// ImeState (per-element)
+// ---------------------------------------------------------------------------
+
+/// Per-element IME state: the committed buffer, caret, and any active
+/// composition.
+///
+/// Default constructs an empty state (no preedit, caret 0, zero rect). The
+/// `caret_screen_rect` is updated by the host element during paint and at the
+/// end of `dispatch_ime_preedit`; the cached query path reads from it.
+#[derive(Clone, Debug, Default)]
+pub struct ImeState {
+    /// Committed text buffer (TextField source-of-truth).
+    pub text: String,
+    /// Byte offset into `text` of the caret.
+    pub caret: usize,
+    /// Active composition, if any. `None` outside of IME sessions.
+    pub preedit: Option<Preedit>,
+    /// Screen-coord physical-pixel rect of the caret. Updated by the element
+    /// during paint; consumed by the cache republish path.
+    pub caret_screen_rect: PhysicalRect,
+}
+
+impl ImeState {
+    /// Answer `WindowImeDelegate::ime_text`. Returns the substring of `text`
+    /// inside `range`, or `None` if `range` is out of bounds or splits a
+    /// UTF-8 codepoint.
+    pub fn answer_ime_text(&self, range: Range<usize>) -> Option<String> {
+        self.text.get(range).map(|s| s.to_string())
+    }
+
+    /// Answer `WindowImeDelegate::ime_selected_range`. Currently caret-only —
+    /// returns `caret..caret` (an empty range collapsed at the caret).
+    pub fn answer_selected_range(&self) -> Option<Range<usize>> {
+        Some(self.caret..self.caret)
+    }
+
+    /// Answer `WindowImeDelegate::ime_marked_range`. Returns the preedit
+    /// range relative to the committed buffer's caret position, or `None`
+    /// when no composition is active.
+    pub fn answer_marked_range(&self) -> Option<Range<usize>> {
+        let preedit = self.preedit.as_ref()?;
+        let start = self.caret;
+        let end = start + preedit.text.len();
+        Some(start..end)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ImeRegistry (per-frame)
+// ---------------------------------------------------------------------------
+
+/// Per-frame map of ime-capable element ids to their `ImeState`. Built up
+/// during the prepaint walk; pruned of dead entries after the walk.
+#[derive(Default)]
+pub struct ImeRegistry {
+    states: HashMap<ElementId, Rc<RefCell<ImeState>>>,
+    /// Set true whenever a new entry is inserted; consumers can use this as
+    /// a coarse change signal (currently informational only).
+    dirty: bool,
+}
+
+impl ImeRegistry {
+    /// Create an empty registry.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Clear the dirty flag without dropping entries. Used by the per-frame
+    /// lifecycle: call [`prune_missing`](Self::prune_missing) after the
+    /// prepaint walk re-registered the surviving ids; entries for ids that
+    /// did NOT re-register are then dropped, preserving the `Rc` for ids
+    /// that did re-register so element handlers can still observe the same
+    /// state across frames.
+    pub fn clear(&mut self) {
+        self.dirty = false;
+    }
+
+    /// Get-or-insert default `ImeState` for `id`. Returns the shared
+    /// `Rc<RefCell<_>>` so the caller can hand it to per-element handlers.
+    pub fn register(&mut self, id: ElementId) -> Rc<RefCell<ImeState>> {
+        match self.states.entry(id) {
+            std::collections::hash_map::Entry::Occupied(e) => e.get().clone(),
+            std::collections::hash_map::Entry::Vacant(v) => {
+                self.dirty = true;
+                v.insert(Rc::new(RefCell::new(ImeState::default()))).clone()
+            }
+        }
+    }
+
+    /// Look up the `ImeState` for `id`, if registered.
+    pub fn get(&self, id: ElementId) -> Option<Rc<RefCell<ImeState>>> {
+        self.states.get(&id).cloned()
+    }
+
+    /// Drop entries whose ids are NOT in `registered_ids`. Called by the
+    /// host after the prepaint walk has finished re-registering surviving
+    /// ime-capable elements.
+    pub fn prune_missing(&mut self, registered_ids: &HashSet<ElementId>) {
+        self.states.retain(|id, _| registered_ids.contains(id));
+    }
+
+    /// Number of registered ime-capable elements (for tests + debugging).
+    pub fn len(&self) -> usize {
+        self.states.len()
+    }
+
+    /// True if no ime-capable elements are registered.
+    pub fn is_empty(&self) -> bool {
+        self.states.is_empty()
+    }
+}
+
+impl std::fmt::Debug for ImeRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ImeRegistry")
+            .field("len", &self.states.len())
+            .field("dirty", &self.dirty)
+            .finish()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CachedImeQuery (read-side snapshot for WindowImeDelegate)
+// ---------------------------------------------------------------------------
+
+/// Snapshot of the focused element's `ImeState` consumed by the platform
+/// `WindowImeDelegate` query channel. Republished at deterministic points
+/// (end of `dispatch_ime_preedit`, end of every paint); never traversed
+/// directly by the OS query callbacks.
+///
+/// All fields are `None` when no element claims IME this frame.
+#[derive(Clone, Debug, Default)]
+pub struct CachedImeQuery {
+    /// Caret rect in screen-space physical pixels.
+    pub caret_screen_rect: Option<PhysicalRect>,
+    /// Active composition byte range, if any.
+    pub marked_range: Option<Range<usize>>,
+    /// Current selection (caret-only collapses to empty range at caret).
+    pub selected_range: Option<Range<usize>>,
+    /// Bounded slice of the committed text near the caret. Tuple of
+    /// `(absolute_range, text)` so the delegate can answer `ime_text`
+    /// queries that fall inside the cached window without re-borrowing the
+    /// registry.
+    pub text_window: Option<(Range<usize>, String)>,
+}
+
+// ---------------------------------------------------------------------------
+// PendingImeOp (deferred mutation queue)
+// ---------------------------------------------------------------------------
+
+/// Deferred IME mutation queued during dispatch. Drained by `AppState` after
+/// the per-element handler chain unwinds, BEFORE `pending_focus_op` so a
+/// Tab-during-composition lands its synthetic commit on the still-focused
+/// element.
+#[derive(Clone, Debug)]
+pub enum PendingImeOp {
+    /// Synthetic commit. Inserts `text` at the focused element's caret,
+    /// advances the caret, and clears the preedit. Does NOT run user
+    /// `on_ime_commit` handlers (re-entrancy contract — see phase-04 spec
+    /// step 16).
+    Commit { window: WindowId, text: String },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn id(n: u64) -> ElementId {
+        ElementId::from_raw(n)
+    }
+
+    #[test]
+    fn empty_registry_is_empty() {
+        let r = ImeRegistry::new();
+        assert!(r.is_empty());
+        assert_eq!(r.len(), 0);
+        assert!(r.get(id(1)).is_none());
+    }
+
+    #[test]
+    fn register_inserts_default_state() {
+        let mut r = ImeRegistry::new();
+        let s = r.register(id(1));
+        assert_eq!(r.len(), 1);
+        let borrowed = s.borrow();
+        assert!(borrowed.text.is_empty());
+        assert_eq!(borrowed.caret, 0);
+        assert!(borrowed.preedit.is_none());
+    }
+
+    #[test]
+    fn register_idempotent_returns_same_rc() {
+        let mut r = ImeRegistry::new();
+        let s1 = r.register(id(1));
+        let s2 = r.register(id(1));
+        assert_eq!(r.len(), 1);
+        assert!(Rc::ptr_eq(&s1, &s2));
+    }
+
+    #[test]
+    fn prune_missing_drops_absent_ids() {
+        let mut r = ImeRegistry::new();
+        r.register(id(1));
+        r.register(id(2));
+        r.register(id(3));
+        let alive: HashSet<ElementId> = [id(1), id(3)].into_iter().collect();
+        r.prune_missing(&alive);
+        assert_eq!(r.len(), 2);
+        assert!(r.get(id(1)).is_some());
+        assert!(r.get(id(2)).is_none());
+        assert!(r.get(id(3)).is_some());
+    }
+
+    #[test]
+    fn answer_ime_text_returns_substring() {
+        let s = ImeState {
+            text: "hello world".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(s.answer_ime_text(0..5), Some("hello".to_string()));
+        assert_eq!(s.answer_ime_text(6..11), Some("world".to_string()));
+        assert_eq!(s.answer_ime_text(0..100), None);
+    }
+
+    #[test]
+    fn answer_selected_range_returns_caret_empty_range() {
+        let s = ImeState {
+            text: "abc".to_string(),
+            caret: 2,
+            ..Default::default()
+        };
+        assert_eq!(s.answer_selected_range(), Some(2..2));
+    }
+
+    #[test]
+    fn answer_marked_range_none_when_no_preedit() {
+        let s = ImeState::default();
+        assert_eq!(s.answer_marked_range(), None);
+    }
+
+    #[test]
+    fn answer_marked_range_with_preedit() {
+        let s = ImeState {
+            text: "abc".to_string(),
+            caret: 3,
+            preedit: Some(Preedit {
+                text: "xy".to_string(),
+                cursor_byte_offset: 2,
+                selection: None,
+            }),
+            ..Default::default()
+        };
+        assert_eq!(s.answer_marked_range(), Some(3..5));
+    }
+}

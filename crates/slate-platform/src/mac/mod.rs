@@ -14,8 +14,10 @@
 //! See the SAFETY comment in `run` for the full argument.
 
 mod display_link;
+mod keymap;
 mod platform;
 mod view;
+mod view_ime;
 mod window;
 
 pub use platform::MacPlatform;
@@ -29,7 +31,7 @@ use std::sync::Arc;
 use objc2_app_kit::{NSApplication, NSEvent, NSEventModifierFlags, NSEventType};
 use objc2_foundation::{MainThreadMarker, NSPoint};
 
-use crate::{Event, WindowId, WindowRenderDelegate};
+use crate::{Event, WindowId, WindowImeDelegate, WindowRenderDelegate};
 
 // ---------------------------------------------------------------------------
 // Thread-local event handler storage
@@ -70,6 +72,26 @@ pub(crate) fn unregister_window(id: WindowId) {
     WINDOWS.with(|m| {
         m.borrow_mut().remove(&id);
     });
+}
+
+/// Lookup MacWindow by id, then upgrade its ime_delegate Weak, then invoke.
+/// All steps drop their borrows before invoking — re-entrancy safe.
+///
+/// Mirrors [`with_window_delegate`]; required by `MetalView`'s
+/// `NSTextInputClient` sync queries (`firstRectForCharacterRange:`,
+/// `selectedRange`, etc.). Delegate impls (`AppState`) read from the
+/// pre-published `cached_ime_query` snapshot per ADR-001 amendment.
+///
+/// Returns the closure's `R` (or `None` if no delegate is wired).
+pub(crate) fn with_window_ime_delegate<R>(
+    id: WindowId,
+    f: impl FnOnce(&dyn WindowImeDelegate) -> R,
+) -> Option<R> {
+    let window = WINDOWS.with(|m| m.borrow().get(&id).and_then(|w| w.upgrade()))?;
+    let weak = window.ime_delegate.borrow().clone()?;
+    drop(window);
+    let strong = weak.upgrade()?;
+    Some(f(&*strong))
 }
 
 /// Lookup MacWindow by id, then upgrade its render_delegate Weak, then invoke.

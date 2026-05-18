@@ -20,6 +20,8 @@
 //! `Arc::decrement_strong_count` and clear `GWLP_USERDATA`. No `Box::into_raw`
 //! of a duplicate state; single source of truth.
 
+mod ime;
+mod keymap;
 mod message_loop;
 mod platform;
 mod window;

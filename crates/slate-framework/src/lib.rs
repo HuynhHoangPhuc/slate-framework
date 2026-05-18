@@ -39,9 +39,12 @@ pub mod element;
 pub mod elements;
 pub mod event;
 pub mod executor;
+pub mod focus;
+pub(crate) mod focus_ring;
 pub mod headless;
 pub mod hit_test;
 pub(crate) mod image_cache;
+pub mod ime;
 pub mod layout;
 pub(crate) mod paint_cache;
 pub(crate) mod reactive_state;
@@ -54,14 +57,17 @@ pub mod view;
 
 // Re-export underlying crates
 pub use slate_platform;
-pub use slate_platform::{Modifiers, MouseButton, WindowOptions};
+pub use slate_platform::{Key, KeyCode, Modifiers, MouseButton, NamedKey, WindowOptions};
 pub use slate_renderer;
 pub use slate_text;
 
 // Re-export core types
 pub use app::{App, AppContext};
 pub use color::Color;
-pub use event::{EventCtx, MouseEvent, PointerEvent, PointerEventKind, ScrollEvent};
+pub use event::{
+    EventCtx, KeyEvent, KeyHandler, MouseEvent, PointerEvent, PointerEventKind, ScrollEvent,
+    TextInputEvent, TextInputHandler,
+};
 pub use headless::{HeadlessApp, HeadlessError};
 
 /// Reactive primitives for building reactive UIs.
@@ -82,9 +88,13 @@ pub mod reactive {
 // Re-export smol::Timer for async timing (Phase 5: F1)
 pub use context::{LayoutCtx, PaintCtx, PrepaintCtx};
 pub use element::{AnyElement, Element, IntoElement};
-pub use elements::{Div, Image, MAX_IMAGE_DIM, Text, TextAlign, TextWrap};
+pub use elements::{
+    Div, Image, MAX_IMAGE_DIM, Text, TextAlign, TextField, TextFieldStyle, TextWrap,
+};
 pub use executor::{BackgroundExecutor, Executor, ForegroundExecutor, RedrawRequester};
+pub use focus::{FocusRegistry, FocusableEntry};
 pub use hit_test::{CursorStyle, HitRegion, HitTestList, HitTestResult};
+pub use ime::{CachedImeQuery, ImeRegistry, ImeState, PendingImeOp, Preedit};
 pub use layout::{LayoutTree, compute_layout, resolve_bounds, resolve_child_bounds};
 pub use smol::Timer;
 pub use style::{DisplayMode, Length, Overflow, Position, SizeConstraint, Style};

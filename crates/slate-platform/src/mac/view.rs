@@ -3,19 +3,22 @@
 use std::cell::{Cell, RefCell};
 
 use objc2::rc::Retained;
-use objc2::runtime::AnyObject;
+use objc2::runtime::{AnyObject, Sel};
 use objc2::{AnyThread, DefinedClass, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
-    NSEvent, NSEventModifierFlags, NSTrackingArea, NSTrackingAreaOptions, NSView, NSWindow,
-    NSWindowDelegate,
+    NSEvent, NSEventModifierFlags, NSTextInputClient, NSTrackingArea, NSTrackingAreaOptions,
+    NSView, NSWindow, NSWindowDelegate,
 };
-use objc2_foundation::{MainThreadMarker, NSNotification, NSObject, NSObjectProtocol, NSRect};
+use objc2_foundation::{
+    MainThreadMarker, NSArray, NSAttributedString, NSAttributedStringKey, NSNotification, NSObject,
+    NSObjectProtocol, NSPoint, NSRange, NSRangePointer, NSRect, NSSize, NSUInteger,
+};
 use objc2_quartz_core::CAMetalLayer;
 
 use super::{
     dispatch_event, ffi_boundary, post_redraw_event, unregister_window, with_window_delegate,
 };
-use crate::{Event, Modifiers, MouseButton, PhysicalSize, WindowId};
+use crate::{Event, Key, KeyCode, Modifiers, MouseButton, NamedKey, PhysicalSize, WindowId};
 
 // ---------------------------------------------------------------------------
 // Mouse event decode helpers
@@ -71,6 +74,121 @@ fn decode_button(button_number: isize) -> Option<MouseButton> {
 }
 
 // ---------------------------------------------------------------------------
+// Keyboard event decode helpers (Phase 9a)
+// ---------------------------------------------------------------------------
+
+/// Map a [`KeyCode`] to the matching [`NamedKey`] when the key has no
+/// textual representation. Returns `None` for letters / digits / punctuation
+/// (those flow through `Key::Character`).
+fn named_key_for_code(code: KeyCode) -> Option<NamedKey> {
+    Some(match code {
+        KeyCode::Enter => NamedKey::Enter,
+        KeyCode::Tab => NamedKey::Tab,
+        KeyCode::Escape => NamedKey::Escape,
+        KeyCode::Backspace => NamedKey::Backspace,
+        KeyCode::Delete => NamedKey::Delete,
+        KeyCode::Space => NamedKey::Space,
+        KeyCode::ArrowUp => NamedKey::ArrowUp,
+        KeyCode::ArrowDown => NamedKey::ArrowDown,
+        KeyCode::ArrowLeft => NamedKey::ArrowLeft,
+        KeyCode::ArrowRight => NamedKey::ArrowRight,
+        KeyCode::Home => NamedKey::Home,
+        KeyCode::End => NamedKey::End,
+        KeyCode::PageUp => NamedKey::PageUp,
+        KeyCode::PageDown => NamedKey::PageDown,
+        KeyCode::F1 => NamedKey::F1,
+        KeyCode::F2 => NamedKey::F2,
+        KeyCode::F3 => NamedKey::F3,
+        KeyCode::F4 => NamedKey::F4,
+        KeyCode::F5 => NamedKey::F5,
+        KeyCode::F6 => NamedKey::F6,
+        KeyCode::F7 => NamedKey::F7,
+        KeyCode::F8 => NamedKey::F8,
+        KeyCode::F9 => NamedKey::F9,
+        KeyCode::F10 => NamedKey::F10,
+        KeyCode::F11 => NamedKey::F11,
+        KeyCode::F12 => NamedKey::F12,
+        KeyCode::ShiftLeft | KeyCode::ShiftRight => NamedKey::Shift,
+        KeyCode::ControlLeft | KeyCode::ControlRight => NamedKey::Control,
+        KeyCode::AltLeft | KeyCode::AltRight => NamedKey::Alt,
+        KeyCode::MetaLeft | KeyCode::MetaRight => NamedKey::Meta,
+        _ => return None,
+    })
+}
+
+/// Decode the logical [`Key`] for a `keyDown:`/`keyUp:` event.
+///
+/// Prefers `NamedKey` for known non-textual keys; otherwise falls back to
+/// `Key::Character` when AppKit produced text, or `Key::Unidentified`.
+fn decode_key(code: KeyCode, chars: &str) -> Key {
+    if let Some(named) = named_key_for_code(code) {
+        return Key::Named(named);
+    }
+    if chars.is_empty() {
+        Key::Unidentified
+    } else {
+        Key::Character(chars.to_string())
+    }
+}
+
+/// Returns true if the string contains at least one non-control character.
+/// Filters out arrow / F-key sequences AppKit places in `characters`.
+fn is_visible_text(s: &str) -> bool {
+    s.chars().any(|c| !c.is_control())
+}
+
+/// Diff `prev` vs `new` modifier flags and dispatch synthetic [`Event::KeyDown`]
+/// / [`Event::KeyUp`] for each modifier that toggled.
+fn emit_modifier_changes(window: WindowId, prev: NSEventModifierFlags, new: NSEventModifierFlags) {
+    let entries: [(NSEventModifierFlags, KeyCode, NamedKey); 4] = [
+        (
+            NSEventModifierFlags::Shift,
+            KeyCode::ShiftLeft,
+            NamedKey::Shift,
+        ),
+        (
+            NSEventModifierFlags::Control,
+            KeyCode::ControlLeft,
+            NamedKey::Control,
+        ),
+        (
+            NSEventModifierFlags::Option,
+            KeyCode::AltLeft,
+            NamedKey::Alt,
+        ),
+        (
+            NSEventModifierFlags::Command,
+            KeyCode::MetaLeft,
+            NamedKey::Meta,
+        ),
+    ];
+    let modifiers = decode_modifiers(new);
+    for (flag, code, named) in entries {
+        let was = prev.contains(flag);
+        let is = new.contains(flag);
+        if was == is {
+            continue;
+        }
+        if is {
+            dispatch_event(Event::KeyDown {
+                window,
+                code,
+                key: Key::Named(named),
+                modifiers,
+                is_repeat: false,
+            });
+        } else {
+            dispatch_event(Event::KeyUp {
+                window,
+                code,
+                key: Key::Named(named),
+                modifiers,
+            });
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // MetalView — custom NSView backed by CAMetalLayer
 // ---------------------------------------------------------------------------
 
@@ -78,6 +196,18 @@ pub struct MetalViewIvars {
     pub(crate) window_id: Cell<WindowId>,
     /// Current tracking area for mouse move/enter/exit events.
     tracking_area: RefCell<Option<Retained<NSTrackingArea>>>,
+    /// True between viewWillStartLiveResize and viewDidEndLiveResize. Gates
+    /// the setFrameSize: sync-dispatch path: programmatic frame changes still
+    /// flow through windowDidResize: rather than the sync-present path.
+    pub(crate) live_resize: Cell<bool>,
+    /// Previous modifier flags for flagsChanged: diff (Phase 9a).
+    pub(crate) prev_modifier_flags: Cell<NSEventModifierFlags>,
+    /// True between the first `setMarkedText:` of a composition session and
+    /// the matching `insertText:` / `unmarkText`. Drives the IME state
+    /// machine so `insertText:` can tell IME commits apart from non-IME
+    /// typing (AppKit clears marked text BEFORE `insertText:` on commit,
+    /// so `hasMarkedText` is unreliable at that point).
+    pub(crate) was_composing: Cell<bool>,
 }
 
 define_class!(
@@ -123,6 +253,60 @@ define_class!(
             ffi_boundary(|| {
                 with_window_delegate(id, |d| d.on_redraw(id));
                 dispatch_event(Event::WindowRedrawRequested { window: id });
+            });
+        }
+
+        /// Live-resize hook: AppKit calls setFrameSize: once per drag tick
+        /// inside an open implicit CATransaction. We let super update the
+        /// view bounds (the transaction stays open), then — while still
+        /// inside the selector — dispatch a sync resize + render. The
+        /// renderer's present_sync calls CATransaction::flush() to commit
+        /// the open transaction with the new framebuffer in place. Without
+        /// this the new bounds commit one selector before the new pixels
+        /// land, producing the right/bottom edge flash.
+        ///
+        /// Gated on live_resize so steady-state size-from-code paths
+        /// (programmatic frame changes) flow through windowDidResize:
+        /// instead and aren't pulled onto the sync-present path unnecessarily.
+        #[unsafe(method(setFrameSize:))]
+        fn set_frame_size(&self, size: NSSize) {
+            // SAFETY: NSView::setFrameSize: takes NSSize; super signature matches.
+            let _: () = unsafe { msg_send![super(self), setFrameSize: size] };
+            ffi_boundary(|| {
+                if !self.ivars().live_resize.get() {
+                    return;
+                }
+                let scale = self.window().map(|w| w.backingScaleFactor()).unwrap_or(1.0);
+                let pw = (size.width * scale).round() as u32;
+                let ph = (size.height * scale).round() as u32;
+                if pw == 0 || ph == 0 {
+                    return;
+                }
+                let id = self.ivars().window_id.get();
+                with_window_delegate(id, |d| {
+                    d.on_resize_sync(id, PhysicalSize::new(pw, ph))
+                });
+            });
+        }
+
+        /// AppKit signals start of live resize. Sets the gate so the
+        /// setFrameSize: override above only dispatches during a drag.
+        #[unsafe(method(viewWillStartLiveResize))]
+        fn view_will_start_live_resize(&self) {
+            // SAFETY: super signature is `- (void)viewWillStartLiveResize`.
+            let _: () = unsafe { msg_send![super(self), viewWillStartLiveResize] };
+            ffi_boundary(|| {
+                self.ivars().live_resize.set(true);
+            });
+        }
+
+        /// AppKit signals end of live resize. Clears the gate.
+        #[unsafe(method(viewDidEndLiveResize))]
+        fn view_did_end_live_resize(&self) {
+            // SAFETY: super signature is `- (void)viewDidEndLiveResize`.
+            let _: () = unsafe { msg_send![super(self), viewDidEndLiveResize] };
+            ffi_boundary(|| {
+                self.ivars().live_resize.set(false);
             });
         }
 
@@ -324,6 +508,92 @@ define_class!(
             });
         }
 
+        // -----------------------------------------------------------------------
+        // Keyboard event selectors (Phase 9a)
+        // -----------------------------------------------------------------------
+
+        /// `keyDown:` — physical key press.
+        ///
+        /// Phase 9c: emit `Event::KeyDown` with the keymap-decoded `Key`
+        /// (handlers see Named keys like Enter/Backspace/Arrow), then
+        /// hand the event to `-[NSResponder interpretKeyEvents:]` so
+        /// AppKit can route it through the IME protocol methods below
+        /// (`insertText:` for non-IME ASCII / emoji-picker output;
+        /// `setMarkedText:` / `insertText:` for IME composition).
+        ///
+        /// `Event::TextInput` is NOT emitted here — it now flows from
+        /// `insertText:` when `was_composing == false`, which preserves
+        /// 9a back-compat for plain typing without double-emitting on
+        /// IME commits.
+        ///
+        /// Note: macOS may emit `Key::Character` inline in `KeyDown` via
+        /// AppKit's already-translated `characters`. Windows does not — see
+        /// `crates/slate-platform/src/win/keymap.rs` for the asymmetry doc.
+        #[unsafe(method(keyDown:))]
+        fn key_down(&self, event: &NSEvent) {
+            let id = self.ivars().window_id.get();
+            ffi_boundary(|| {
+                let vk = event.keyCode();
+                let code = super::keymap::decode_keycode(vk);
+                let modifiers = decode_modifiers(event.modifierFlags());
+                let is_repeat = event.isARepeat();
+                let chars = event
+                    .characters()
+                    .map(|s| s.to_string())
+                    .unwrap_or_default();
+                let key = decode_key(code, &chars);
+                let _ = is_visible_text; // retained for keyUp; suppress unused-fn warning here.
+                dispatch_event(Event::KeyDown {
+                    window: id,
+                    code,
+                    key,
+                    modifiers,
+                    is_repeat,
+                });
+                // Route through IME. AppKit will either call `insertText:`
+                // directly (no IME / emoji-picker output) or call
+                // `setMarkedText:` / `insertText:` for composition.
+                let arr = NSArray::from_slice(&[event]);
+                self.interpretKeyEvents(&arr);
+            });
+        }
+
+        /// `keyUp:` — physical key release.
+        #[unsafe(method(keyUp:))]
+        fn key_up(&self, event: &NSEvent) {
+            let id = self.ivars().window_id.get();
+            ffi_boundary(|| {
+                let vk = event.keyCode();
+                let code = super::keymap::decode_keycode(vk);
+                let modifiers = decode_modifiers(event.modifierFlags());
+                let chars = event
+                    .characters()
+                    .map(|s| s.to_string())
+                    .unwrap_or_default();
+                let key = decode_key(code, &chars);
+                dispatch_event(Event::KeyUp {
+                    window: id,
+                    code,
+                    key,
+                    modifiers,
+                });
+            });
+        }
+
+        /// `flagsChanged:` — modifier-only press/release. AppKit does not
+        /// produce keyDown:/keyUp: for bare Shift/Ctrl/Alt/Meta; we diff the
+        /// previous flag bitfield against the new one and synthesize the
+        /// corresponding events.
+        #[unsafe(method(flagsChanged:))]
+        fn flags_changed(&self, event: &NSEvent) {
+            let id = self.ivars().window_id.get();
+            ffi_boundary(|| {
+                let new_flags = event.modifierFlags();
+                let prev_flags = self.ivars().prev_modifier_flags.replace(new_flags);
+                emit_modifier_changes(id, prev_flags, new_flags);
+            });
+        }
+
         /// Called by AppKit when view bounds change. Reinstall tracking area.
         #[unsafe(method(updateTrackingAreas))]
         fn update_tracking_areas(&self) {
@@ -358,6 +628,105 @@ define_class!(
             *self.ivars().tracking_area.borrow_mut() = Some(tracking_area);
         }
     }
+
+    // SAFETY: All NSTextInputClient methods are implemented per the
+    // protocol contract; bodies are wrapped in `ffi_boundary` so Rust
+    // panics cannot cross the Obj-C ABI. String parameters arrive as
+    // either NSString or NSAttributedString (per Apple docs); the helper
+    // [`view_ime::ns_input_to_string`] handles both.
+    unsafe impl NSTextInputClient for MetalView {
+        #[unsafe(method(insertText:replacementRange:))]
+        fn insert_text_replacement_range(
+            &self,
+            string: &AnyObject,
+            replacement_range: NSRange,
+        ) {
+            ffi_boundary(|| self.ime_handle_insert_text(string, replacement_range));
+        }
+
+        #[unsafe(method(doCommandBySelector:))]
+        fn do_command_by_selector(&self, _selector: Sel) {
+            // No-op: the underlying Event::KeyDown was already dispatched
+            // from `key_down` before `interpretKeyEvents:` ran, so the
+            // framework / handler chain already saw the key. AppKit only
+            // calls this when the IME refuses to consume the keystroke.
+        }
+
+        #[unsafe(method(setMarkedText:selectedRange:replacementRange:))]
+        fn set_marked_text_selected_range_replacement_range(
+            &self,
+            string: &AnyObject,
+            selected_range: NSRange,
+            replacement_range: NSRange,
+        ) {
+            ffi_boundary(|| {
+                self.ime_handle_set_marked_text(string, selected_range, replacement_range)
+            });
+        }
+
+        #[unsafe(method(unmarkText))]
+        fn unmark_text(&self) {
+            ffi_boundary(|| self.ime_handle_unmark_text());
+        }
+
+        #[unsafe(method(selectedRange))]
+        fn selected_range(&self) -> NSRange {
+            let mut out = NSRange::new(0, 0);
+            ffi_boundary(|| out = self.ime_handle_selected_range());
+            out
+        }
+
+        #[unsafe(method(markedRange))]
+        fn marked_range(&self) -> NSRange {
+            let mut out = NSRange::new(0, 0);
+            ffi_boundary(|| out = self.ime_handle_marked_range());
+            out
+        }
+
+        #[unsafe(method(hasMarkedText))]
+        fn has_marked_text(&self) -> bool {
+            let mut out = false;
+            ffi_boundary(|| out = self.ime_handle_has_marked_text());
+            out
+        }
+
+        #[unsafe(method_id(attributedSubstringForProposedRange:actualRange:))]
+        fn attributed_substring_for_proposed_range_actual_range(
+            &self,
+            range: NSRange,
+            _actual_range: NSRangePointer,
+        ) -> Option<Retained<NSAttributedString>> {
+            let mut out = None;
+            ffi_boundary(|| out = self.ime_handle_attributed_substring(range));
+            out
+        }
+
+        #[unsafe(method_id(validAttributesForMarkedText))]
+        fn valid_attributes_for_marked_text(&self) -> Retained<NSArray<NSAttributedStringKey>> {
+            // Cannot return early on panic; default to empty array.
+            let mut out: Option<Retained<NSArray<NSAttributedStringKey>>> = None;
+            ffi_boundary(|| out = Some(self.ime_handle_valid_attributes()));
+            out.unwrap_or_default()
+        }
+
+        #[unsafe(method(firstRectForCharacterRange:actualRange:))]
+        fn first_rect_for_character_range_actual_range(
+            &self,
+            range: NSRange,
+            _actual_range: NSRangePointer,
+        ) -> NSRect {
+            let mut out = NSRect::ZERO;
+            ffi_boundary(|| out = self.ime_handle_first_rect(range));
+            out
+        }
+
+        #[unsafe(method(characterIndexForPoint:))]
+        fn character_index_for_point(&self, point: NSPoint) -> NSUInteger {
+            let mut out: NSUInteger = 0;
+            ffi_boundary(|| out = self.ime_handle_character_index(point));
+            out
+        }
+    }
 );
 
 impl MetalView {
@@ -365,6 +734,9 @@ impl MetalView {
         let this = Self::alloc(mtm).set_ivars(MetalViewIvars {
             window_id: Cell::new(window_id),
             tracking_area: RefCell::new(None),
+            live_resize: Cell::new(false),
+            prev_modifier_flags: Cell::new(NSEventModifierFlags::empty()),
+            was_composing: Cell::new(false),
         });
         // SAFETY: `NSView`'s designated initializer `initWithFrame:` takes an
         // `NSRect` and returns `Retained<NSView>`. The super-call signature matches.
@@ -522,6 +894,37 @@ define_class!(
             let id = self.ivars().window_id.get();
             ffi_boundary(|| {
                 post_redraw_event(id);
+            });
+        }
+
+        /// Called when the window becomes key. Snapshot the current modifier
+        /// flags onto the content view so `flagsChanged:` diffs are aligned
+        /// with the actual hardware state — absorbs cross-app modifier drift
+        /// (e.g. Shift pressed in another app during Alt-Tab).
+        #[unsafe(method(windowDidBecomeKey:))]
+        fn window_did_become_key(&self, notification: &NSNotification) {
+            ffi_boundary(|| {
+                let Some(win) = notification
+                    .object()
+                    .and_then(|obj| obj.downcast::<NSWindow>().ok())
+                else {
+                    return;
+                };
+                let Some(view) = win.contentView() else {
+                    return;
+                };
+                let Ok(metal_view) = view.downcast::<MetalView>() else {
+                    return;
+                };
+                let mtm =
+                    MainThreadMarker::new().expect("windowDidBecomeKey: invoked off main thread");
+                let app = objc2_app_kit::NSApplication::sharedApplication(mtm);
+                if let Some(event) = app.currentEvent() {
+                    metal_view
+                        .ivars()
+                        .prev_modifier_flags
+                        .set(event.modifierFlags());
+                }
             });
         }
     }

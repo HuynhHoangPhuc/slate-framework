@@ -4,10 +4,11 @@
 
 use std::sync::Arc;
 
+use objc2_quartz_core::CATransaction;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use slate_platform::Window;
 use wgpu::{
-    Device, Instance, PresentMode, Surface, SurfaceConfiguration, SurfaceTargetUnsafe,
+    Device, Instance, PollType, PresentMode, Surface, SurfaceConfiguration, SurfaceTargetUnsafe,
     TextureFormat, TextureUsages, TextureViewDescriptor,
 };
 
@@ -70,6 +71,36 @@ impl MacSurface {
             config,
             _window: window,
         })
+    }
+
+    /// Present a previously acquired frame INSIDE AppKit's currently open
+    /// CATransaction (the one opened by `setFrameSize:` for the current drag
+    /// tick). Drains pending GPU work non-blocking, submits the Metal present,
+    /// then `CATransaction::flush` commits the open transaction with the new
+    /// pixels in place — closing the wrong-side-of-transaction race that
+    /// otherwise lets WindowServer composite the new bounds with stale
+    /// drawable contents.
+    pub fn present_sync(
+        &mut self,
+        frame: AcquiredFrame,
+        device: &Device,
+    ) -> Result<(), PresentError> {
+        // Drain submitted command-buffer callbacks without blocking. Cheap
+        // when there's no work queued; matches Tristan-Hume / Zed pattern
+        // step 1. Escalation tree (Wait, then [commandBuffer waitUntilScheduled]
+        // via wgpu-hal) lives in Phase 3 if residual flicker appears.
+        let _ = device.poll(PollType::Poll);
+        match frame.inner {
+            AcquiredFrameInner::Mac(tex) => tex.present(),
+            #[cfg(target_os = "windows")]
+            AcquiredFrameInner::Win { .. } => unreachable!(),
+        }
+        // Force AppKit's currently open implicit transaction to commit
+        // immediately, landing the new framebuffer in the same transaction
+        // as the bounds change. NOT `begin()+commit()` — that would open a
+        // separate transaction and reproduce the bug.
+        CATransaction::flush();
+        Ok(())
     }
 }
 

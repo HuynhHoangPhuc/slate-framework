@@ -21,6 +21,7 @@ slate-text = { path = "../slate-text", version = "0.0.2" }
 taffy = "=0.10.1"
 smallvec = "=1.15.1"
 accesskit = "=0.24.0"
+unicode-segmentation.workspace = true
 
 # Phase 4 async runtime (pinned to latest stable 2026-05-07)
 smol = "=2.0.2"

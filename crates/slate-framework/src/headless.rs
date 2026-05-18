@@ -12,7 +12,8 @@
 //! image.save("output.png")?;
 //! ```
 
-use std::collections::HashMap;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::num::NonZeroU32;
 
 use image::RgbaImage;
@@ -39,10 +40,13 @@ use slate_renderer::shadow_pipeline::ShadowPipeline;
 
 use crate::context::{LayoutCtx, PaintCtx, PrepaintCtx};
 use crate::element::AnyElement;
-use crate::event::Handlers;
+use crate::event::{Handlers, ImeHandlers, KeyHandlers};
 use crate::executor::{Executor, RedrawRequester};
+use crate::focus::FocusRegistry;
+use crate::focus_ring::FocusBounds;
 use crate::hit_test::HitTestList;
 use crate::image_cache::ImageCache;
+use crate::ime::ImeRegistry;
 use crate::layout::{LayoutTree, compute_layout, resolve_bounds};
 use crate::reactive_state::StateRegistry;
 use crate::text_system::TextSystem;
@@ -104,6 +108,16 @@ pub struct HeadlessApp {
     // Phase 5a: Event handler collection (for headless testing parity)
     handler_map: HashMap<ElementId, Handlers>,
     parent_map: HashMap<ElementId, ElementId>,
+
+    // Phase 9b: keyboard + focus state collected each prepaint (headless parity).
+    key_handler_map: HashMap<ElementId, KeyHandlers>,
+    focus_registry: FocusRegistry,
+    focus_bounds: HashMap<ElementId, FocusBounds>,
+
+    // Phase 9c: IME state collected each prepaint (headless parity).
+    ime_registry: RefCell<ImeRegistry>,
+    ime_handler_map: HashMap<ElementId, ImeHandlers>,
+    ime_registered_ids: HashSet<ElementId>,
 }
 
 /// Error creating or rendering with HeadlessApp.
@@ -258,6 +272,9 @@ impl HeadlessApp {
         // Phase 5a: Event handler collection (for headless testing parity)
         let handler_map = HashMap::new();
         let parent_map = HashMap::new();
+        let key_handler_map = HashMap::new();
+        let focus_registry = FocusRegistry::new();
+        let focus_bounds = HashMap::new();
 
         // Phase 2: Image cache
         let image_cache = ImageCache::new();
@@ -293,6 +310,12 @@ impl HeadlessApp {
             image_cache,
             handler_map,
             parent_map,
+            key_handler_map,
+            focus_registry,
+            focus_bounds,
+            ime_registry: RefCell::new(ImeRegistry::new()),
+            ime_handler_map: HashMap::new(),
+            ime_registered_ids: HashSet::new(),
         })
     }
 
@@ -341,6 +364,12 @@ impl HeadlessApp {
         self.a11y_nodes.clear();
         self.handler_map.clear();
         self.parent_map.clear();
+        self.key_handler_map.clear();
+        self.focus_registry.clear();
+        self.focus_bounds.clear();
+        self.ime_handler_map.clear();
+        self.ime_registered_ids.clear();
+        self.ime_registry.borrow_mut().clear();
         {
             let mut cx = PrepaintCtx::new(
                 self.layout_tree.inner(),
@@ -353,6 +382,12 @@ impl HeadlessApp {
                 &mut self.text_shaping_cache,
                 &mut self.handler_map,
                 &mut self.parent_map,
+                &mut self.key_handler_map,
+                &mut self.focus_registry,
+                &mut self.focus_bounds,
+                &self.ime_registry,
+                &mut self.ime_handler_map,
+                &mut self.ime_registered_ids,
             );
 
             // Initialize tree-position keying for stable ElementIds
@@ -394,9 +429,14 @@ impl HeadlessApp {
                 &self.queue,
                 &self.executor.foreground,
                 self.scale_factor,
+                &self.ime_registry,
             );
             root.paint(root_bounds, &mut cx);
         }
+        // Phase 9c: drop entries for unmounted ime-capable elements.
+        self.ime_registry
+            .borrow_mut()
+            .prune_missing(&self.ime_registered_ids);
 
         // 5. GPU render
         self.scene.finish();
@@ -587,5 +627,23 @@ impl HeadlessApp {
     /// Get memory used by text shaping cache in bytes (for testing).
     pub fn text_shaping_cache_memory(&self) -> usize {
         self.text_shaping_cache.memory_used()
+    }
+
+    // =========================================================================
+    // Phase 9c: IME test hook
+    // =========================================================================
+
+    /// Inject an `ImeState` for `id` directly into the headless IME registry,
+    /// then republish the cached query snapshot.
+    ///
+    /// This bypasses the platform dispatch path and is intended for visual
+    /// regression tests that need to render preedit / caret states without a
+    /// real IME session.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn set_ime_state(&mut self, id: ElementId, state: crate::ime::ImeState) {
+        let rc = self.ime_registry.borrow_mut().register(id);
+        *rc.borrow_mut() = state;
+        // HeadlessApp has no WindowImeDelegate cache; `ime_registry` itself is
+        // the source of truth — no separate republish step required here.
     }
 }

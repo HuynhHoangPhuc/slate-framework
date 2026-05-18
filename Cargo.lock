@@ -1063,6 +1063,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ime-textfield"
+version = "0.0.2"
+dependencies = [
+ "env_logger",
+ "log",
+ "slate-framework",
+]
+
+[[package]]
 name = "imgref"
 version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2255,6 +2264,7 @@ dependencies = [
  "tokio",
  "tracing-test",
  "trybuild",
+ "unicode-segmentation",
  "wgpu",
 ]
 
@@ -2290,6 +2300,7 @@ dependencies = [
  "etagere",
  "glam",
  "log",
+ "objc2-quartz-core",
  "pollster",
  "raw-window-handle",
  "slate-platform",
@@ -2627,6 +2638,12 @@ name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
+
+[[package]]
+name = "unicode-segmentation"
+version = "1.13.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9629274872b2bfaf8d66f5f15725007f635594914870f65218920345aa11aa8c"
 
 [[package]]
 name = "unicode-width"

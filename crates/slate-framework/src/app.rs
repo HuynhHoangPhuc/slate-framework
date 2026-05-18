@@ -3,16 +3,23 @@
 //! `App` owns all framework resources and provides `run()` to enter
 //! the platform event loop with a View.
 
+use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use slate_platform::{
-    DefaultPlatform, DefaultWindow, Event, Platform, Window, WindowOptions, WindowRenderDelegate,
-    wake_run_loop,
+    DefaultPlatform, DefaultWindow, Event, Platform, Window, WindowImeDelegate, WindowOptions,
+    WindowRenderDelegate, wake_run_loop,
 };
 
 use crate::app_state::{AppSignal, AppState};
+use crate::event::{
+    EventCtx, ImeCommitEvent, ImeCommitHandler, ImeLifecycleEvent, ImeLifecycleHandler,
+    ImePreeditEvent, ImePreeditHandler, KeyEvent, KeyHandler, TextInputEvent, TextInputHandler,
+};
 use crate::executor::{BackgroundExecutor, Executor, RedrawRequester};
+use crate::focus::FocusRegistry;
+use crate::types::ElementId;
 use crate::view::View;
 
 // Synthetic device-lost trigger for Phase 2.1 closure on the real visible-window
@@ -30,8 +37,9 @@ static FORCE_DEVICE_LOST_ARMED: std::sync::atomic::AtomicBool =
 
 /// Application context passed to the view factory.
 ///
-/// Provides access to the reactive runtime and background executor for constructing
-/// signals and spawning background tasks.
+/// Provides access to the reactive runtime, background executor, and the
+/// focus registry (Phase 9b) for constructing signals, spawning background
+/// tasks, and driving focus from outside of event handlers.
 ///
 /// Note: `ForegroundExecutor` is intentionally not exposed here because it's `!Send`
 /// and bound to the UI thread. UI-thread tasks should use the foreground executor
@@ -40,6 +48,7 @@ static FORCE_DEVICE_LOST_ARMED: std::sync::atomic::AtomicBool =
 pub struct AppContext {
     runtime: Arc<slate_reactive::Runtime>,
     background_executor: BackgroundExecutor,
+    focus_registry: Rc<RefCell<FocusRegistry>>,
 }
 
 impl AppContext {
@@ -53,6 +62,27 @@ impl AppContext {
         self.background_executor.clone()
     }
 
+    /// Set focus to `id` immediately (outside-handler entry point).
+    ///
+    /// Returns `true` when `id` is currently registered with the focus
+    /// registry. Inside an event handler, prefer
+    /// [`EventCtx::request_focus`](crate::event::EventCtx::request_focus) so
+    /// the change is deferred until after the chain unwinds.
+    pub fn set_focus(&self, id: ElementId) -> bool {
+        self.focus_registry.borrow_mut().set_focus(id)
+    }
+
+    /// Clear focus immediately. Inside a handler, prefer
+    /// [`EventCtx::blur`](crate::event::EventCtx::blur).
+    pub fn clear_focus(&self) {
+        self.focus_registry.borrow_mut().clear_focus();
+    }
+
+    /// Read the currently-focused element id.
+    pub fn focused_element(&self) -> Option<ElementId> {
+        self.focus_registry.borrow().focused()
+    }
+
     /// Construct an `AppContext` directly. Test-only.
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn new_for_test(
@@ -62,6 +92,7 @@ impl AppContext {
         Self {
             runtime,
             background_executor,
+            focus_registry: Rc::new(RefCell::new(FocusRegistry::new())),
         }
     }
 }
@@ -73,6 +104,13 @@ impl AppContext {
 pub struct App {
     platform: DefaultPlatform,
     window: Arc<DefaultWindow>,
+    on_key_down: Vec<KeyHandler>,
+    on_key_up: Vec<KeyHandler>,
+    on_text_input: Vec<TextInputHandler>,
+    on_ime_preedit: Vec<ImePreeditHandler>,
+    on_ime_commit: Vec<ImeCommitHandler>,
+    on_ime_enabled: Vec<ImeLifecycleHandler>,
+    on_ime_disabled: Vec<ImeLifecycleHandler>,
 }
 
 impl App {
@@ -83,7 +121,89 @@ impl App {
         let platform = DefaultPlatform::new();
         let window = platform.create_window(options);
 
-        Self { platform, window }
+        Self {
+            platform,
+            window,
+            on_key_down: Vec::new(),
+            on_key_up: Vec::new(),
+            on_text_input: Vec::new(),
+            on_ime_preedit: Vec::new(),
+            on_ime_commit: Vec::new(),
+            on_ime_enabled: Vec::new(),
+            on_ime_disabled: Vec::new(),
+        }
+    }
+
+    /// Register an App-level handler for `KeyDown` events. Multiple handlers
+    /// may be registered; they fire in registration order. Handlers must not
+    /// re-enter `App::run` or other dispatch paths — the framework holds a
+    /// `RefCell` borrow on the handler vec for the duration of the call.
+    ///
+    /// Call before [`App::run`]; the type system enforces this (`run` consumes
+    /// `self`).
+    pub fn on_key_down(mut self, handler: impl FnMut(&KeyEvent, &mut EventCtx) + 'static) -> Self {
+        self.on_key_down.push(Box::new(handler));
+        self
+    }
+
+    /// Register an App-level handler for `KeyUp` events. See [`App::on_key_down`].
+    pub fn on_key_up(mut self, handler: impl FnMut(&KeyEvent, &mut EventCtx) + 'static) -> Self {
+        self.on_key_up.push(Box::new(handler));
+        self
+    }
+
+    /// Register an App-level handler for composed text input. Fires once per
+    /// keystroke that produces visible text (or per surrogate pair on Windows).
+    /// See [`App::on_key_down`].
+    pub fn on_text_input(
+        mut self,
+        handler: impl FnMut(&TextInputEvent, &mut EventCtx) + 'static,
+    ) -> Self {
+        self.on_text_input.push(Box::new(handler));
+        self
+    }
+
+    /// Register an App-level handler for IME preedit (composition) updates.
+    /// Fires on each `setMarkedText:` (macOS) / `WM_IME_COMPOSITION GCS_COMPSTR`
+    /// (Windows). See [`App::on_key_down`].
+    pub fn on_ime_preedit(
+        mut self,
+        handler: impl FnMut(&ImePreeditEvent, &mut EventCtx) + 'static,
+    ) -> Self {
+        self.on_ime_preedit.push(Box::new(handler));
+        self
+    }
+
+    /// Register an App-level handler for IME commits. Empty `text` is the
+    /// "clear preedit, no insert" signal; handlers MUST skip `Signal::set`
+    /// in that case. See [`App::on_key_down`].
+    pub fn on_ime_commit(
+        mut self,
+        handler: impl FnMut(&ImeCommitEvent, &mut EventCtx) + 'static,
+    ) -> Self {
+        self.on_ime_commit.push(Box::new(handler));
+        self
+    }
+
+    /// Register an App-level handler for the start of an IME composition
+    /// session. Paired with [`App::on_ime_disabled`]. See [`App::on_key_down`].
+    pub fn on_ime_enabled(
+        mut self,
+        handler: impl FnMut(&ImeLifecycleEvent, &mut EventCtx) + 'static,
+    ) -> Self {
+        self.on_ime_enabled.push(Box::new(handler));
+        self
+    }
+
+    /// Register an App-level handler for the end of an IME composition
+    /// session. Always preceded by [`App::on_ime_enabled`]. See
+    /// [`App::on_key_down`].
+    pub fn on_ime_disabled(
+        mut self,
+        handler: impl FnMut(&ImeLifecycleEvent, &mut EventCtx) + 'static,
+    ) -> Self {
+        self.on_ime_disabled.push(Box::new(handler));
+        self
     }
 
     /// Run the application with the given view factory.
@@ -94,26 +214,54 @@ impl App {
     /// This method enters the platform event loop and does not return until
     /// the application exits.
     pub fn run<V: View>(self, mut view_fn: impl FnMut(&AppContext) -> V + 'static) {
-        let App { platform, window } = self;
+        let App {
+            platform,
+            window,
+            on_key_down,
+            on_key_up,
+            on_text_input,
+            on_ime_preedit,
+            on_ime_commit,
+            on_ime_enabled,
+            on_ime_disabled,
+        } = self;
 
         // Create executor and reactive runtime
         let redraw_requester = RedrawRequester::new(wake_run_loop);
         let executor = Executor::new(redraw_requester.clone());
         let runtime = slate_reactive::Runtime::new();
 
-        // AppContext for view factory
-        let cx = AppContext {
-            runtime: runtime.clone(),
-            background_executor: executor.background.clone(),
-        };
+        // Capture handles needed by AppContext before AppState consumes the
+        // owned originals (Executor is not Clone — only its inner
+        // BackgroundExecutor is).
+        let background_executor = executor.background.clone();
 
-        // Create shared application state
+        // Create shared application state first so AppContext can share its
+        // focus registry (Phase 9b: AppContext::set_focus / focused_element
+        // need to operate on the same registry AppState dispatches against).
         let state = Rc::new(AppState::new(
             window.clone(),
             executor,
             redraw_requester,
-            runtime,
+            runtime.clone(),
         ));
+
+        let cx = AppContext {
+            runtime,
+            background_executor,
+            focus_registry: state.focus_registry.clone(),
+        };
+
+        // Move keyboard handlers into AppState before the platform loop starts.
+        // Setter pattern (rather than ctor args) keeps test call sites stable —
+        // headless harnesses that don't need keyboard dispatch never call this.
+        state.install_key_handlers(on_key_down, on_key_up, on_text_input);
+        state.install_ime_handlers(
+            on_ime_preedit,
+            on_ime_commit,
+            on_ime_enabled,
+            on_ime_disabled,
+        );
 
         // Install render delegate on the platform window.
         //
@@ -126,6 +274,14 @@ impl App {
         let dyn_weak = Rc::downgrade(&dyn_strong);
         window.set_render_delegate(dyn_weak);
         drop(dyn_strong); // strong ref no longer needed; `state` keeps AppState alive.
+
+        // Phase 9c: install IME delegate via the same Rc<dyn …>-via-let-binding
+        // dance. Identical SAFETY argument as above (unsizing coercion needs a
+        // coercion site, not an `as` cast).
+        let ime_strong: Rc<dyn WindowImeDelegate> = state.clone();
+        let ime_weak = Rc::downgrade(&ime_strong);
+        window.set_ime_delegate(ime_weak);
+        drop(ime_strong);
 
         let platform_ref = &platform;
         let state_ref = state.clone();
@@ -204,10 +360,39 @@ impl App {
                 Event::CaptureLost { .. } => state_ref.dispatch_capture_lost(),
                 Event::DeviceLost { fatal, .. } => state_ref.dispatch_device_lost(fatal),
                 Event::DeviceRestored { .. } => state_ref.dispatch_device_restored(),
+                Event::KeyDown {
+                    code,
+                    key,
+                    modifiers,
+                    is_repeat,
+                    ..
+                } => state_ref.dispatch_key_down(code, key, modifiers, is_repeat),
+                Event::KeyUp {
+                    code,
+                    key,
+                    modifiers,
+                    ..
+                } => state_ref.dispatch_key_up(code, key, modifiers),
+                Event::TextInput { text, .. } => state_ref.dispatch_text_input(text),
+                Event::ImeEnabled { window, .. } => state_ref.dispatch_ime_enabled(window),
+                Event::ImePreedit {
+                    window,
+                    text,
+                    cursor_byte_offset,
+                    selection,
+                    ..
+                } => state_ref.dispatch_ime_preedit(window, text, cursor_byte_offset, selection),
+                Event::ImeCommit { window, text, .. } => {
+                    state_ref.dispatch_ime_commit(window, text)
+                }
+                Event::ImeDisabled { window, .. } => state_ref.dispatch_ime_disabled(window),
                 Event::Exiting => {
                     log::info!("exiting");
                     AppSignal::None
                 }
+                // Slate's Event is #[non_exhaustive]; this final arm preserves
+                // forward compatibility — future Slate variants are observed
+                // but not yet routed.
                 _ => AppSignal::None,
             };
 

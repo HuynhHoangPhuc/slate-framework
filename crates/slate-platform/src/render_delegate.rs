@@ -70,6 +70,32 @@ impl From<PhysicalSize> for (u32, u32) {
     }
 }
 
+/// Physical pixel rectangle in screen coordinates.
+///
+/// Used by the IME delegate query channel ([`WindowImeDelegate::ime_caret_rect`])
+/// to report the caret position to the OS for candidate-window placement.
+/// Origin is top-left; coordinates are physical pixels in **screen space**
+/// (not window-relative). Platform impls perform any final OS-specific
+/// conversions (Y-flip on macOS, ScreenToClient on Windows).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+pub struct PhysicalRect {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl PhysicalRect {
+    pub const fn new(x: i32, y: i32, width: u32, height: u32) -> Self {
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+}
+
 /// Receives synchronous render notifications from a [`Window`](crate::Window).
 ///
 /// Invoked from OS resize callbacks (Windows `WM_SIZE`/`WM_NCCALCSIZE`/
@@ -108,4 +134,65 @@ pub trait WindowRenderDelegate {
     /// Called on WM_EXITSIZEMOVE (modal size-move loop ended). Default: no-op.
     /// AppState overrides to fire deferred device probes.
     fn on_size_move_end(&self, _window_id: WindowId) {}
+}
+
+/// Sync IME query boundary trait — invoked from platform OS callbacks
+/// (macOS `NSTextInputClient` methods on `MetalView`, Windows `WM_IME_*`
+/// arms in `wnd_proc_trampoline`) **during composition**.
+///
+/// # ADR-001 amendment (cache-then-query, Phase 9c)
+///
+/// Implementers MUST read all four query methods from a pre-published
+/// snapshot (e.g. `AppState.cached_ime_query: RefCell<CachedImeQuery>`)
+/// and MUST NOT traverse the live focus / IME / parent registries from
+/// inside these methods. The OS query callbacks can fire mid-`keyDown:`
+/// dispatch, re-entering framework state with active borrows; the
+/// cache-then-query pattern eliminates the re-entrancy hazard
+/// structurally.
+///
+/// The cache is republished at deterministic points (end of
+/// `dispatch_ime_preedit`, end of every paint), so query results lag at
+/// most one frame — well within IME tolerance (the OS candidate window
+/// already lags one frame).
+///
+/// # Ownership
+///
+/// Held by platform [`Window`](crate::Window) implementations as
+/// `Weak<dyn WindowImeDelegate>` (installed via
+/// [`Window::set_ime_delegate`](crate::Window)). Mirrors the
+/// [`WindowRenderDelegate`] ownership pattern; `Weak` prevents the
+/// `AppState ↔ Window` cycle.
+///
+/// # Threading
+///
+/// `?Send + ?Sync` (no bound). All methods invoked on the main thread
+/// only, from inside OS query callbacks during composition. Matches
+/// [`WindowRenderDelegate`] threading.
+pub trait WindowImeDelegate {
+    /// Screen-coord physical-pixel rect of the active caret. The OS uses
+    /// this to position the candidate / suggestion window.
+    ///
+    /// Returns `None` when no focused element is IME-capable, or when
+    /// the cache has not been published yet (pre-first-paint).
+    fn ime_caret_rect(&self, window_id: WindowId) -> Option<PhysicalRect>;
+
+    /// Text at the given byte range in the focused element's buffer.
+    /// Used by macOS `attributedSubstringForProposedRange:` for IME
+    /// context queries.
+    ///
+    /// Returns `None` if the range is outside the cached text window
+    /// or if no focused element claims IME.
+    fn ime_text(&self, window_id: WindowId, range: std::ops::Range<usize>) -> Option<String>;
+
+    /// Current selection in the focused element. Caret-only collapses
+    /// to an empty range at the caret position. Used by macOS
+    /// `selectedRange` query.
+    ///
+    /// Returns `None` if no focused element claims IME.
+    fn ime_selected_range(&self, window_id: WindowId) -> Option<std::ops::Range<usize>>;
+
+    /// Current preedit (marked text) range, or `None` if no composition
+    /// is active on the focused element. Used by macOS `markedRange`
+    /// query.
+    fn ime_marked_range(&self, window_id: WindowId) -> Option<std::ops::Range<usize>>;
 }
