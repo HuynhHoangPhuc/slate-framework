@@ -19,7 +19,7 @@
 /// `(ptr_addr, size_lpx_bits, scale_bits)` triple. Two fonts at different sizes
 /// from the same byte slice will have distinct handles even if they share the
 /// same underlying pointer.
-#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub struct FontHandle {
     /// Raw pointer address of the platform font object.
     pub ptr_addr: u64,

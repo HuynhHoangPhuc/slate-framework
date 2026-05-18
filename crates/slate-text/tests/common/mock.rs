@@ -110,6 +110,7 @@ impl TextBackend for MockBackend {
             .map(|(i, _)| ShapedGlyph {
                 glyph_id: i as u32 + 1, // start at 1 to avoid 0-size bitmaps
                 font_id: FontId::PRIMARY,
+                font_handle: Default::default(),
                 x_advance_lpx: advance,
                 x_offset_lpx: 0.0,
                 y_offset_lpx: 0.0,

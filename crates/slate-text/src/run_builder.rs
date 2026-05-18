@@ -5,6 +5,7 @@ use slate_renderer::scene::GlyphInstance;
 
 use crate::TextError;
 use crate::backend::{Font, TextBackend};
+use crate::font_handle::FontHandle;
 use crate::glyph_cache::GlyphCache;
 use crate::types::ShapedLine;
 
@@ -78,6 +79,13 @@ impl<'a, B: TextBackend> TextRunBuilder<'a, B> {
     }
 
     /// Builds GPU glyph instances for a single line at a given Y offset.
+    ///
+    /// Dispatches per-glyph on `ShapedGlyph::font_handle`: glyphs that the
+    /// platform shaper rendered with a substitute face go through
+    /// `backend.font_for(handle) → rasterize_glyph`, so CJK/emoji glyphs
+    /// produced by DirectWrite's or CoreText's internal fallback don't get
+    /// mis-rasterized against the primary face. The default sentinel handle
+    /// (or a handle matching the primary) takes the original primary path.
     fn build_line_at(
         &self,
         shaped: &ShapedLine,
@@ -87,7 +95,7 @@ impl<'a, B: TextBackend> TextRunBuilder<'a, B> {
         y_offset_lpx: f32,
     ) -> Result<Vec<GlyphInstance>, TextError> {
         let scale = self.font.scale();
-        let fh = self.font.handle();
+        let primary_h = self.font.handle();
         let mut out = Vec::with_capacity(shaped.glyphs.len());
         let mut pen_x_lpx = self.baseline_lpx[0];
 
@@ -96,15 +104,56 @@ impl<'a, B: TextBackend> TextRunBuilder<'a, B> {
             let glyph_x_px = glyph_x_lpx * scale;
             let variant = compute_variant(glyph_x_px);
 
-            let bounds = self.backend.glyph_raster_bounds(self.font, g.glyph_id)?;
+            // Sentinel default → use primary; otherwise dispatch on captured face.
+            let use_primary =
+                g.font_handle == FontHandle::default() || g.font_handle == primary_h;
+
+            let (bounds, key_handle) = if use_primary {
+                (
+                    self.backend.glyph_raster_bounds(self.font, g.glyph_id)?,
+                    primary_h,
+                )
+            } else if let Some(sub_font) = self.backend.font_for(g.font_handle) {
+                (
+                    self.backend.glyph_raster_bounds(sub_font, g.glyph_id)?,
+                    g.font_handle,
+                )
+            } else {
+                // Unknown handle — fall back to primary so we don't drop the
+                // glyph silently. This is a defensive path; the registry
+                // should always know any handle that flowed through shaping.
+                (
+                    self.backend.glyph_raster_bounds(self.font, g.glyph_id)?,
+                    primary_h,
+                )
+            };
+
             if bounds.is_whitespace() {
                 pen_x_lpx += g.x_advance_lpx;
                 continue;
             }
 
-            cache.materialize(self.backend, self.font, g.glyph_id, variant, atlas, queue)?;
+            if use_primary || key_handle == primary_h {
+                cache.materialize(
+                    self.backend,
+                    self.font,
+                    g.glyph_id,
+                    variant,
+                    atlas,
+                    queue,
+                )?;
+            } else {
+                cache.materialize_by_handle(
+                    self.backend,
+                    key_handle,
+                    g.glyph_id,
+                    variant,
+                    atlas,
+                    queue,
+                )?;
+            }
 
-            if let Some(cg) = cache.get(fh, g.glyph_id, variant) {
+            if let Some(cg) = cache.get(key_handle, g.glyph_id, variant) {
                 let origin_x_px = (glyph_x_lpx + cg.metrics.bearing_x_lpx) * scale;
                 let origin_y_px =
                     (self.baseline_lpx[1] + y_offset_lpx - cg.metrics.bearing_y_lpx) * scale;

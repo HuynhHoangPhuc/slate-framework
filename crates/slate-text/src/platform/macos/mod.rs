@@ -14,6 +14,8 @@ use crate::{
 };
 use objc2_core_foundation::{CFData, CFRetained};
 use objc2_core_text::CTFont;
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::marker::PhantomData;
 
 /// CoreText points to logical pixels conversion factor.
@@ -24,6 +26,12 @@ pub(crate) const PT_TO_LPX: f32 = 96.0 / 72.0;
 ///
 /// Marked `!Send + !Sync` for API parity with DirectWrite, though CoreText is thread-safe.
 pub struct CoreTextBackend {
+    /// `FontHandle → CoreTextFont` registry populated by `shape_line` as it
+    /// observes the per-`CTRun` substitute font CoreText chose for missing
+    /// codepoints. Backed by `RefCell` so it can grow during the
+    /// `&self`-borrowed `shape_line`; downstream rasterize reads via
+    /// `font_for`.
+    font_registry: RefCell<HashMap<FontHandle, Box<CoreTextFont>>>,
     _not_send: PhantomData<*const ()>,
 }
 
@@ -34,8 +42,42 @@ impl CoreTextBackend {
     /// Returns Result for API parity with DirectWriteBackend.
     pub fn new() -> Result<Self, TextError> {
         Ok(Self {
+            font_registry: RefCell::new(HashMap::new()),
             _not_send: PhantomData,
         })
+    }
+
+    /// Build a minimal `CoreTextFont` from a substitute `CTFont` captured
+    /// during shaping. Metrics are derived from the substitute as CoreText
+    /// returned it; per Apple's docs the cascade propagates the parent
+    /// attribute's point size, so the substitute should already be at
+    /// `size_lpx`. The `debug_assert!` catches a future regression where a
+    /// cascade font comes back at a normalized 12pt baseline. No
+    /// `_data_retain` because the substitute came from CoreText's system
+    /// cascade, not from `load_font_from_bytes`.
+    fn build_substitute_font(
+        ct_font: CFRetained<CTFont>,
+        size_lpx: f32,
+        scale: f32,
+        handle: FontHandle,
+    ) -> CoreTextFont {
+        debug_assert!(
+            {
+                let actual_pt = unsafe { ct_font.size() } as f32;
+                let expected_pt = size_lpx / PT_TO_LPX;
+                (actual_pt - expected_pt).abs() < 0.5
+            },
+            "substitute CTFont size disagrees with parent line size_lpx={size_lpx}",
+        );
+        let metrics = font_load::extract_metrics(&ct_font);
+        CoreTextFont {
+            ct_font,
+            _data_retain: None,
+            size_lpx,
+            scale,
+            metrics,
+            handle,
+        }
     }
 }
 
@@ -117,7 +159,35 @@ impl TextBackend for CoreTextBackend {
     }
 
     fn shape_line(&self, font: &Self::Font, text: &str) -> Result<ShapedLine, TextError> {
-        shaping::shape_line(&font.ct_font, text, &font.metrics)
+        let result =
+            shaping::shape_line(&font.ct_font, text, &font.metrics, font.size_lpx, font.scale)?;
+        if !result.captured_fonts.is_empty() {
+            let mut reg = self.font_registry.borrow_mut();
+            for cf in result.captured_fonts {
+                reg.entry(cf.handle).or_insert_with(|| {
+                    Box::new(Self::build_substitute_font(
+                        cf.font,
+                        font.size_lpx,
+                        font.scale,
+                        cf.handle,
+                    ))
+                });
+            }
+        }
+        Ok(result.line)
+    }
+
+    fn font_for(&self, handle: FontHandle) -> Option<&Self::Font> {
+        // SAFETY: see `windows/mod.rs::font_for` for the full invariant chain.
+        // Same three preconditions apply here:
+        //   INVARIANT (append-only): `font_registry` never has entries removed.
+        //   INVARIANT (heap stability): `Box<CoreTextFont>` heap addresses are
+        //     stable across `HashMap` resizes.
+        //   INVARIANT (single-thread): backend is `!Send` (PhantomData<*const ()>).
+        let map = self.font_registry.borrow();
+        let ptr: *const CoreTextFont = map.get(&handle).map(|b| &**b as *const _)?;
+        drop(map);
+        Some(unsafe { &*ptr })
     }
 
     fn rasterize_glyph(

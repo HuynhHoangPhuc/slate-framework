@@ -2,13 +2,28 @@
 //!
 //! Shapes text using CTLine and extracts glyph positioning information.
 
+use crate::FontHandle;
 use crate::error::TextError;
 use crate::types::{FontId, FontMetrics, ShapedGlyph, ShapedLine};
-use objc2_core_foundation::{CFIndex, CFRange, CGPoint, CGSize};
+use objc2_core_foundation::{CFIndex, CFRange, CFRetained, CGPoint, CGSize};
 use objc2_core_text::{CTFont, CTRun, kCTFontAttributeName};
 use std::ffi::c_void;
 
 use super::PT_TO_LPX;
+
+/// One CTFont captured from a `CTRun`, paired with the `FontHandle` derived
+/// from its raw pointer + the line's size/scale. The font is `CFRetained` so
+/// it outlives the borrowed reference returned by `CFDictionaryGetValue`.
+pub(crate) struct CapturedFont {
+    pub(crate) handle: FontHandle,
+    pub(crate) font: CFRetained<CTFont>,
+}
+
+/// Result of shaping a CoreText line.
+pub(crate) struct ShapeResult {
+    pub(crate) line: ShapedLine,
+    pub(crate) captured_fonts: Vec<CapturedFont>,
+}
 
 // External CoreFoundation functions
 unsafe extern "C" {
@@ -38,6 +53,9 @@ unsafe extern "C" {
     fn CTRunGetGlyphs(run: *const c_void, range: CFRange, buffer: *mut u16);
     fn CTRunGetPositions(run: *const c_void, range: CFRange, buffer: *mut CGPoint);
     fn CTRunGetAdvances(run: *const c_void, range: CFRange, buffer: *mut CGSize);
+    fn CTRunGetAttributes(run: *const c_void) -> *const c_void;
+    fn CFDictionaryGetValue(dict: *const c_void, key: *const c_void) -> *const c_void;
+    fn CFRetain(cf: *const c_void) -> *const c_void;
     fn CFRelease(cf: *const c_void);
 
     /// Canonical CF retain-release callbacks for dictionary keys.
@@ -81,19 +99,27 @@ impl Drop for ScopedCf {
 }
 
 /// Shape a line of text into positioned glyphs.
-pub fn shape_line(
+///
+/// `size_lpx` / `scale` parametrize the `FontHandle`s recorded on each glyph
+/// and each `CapturedFont` so the cache key convention matches the primary.
+pub(crate) fn shape_line(
     ct_font: &CTFont,
     text: &str,
     metrics: &FontMetrics,
-) -> Result<ShapedLine, TextError> {
+    size_lpx: f32,
+    scale: f32,
+) -> Result<ShapeResult, TextError> {
     // Empty string guard
     if text.is_empty() {
-        return Ok(ShapedLine {
-            glyphs: vec![],
-            width_lpx: 0.0,
-            ascent_lpx: metrics.ascent_lpx,
-            descent_lpx: metrics.descent_lpx,
-            y_offset_lpx: 0.0,
+        return Ok(ShapeResult {
+            line: ShapedLine {
+                glyphs: vec![],
+                width_lpx: 0.0,
+                ascent_lpx: metrics.ascent_lpx,
+                descent_lpx: metrics.descent_lpx,
+                y_offset_lpx: 0.0,
+            },
+            captured_fonts: Vec::new(),
         });
     }
 
@@ -166,7 +192,11 @@ pub fn shape_line(
         let run_count = CFArrayGetCount(runs);
 
         let mut glyphs = Vec::new();
+        let mut captured_fonts: Vec<CapturedFont> = Vec::new();
         let mut total_width_pt: f64 = 0.0;
+
+        let primary_ptr = ct_font as *const CTFont as *const u8;
+        let primary_handle = FontHandle::from_ptr_size_scale(primary_ptr, size_lpx, scale);
 
         for i in 0..run_count {
             // CFArrayGetValueAtIndex also returns a borrowed reference.
@@ -180,6 +210,45 @@ pub fn shape_line(
             if glyph_count == 0 {
                 continue;
             }
+
+            // Per-run font extraction. CTRunGetAttributes returns a borrowed
+            // CFDictionary owned by the run; the kCTFontAttributeName entry
+            // inside it is also borrowed. We CFRetain to extend lifetime.
+            let attrs = CTRunGetAttributes(run);
+            let font_key = kCTFontAttributeName as *const _ as *const c_void;
+            let run_font_handle = if !attrs.is_null() {
+                let run_font_ptr = CFDictionaryGetValue(attrs, font_key);
+                if run_font_ptr.is_null() {
+                    FontHandle::default()
+                } else {
+                    let handle = FontHandle::from_ptr_size_scale(
+                        run_font_ptr as *const u8,
+                        size_lpx,
+                        scale,
+                    );
+                    // Register the substitute font once per unique handle.
+                    // Skip the primary — caller already holds it.
+                    if handle != primary_handle
+                        && !captured_fonts.iter().any(|cf| cf.handle == handle)
+                    {
+                        // CFRetain the borrowed CTFont so the CFRetained guard
+                        // owns a strong reference independent of the run.
+                        let _ = CFRetain(run_font_ptr);
+                        let nonnull =
+                            std::ptr::NonNull::new(run_font_ptr as *mut CTFont).expect(
+                                "non-null after null check above",
+                            );
+                        let retained = CFRetained::from_raw(nonnull);
+                        captured_fonts.push(CapturedFont {
+                            handle,
+                            font: retained,
+                        });
+                    }
+                    handle
+                }
+            } else {
+                FontHandle::default()
+            };
 
             // Allocate buffers for glyph data
             let mut glyph_ids: Vec<u16> = vec![0; glyph_count];
@@ -213,6 +282,7 @@ pub fn shape_line(
                 glyphs.push(ShapedGlyph {
                     glyph_id,
                     font_id: FontId::PRIMARY,
+                    font_handle: run_font_handle,
                     x_advance_lpx: x_advance_pt * PT_TO_LPX,
                     x_offset_lpx: x_offset_pt * PT_TO_LPX,
                     y_offset_lpx: y_offset_pt * PT_TO_LPX,
@@ -224,12 +294,15 @@ pub fn shape_line(
 
         // `line` goes out of scope here and calls CFRelease via ScopedCf::drop.
 
-        Ok(ShapedLine {
-            glyphs,
-            width_lpx: (total_width_pt as f32) * PT_TO_LPX,
-            ascent_lpx: metrics.ascent_lpx,
-            descent_lpx: metrics.descent_lpx,
-            y_offset_lpx: 0.0,
+        Ok(ShapeResult {
+            line: ShapedLine {
+                glyphs,
+                width_lpx: (total_width_pt as f32) * PT_TO_LPX,
+                ascent_lpx: metrics.ascent_lpx,
+                descent_lpx: metrics.descent_lpx,
+                y_offset_lpx: 0.0,
+            },
+            captured_fonts,
         })
     }
 }

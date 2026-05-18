@@ -146,7 +146,7 @@ pub fn load_font_from_bytes(
         size_lpx,
         scale,
         metrics,
-        text_format,
+        text_format: Some(text_format),
         handle,
     })
 }
@@ -228,7 +228,7 @@ pub fn load_system_font(
         size_lpx,
         scale,
         metrics,
-        text_format,
+        text_format: Some(text_format),
         handle,
     })
 }

@@ -3,29 +3,63 @@
 //! Uses the full DirectWrite shaping pipeline for kerned, GPOS-adjusted glyph advances.
 
 use crate::types::FontId;
-use crate::{FontMetrics, ShapedGlyph, ShapedLine, TextError};
+use crate::{FontHandle, FontMetrics, ShapedGlyph, ShapedLine, TextError};
 use std::cell::RefCell;
 use std::rc::Rc;
 use windows::Win32::Graphics::DirectWrite::{
     DWRITE_GLYPH_RUN, DWRITE_GLYPH_RUN_DESCRIPTION, DWRITE_MATRIX, DWRITE_MEASURING_MODE,
-    DWRITE_STRIKETHROUGH, DWRITE_UNDERLINE, IDWriteFactory5, IDWriteInlineObject,
+    DWRITE_STRIKETHROUGH, DWRITE_UNDERLINE, IDWriteFactory5, IDWriteFontFace, IDWriteInlineObject,
     IDWritePixelSnapping_Impl, IDWriteTextFormat, IDWriteTextRenderer, IDWriteTextRenderer_Impl,
 };
-use windows::core::{BOOL, IUnknown, Ref, Result, implement};
+use windows::core::{BOOL, IUnknown, Interface, Ref, Result, implement};
+
+/// One face captured from a `DrawGlyphRun` callback, paired with the
+/// `FontHandle` derived from its raw COM pointer + the line's size/scale.
+///
+/// Returned alongside glyphs so the backend can populate its
+/// `FontHandle → Font` registry without exposing COM types to upper layers.
+pub(crate) struct CapturedFace {
+    pub(crate) handle: FontHandle,
+    pub(crate) face: IDWriteFontFace,
+}
 
 /// Shared glyph storage for renderer callback.
 type GlyphStore = Rc<RefCell<Vec<ShapedGlyph>>>;
+type FaceStore = Rc<RefCell<Vec<CapturedFace>>>;
 
 /// Custom text renderer that collects shaped glyphs from DrawGlyphRun callbacks.
+///
+/// Each callback also yields the substitute `IDWriteFontFace` chosen by
+/// DirectWrite's system fallback; we derive a `FontHandle` from its pointer +
+/// the line's size/scale so the downstream rasterizer can dispatch per-glyph.
 #[implement(IDWriteTextRenderer)]
 pub(crate) struct ShapingRenderer {
     glyphs: GlyphStore,
+    faces: FaceStore,
+    size_lpx: f32,
+    scale: f32,
+    /// `FontHandle` for the primary face. Substitute capture skips entries
+    /// matching this so the backend registry doesn't store the primary as a
+    /// substitute (mirrors macOS `shaping.rs` skip-primary guard).
+    primary_handle: FontHandle,
 }
 
 impl ShapingRenderer {
-    /// Create a new renderer with shared glyph storage.
-    pub(crate) fn new(glyphs: GlyphStore) -> Self {
-        Self { glyphs }
+    /// Create a new renderer with shared glyph + face storage.
+    pub(crate) fn new(
+        glyphs: GlyphStore,
+        faces: FaceStore,
+        size_lpx: f32,
+        scale: f32,
+        primary_handle: FontHandle,
+    ) -> Self {
+        Self {
+            glyphs,
+            faces,
+            size_lpx,
+            scale,
+            primary_handle,
+        }
     }
 }
 
@@ -88,6 +122,39 @@ impl IDWriteTextRenderer_Impl for ShapingRenderer_Impl {
             Some(unsafe { std::slice::from_raw_parts(run.glyphOffsets, count) })
         };
 
+        // `glyphrun.fontFace` is `ManuallyDrop<Option<IDWriteFontFace>>` borrowed
+        // for the duration of the callback. Deref reaches the inner `Option`, then
+        // `Option::clone` calls `IDWriteFontFace::Clone` (windows-rs auto-impl ->
+        // `IUnknown::AddRef`), producing a new strong ref that outlives Draw().
+        // Empty optional means DirectWrite did not provide a face — falls back
+        // to the primary handle via the default sentinel.
+        let face_opt: Option<IDWriteFontFace> = (*run.fontFace).clone();
+        let font_handle = match face_opt.as_ref() {
+            Some(face) => {
+                let ptr = face.as_raw() as *const u8;
+                FontHandle::from_ptr_size_scale(ptr, self.size_lpx, self.scale)
+            }
+            None => FontHandle::default(),
+        };
+
+        // Record the face for backend registry insertion (post-Draw). Skip
+        // entries matching the primary — the primary path in `run_builder`
+        // routes through `self.font` directly and never queries the registry,
+        // so storing it just wastes an `extract_metrics` + heap alloc.
+        // Dedup against already-captured substitutes is per-callback; cross-call
+        // dedup happens at the HashMap level in `mod.rs` via `entry().or_insert_with`.
+        if font_handle != self.primary_handle
+            && let Some(face) = face_opt
+        {
+            let mut faces = self.faces.borrow_mut();
+            if !faces.iter().any(|cf| cf.handle == font_handle) {
+                faces.push(CapturedFace {
+                    handle: font_handle,
+                    face,
+                });
+            }
+        }
+
         let mut glyphs = self.glyphs.borrow_mut();
         glyphs.reserve(count);
 
@@ -95,6 +162,7 @@ impl IDWriteTextRenderer_Impl for ShapingRenderer_Impl {
             glyphs.push(ShapedGlyph {
                 glyph_id: indices[i] as u32,
                 font_id: FontId::PRIMARY,
+                font_handle,
                 x_advance_lpx: advances[i],
                 x_offset_lpx: offsets.map_or(0.0, |o| o[i].advanceOffset),
                 y_offset_lpx: offsets.map_or(0.0, |o| o[i].ascenderOffset),
@@ -140,20 +208,38 @@ impl IDWriteTextRenderer_Impl for ShapingRenderer_Impl {
     }
 }
 
+/// Result of shaping a line: the glyphs plus any new substitute faces the
+/// platform shaper chose. Caller registers the faces so per-glyph rasterize
+/// dispatch (via `font_handle`) can resolve them later.
+pub(crate) struct ShapeResult {
+    pub(crate) line: ShapedLine,
+    pub(crate) captured_faces: Vec<CapturedFace>,
+}
+
 /// Shape a line of text using the full DirectWrite shaping pipeline.
-pub fn shape_line(
+///
+/// `size_lpx` / `scale` parametrize the `FontHandle`s recorded on each glyph
+/// (and on each `CapturedFace`) so the downstream cache key matches the
+/// primary font's handle convention.
+pub(crate) fn shape_line(
     factory: &IDWriteFactory5,
     text_format: &IDWriteTextFormat,
     text: &str,
     metrics: &FontMetrics,
-) -> std::result::Result<ShapedLine, TextError> {
+    size_lpx: f32,
+    scale: f32,
+    primary_handle: FontHandle,
+) -> std::result::Result<ShapeResult, TextError> {
     if text.is_empty() {
-        return Ok(ShapedLine {
-            glyphs: vec![],
-            width_lpx: 0.0,
-            ascent_lpx: metrics.ascent_lpx,
-            descent_lpx: metrics.descent_lpx,
-            y_offset_lpx: 0.0,
+        return Ok(ShapeResult {
+            line: ShapedLine {
+                glyphs: vec![],
+                width_lpx: 0.0,
+                ascent_lpx: metrics.ascent_lpx,
+                descent_lpx: metrics.descent_lpx,
+                y_offset_lpx: 0.0,
+            },
+            captured_faces: Vec::new(),
         });
     }
 
@@ -164,9 +250,16 @@ pub fn shape_line(
     let layout = unsafe { factory.CreateTextLayout(&wide, text_format, f32::MAX, f32::MAX) }
         .map_err(|e| TextError::ShapingFailed(format!("CreateTextLayout: {e}")))?;
 
-    // Rc<RefCell> shared state for glyph accumulation
+    // Rc<RefCell> shared state for glyph + face accumulation
     let glyphs_store: GlyphStore = Rc::new(RefCell::new(Vec::new()));
-    let renderer = ShapingRenderer::new(Rc::clone(&glyphs_store));
+    let faces_store: FaceStore = Rc::new(RefCell::new(Vec::new()));
+    let renderer = ShapingRenderer::new(
+        Rc::clone(&glyphs_store),
+        Rc::clone(&faces_store),
+        size_lpx,
+        scale,
+        primary_handle,
+    );
     let renderer_iface: IDWriteTextRenderer = renderer.into();
 
     // Draw() invokes DrawGlyphRun callback(s)
@@ -174,13 +267,17 @@ pub fn shape_line(
         .map_err(|e| TextError::ShapingFailed(format!("IDWriteTextLayout::Draw: {e}")))?;
 
     let glyphs: Vec<ShapedGlyph> = glyphs_store.borrow_mut().drain(..).collect();
+    let captured_faces: Vec<CapturedFace> = faces_store.borrow_mut().drain(..).collect();
     let width_lpx = glyphs.iter().map(|g| g.x_advance_lpx).sum();
 
-    Ok(ShapedLine {
-        glyphs,
-        width_lpx,
-        ascent_lpx: metrics.ascent_lpx,
-        descent_lpx: metrics.descent_lpx,
-        y_offset_lpx: 0.0,
+    Ok(ShapeResult {
+        line: ShapedLine {
+            glyphs,
+            width_lpx,
+            ascent_lpx: metrics.ascent_lpx,
+            descent_lpx: metrics.descent_lpx,
+            y_offset_lpx: 0.0,
+        },
+        captured_faces,
     })
 }

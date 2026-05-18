@@ -38,8 +38,14 @@ pub enum TextAlignment {
 pub struct ShapedGlyph {
     /// Glyph index in the font.
     pub glyph_id: u32,
-    /// Font that produced this glyph (for fallback chains).
+    /// Logical font identifier (used by `FontFallbackSystem` only — not the
+    /// cache key). Per-glyph rasterization keys on `font_handle`.
     pub font_id: FontId,
+    /// Cache key + backend registry key for the face the platform shaper
+    /// actually used for this glyph. May differ from the primary font when the
+    /// platform shaper substituted a fallback for missing codepoints.
+    /// Sentinel `FontHandle::default()` means "use the primary font".
+    pub font_handle: crate::FontHandle,
     /// Horizontal advance to next glyph in logical pixels.
     pub x_advance_lpx: f32,
     /// Horizontal offset from pen position in logical pixels.

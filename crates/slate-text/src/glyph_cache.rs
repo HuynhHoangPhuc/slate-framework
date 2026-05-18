@@ -118,6 +118,64 @@ impl GlyphCache {
         Ok(true)
     }
 
+    /// Rasterize+upload variant that resolves the font from the backend's
+    /// `font_for(handle)` registry instead of using a caller-supplied font.
+    ///
+    /// Used by `TextRunBuilder` to dispatch substitute-font glyphs (e.g.,
+    /// CJK glyphs the platform shaper rendered with a system fallback face).
+    /// Returns `Ok(false)` if the handle isn't registered — caller should
+    /// skip the glyph or fall back to the primary font.
+    pub fn materialize_by_handle<B: TextBackend>(
+        &mut self,
+        backend: &B,
+        handle: FontHandle,
+        glyph_id: u32,
+        variant: u8,
+        atlas: &mut Atlas,
+        queue: &wgpu::Queue,
+    ) -> Result<bool, TextError> {
+        let Some(font) = backend.font_for(handle) else {
+            return Ok(false);
+        };
+        let key = (handle, glyph_id, variant);
+
+        if self.cache.contains_key(&key) {
+            return Ok(false);
+        }
+
+        if self.cache.len() >= self.max_entries {
+            log::warn!(
+                "GlyphCache at capacity ({} entries); clearing cache to free memory",
+                self.max_entries
+            );
+            for (_, cg) in self.cache.drain() {
+                atlas.deallocate(cg.alloc.alloc_id);
+            }
+        }
+
+        let bitmap = backend.rasterize_glyph(font, glyph_id, variant)?;
+        if bitmap.width == 0 || bitmap.height == 0 {
+            return Ok(false);
+        }
+
+        let (alloc_id, uv_rect) = allocate_glyph(atlas, bitmap.width, bitmap.height)
+            .map_err(|e| TextError::RasterizationFailed(format!("atlas alloc: {e:?}")))?;
+
+        let padded = pad_with_gutter(&bitmap.alpha, bitmap.width, bitmap.height);
+        atlas.upload(queue, alloc_id, &padded);
+
+        let metrics = GlyphMetrics::from_bitmap(&bitmap);
+        self.cache.insert(
+            key,
+            CachedGlyph {
+                alloc: AtlasAllocation { uv_rect, alloc_id },
+                metrics,
+            },
+        );
+
+        Ok(true)
+    }
+
     /// Marks a glyph as recently used for LRU tracking.
     ///
     /// Call this for each glyph rendered to prevent atlas eviction.

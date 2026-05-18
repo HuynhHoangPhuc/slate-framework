@@ -139,6 +139,19 @@ pub trait TextBackend {
     /// Returns metadata for all installed fonts. This is O(1) per font with
     /// no font file loading—only metadata extraction.
     fn enumerate_system_fonts(&self) -> Result<Vec<FontDescriptor>, TextError>;
+
+    /// Resolve a per-glyph `FontHandle` (captured by the shaper) back to a
+    /// concrete `Font` for rasterization.
+    ///
+    /// Returns `None` when the handle is unknown to this backend — callers
+    /// should fall back to the line's primary font in that case (covers the
+    /// `FontHandle::default()` sentinel and pre-fallback shaped lines).
+    ///
+    /// Default impl returns `None` to keep mock/test backends compiling
+    /// without per-glyph registry support.
+    fn font_for(&self, _handle: FontHandle) -> Option<&Self::Font> {
+        None
+    }
 }
 
 /// Platform font instance with metrics and handle.

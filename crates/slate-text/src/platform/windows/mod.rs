@@ -12,6 +12,8 @@ use crate::{
     FontHandle, FontMetrics, GlyphBitmap, GlyphBounds, ShapedLine, TextBackend, TextError,
     backend::Font, types::FontDescriptor,
 };
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::marker::PhantomData;
 use windows::Win32::Graphics::DirectWrite::{
     DWRITE_FACTORY_TYPE_SHARED, DWriteCreateFactory, IDWriteFactory, IDWriteFactory5,
@@ -26,6 +28,11 @@ use windows::core::Interface;
 pub struct DirectWriteBackend {
     factory: IDWriteFactory5,
     loader: IDWriteInMemoryFontFileLoader,
+    /// `FontHandle → DirectWriteFont` registry populated by `shape_line` as
+    /// it observes substitute faces chosen by DirectWrite's system fallback.
+    /// Backed by `RefCell` so it can grow during the `&self`-borrowed
+    /// `shape_line` call; downstream rasterize reads via `font_for`.
+    font_registry: RefCell<HashMap<FontHandle, Box<DirectWriteFont>>>,
     _not_send: PhantomData<*const ()>,
 }
 
@@ -57,8 +64,33 @@ impl DirectWriteBackend {
         Ok(Self {
             factory,
             loader,
+            font_registry: RefCell::new(HashMap::new()),
             _not_send: PhantomData,
         })
+    }
+
+    /// Build a minimal `DirectWriteFont` from a captured substitute face.
+    ///
+    /// Metrics are derived from the substitute face at the line's `size_lpx`.
+    /// `text_format` is `None` because the substitute is only used for
+    /// rasterize + bounds queries, never for further shaping.
+    fn build_substitute_font(
+        face: IDWriteFontFace,
+        size_lpx: f32,
+        scale: f32,
+        handle: FontHandle,
+    ) -> DirectWriteFont {
+        let metrics = font_load::extract_metrics(&face, size_lpx);
+        DirectWriteFont {
+            font_face: face,
+            em_size_dip: size_lpx,
+            pixels_per_dip: scale,
+            size_lpx,
+            scale,
+            metrics,
+            text_format: None,
+            handle,
+        }
     }
 }
 
@@ -73,6 +105,10 @@ impl Drop for DirectWriteBackend {
 /// DirectWrite font handle.
 ///
 /// Holds the font face, metrics, and rendering parameters.
+///
+/// `text_format` is `None` for substitute fonts captured during shaping and
+/// stored in the backend registry — those fonts are only used for rasterize +
+/// bounds queries, which need `font_face` and sizing but never `text_format`.
 pub struct DirectWriteFont {
     pub(crate) font_face: IDWriteFontFace,
     pub(crate) em_size_dip: f32,
@@ -80,7 +116,7 @@ pub struct DirectWriteFont {
     pub(crate) size_lpx: f32,
     pub(crate) scale: f32,
     pub(crate) metrics: FontMetrics,
-    pub(crate) text_format: IDWriteTextFormat,
+    pub(crate) text_format: Option<IDWriteTextFormat>,
     pub(crate) handle: FontHandle,
 }
 
@@ -124,7 +160,56 @@ impl TextBackend for DirectWriteBackend {
     }
 
     fn shape_line(&self, font: &Self::Font, text: &str) -> Result<ShapedLine, TextError> {
-        shaping::shape_line(&self.factory, &font.text_format, text, &font.metrics)
+        let text_format = font.text_format.as_ref().ok_or_else(|| {
+            TextError::ShapingFailed(
+                "DirectWriteFont has no IDWriteTextFormat (substitute-only)".into(),
+            )
+        })?;
+        let result = shaping::shape_line(
+            &self.factory,
+            text_format,
+            text,
+            &font.metrics,
+            font.size_lpx,
+            font.scale,
+            font.handle,
+        )?;
+        // Register every substitute face captured during this Draw() so
+        // per-glyph rasterize dispatch (via FontHandle) can resolve them.
+        if !result.captured_faces.is_empty() {
+            let mut reg = self.font_registry.borrow_mut();
+            for cf in result.captured_faces {
+                reg.entry(cf.handle).or_insert_with(|| {
+                    Box::new(Self::build_substitute_font(
+                        cf.face,
+                        font.size_lpx,
+                        font.scale,
+                        cf.handle,
+                    ))
+                });
+            }
+        }
+        Ok(result.line)
+    }
+
+    fn font_for(&self, handle: FontHandle) -> Option<&Self::Font> {
+        // SAFETY rests on three invariants — any future change that breaks one
+        // MUST update this comment and the parallel macOS impl:
+        //   INVARIANT (append-only): `font_registry` is only ever inserted into,
+        //     never removed/cleared/drained. Adding eviction silently breaks the
+        //     pointer-extension below — the heap `DirectWriteFont` could be
+        //     freed while we still hold `&*ptr`.
+        //   INVARIANT (heap stability): values are `Box<DirectWriteFont>`. The
+        //     `Box` itself moves on `HashMap` resize, but the heap allocation
+        //     it owns does not.
+        //   INVARIANT (single-thread): backend is `!Send` (PhantomData<*const ()>),
+        //     so no thread can mutate the map while we hold the raw pointer.
+        // The RefCell borrow is dropped before returning so callers can issue
+        // further `&self` calls on the backend without a `BorrowMutError`.
+        let map = self.font_registry.borrow();
+        let ptr: *const DirectWriteFont = map.get(&handle).map(|b| &**b as *const _)?;
+        drop(map);
+        Some(unsafe { &*ptr })
     }
 
     fn rasterize_glyph(

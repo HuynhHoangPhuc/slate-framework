@@ -60,6 +60,7 @@ impl TextBackend for MockBackend {
             .map(|(i, _)| ShapedGlyph {
                 glyph_id: i as u32 + 1,
                 font_id: FontId::PRIMARY,
+                font_handle: Default::default(),
                 x_advance_lpx: 8.0,
                 x_offset_lpx: 0.0,
                 y_offset_lpx: 0.0,

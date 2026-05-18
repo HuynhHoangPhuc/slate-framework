@@ -77,6 +77,7 @@ impl TextBackend for MockBackend {
                 ShapedGlyph {
                     glyph_id: i as u32,
                     font_id: FontId::PRIMARY,
+                    font_handle: Default::default(),
                     x_advance_lpx: advance,
                     x_offset_lpx: 0.0,
                     y_offset_lpx: 0.0,
