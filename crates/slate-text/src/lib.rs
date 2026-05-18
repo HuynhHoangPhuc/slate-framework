@@ -55,6 +55,19 @@ pub const TEST_FONT: &[u8] = include_bytes!("../assets/dejavu-sans.ttf");
 /// Binary distributions must surface this attribution.
 pub const DEJAVU_SANS_LICENSE: &str = include_str!("../assets/LICENSE-DejaVu");
 
+/// Bundled Noto Sans JP Regular (subset OTF, ~4.3 MB).
+///
+/// Ships as the safety-path CJK fallback when system-font loading is
+/// unavailable or unsafe. Covers Hiragana, Katakana, and the JIS-1 Han
+/// subset used by everyday Japanese text. Hangul and Pinyin Han glyphs
+/// are out of scope for this bundle — defer to platform fallback or a
+/// future regional bundle if needed.
+pub const BUNDLED_CJK_JP_FONT: &[u8] = include_bytes!("../assets/NotoSansJP-Regular.otf");
+
+/// Noto Sans JP license text (SIL Open Font License 1.1).
+/// Binary distributions must surface this attribution.
+pub const NOTO_SANS_JP_LICENSE: &str = include_str!("../assets/LICENSE-NotoSansJP");
+
 #[cfg(target_os = "windows")]
 pub use platform::windows::DirectWriteBackend;
 
