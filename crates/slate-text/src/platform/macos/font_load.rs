@@ -9,11 +9,6 @@ use objc2_core_foundation::{CFData, CFRetained, CGFloat};
 use objc2_core_text::{CTFont, CTFontManagerCreateFontDescriptorFromData};
 use std::ptr;
 
-use super::PT_TO_LPX;
-
-/// Logical pixels to CoreText points conversion factor.
-/// 1 lpx = 1/96 inch, 1 pt = 1/72 inch, so pt = lpx * 72/96.
-const LPX_TO_PT: f64 = 72.0 / 96.0;
 
 /// Create a CTFont from raw TTF/OTF bytes.
 ///
@@ -47,8 +42,10 @@ pub fn create_font_from_bytes(
             )
         })?;
 
-    // Convert logical pixels to CoreText points
-    let ct_size_pt = (size_lpx as f64) * LPX_TO_PT;
+    // AppKit NSView convention: 1 pt = 1 logical pixel. CTFont takes its size
+    // in points; we pass `size_lpx` through unchanged so glyph proportions
+    // match every other macOS-native text surface.
+    let ct_size_pt = size_lpx as f64;
 
     // Create the font at the specified size
     let ct_font =
@@ -57,22 +54,22 @@ pub fn create_font_from_bytes(
     Ok((ct_font, data))
 }
 
-/// Extract font metrics from a CTFont, converting from points to logical pixels.
+/// Extract font metrics from a CTFont. With `1 pt = 1 lpx` the CT-returned
+/// point values are already in lpx.
 pub fn extract_metrics(ct_font: &CTFont) -> FontMetrics {
-    // CT returns metrics in points at the font's current size
-    let ascent_pt = unsafe { ct_font.ascent() } as f32;
-    let descent_pt = unsafe { ct_font.descent() } as f32;
-    let leading_pt = unsafe { ct_font.leading() } as f32;
-    let x_height_pt = unsafe { ct_font.x_height() } as f32;
-    let cap_height_pt = unsafe { ct_font.cap_height() } as f32;
+    let ascent = unsafe { ct_font.ascent() } as f32;
+    let descent = unsafe { ct_font.descent() } as f32;
+    let leading = unsafe { ct_font.leading() } as f32;
+    let x_height = unsafe { ct_font.x_height() } as f32;
+    let cap_height = unsafe { ct_font.cap_height() } as f32;
     let units_per_em = unsafe { ct_font.units_per_em() };
 
     FontMetrics {
-        ascent_lpx: ascent_pt * PT_TO_LPX,
-        descent_lpx: -descent_pt * PT_TO_LPX, // CT returns positive; we want negative
-        line_gap_lpx: leading_pt * PT_TO_LPX,
-        x_height_lpx: x_height_pt * PT_TO_LPX,
-        cap_height_lpx: cap_height_pt * PT_TO_LPX,
+        ascent_lpx: ascent,
+        descent_lpx: -descent, // CT returns positive; we want negative
+        line_gap_lpx: leading,
+        x_height_lpx: x_height,
+        cap_height_lpx: cap_height,
         units_per_em,
     }
 }

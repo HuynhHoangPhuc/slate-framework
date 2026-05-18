@@ -15,8 +15,11 @@
 // the premul invariant (rgb ≤ a) is preserved.
 
 struct Viewport {
-    /// Physical-pixel viewport size. `_pad` keeps the struct 16-byte aligned
-    /// (std140 requirement for uniform-address-space buffers).
+    /// Logical-pixel (lpx) viewport size. The `pixel_pos / viewport.size` NDC
+    /// mapping below is scale-invariant: both numerator and denominator are
+    /// lpx, so the result is identical to feeding both as physical pixels.
+    /// `_pad` keeps the struct 16-byte aligned (std140 requirement for
+    /// uniform-address-space buffers).
     size: vec2<f32>,
     _pad: vec2<f32>,
 };

@@ -31,6 +31,7 @@ use crate::image_pipeline::ImagePipeline;
 use crate::instanced_rect_pipeline::InstancedRectPipeline;
 use crate::observer::RendererObserver;
 use crate::pipeline_shared::{self, ViewportUniform};
+use crate::units::Lpx;
 use crate::scene::Scene;
 use crate::shadow_pipeline::ShadowPipeline;
 use crate::surface_target::{CompositionTarget, ConfigureError, FrameAcquireError};
@@ -240,12 +241,16 @@ impl Renderer {
             usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let (target_w, target_h) = target.size();
+        // Viewport uniform is in *logical* pixels (lpx). The shader maps
+        // `pixel_pos / viewport.size`, which is scale-invariant — feeding
+        // both numerator and denominator in lpx yields the same NDC as the
+        // old physical/physical pair. Surface configuration stays physical.
+        let (logical_w, logical_h) = window.logical_size();
         queue.write_buffer(
             &viewport_buf,
             0,
             bytemuck::bytes_of(&ViewportUniform {
-                size: [target_w as f32, target_h as f32],
+                size: [Lpx(logical_w as f32), Lpx(logical_h as f32)],
                 _pad: [0.0; 2],
             }),
         );
@@ -506,9 +511,13 @@ impl Renderer {
         }
     }
 
-    /// Resize the surface. `new_size` is in physical pixels, matching
-    /// the `(u32, u32)` payload of `Event::WindowResized`.
-    pub fn resize(&mut self, new_size: (u32, u32)) {
+    /// Resize the surface.
+    ///
+    /// `physical` is the drawable size in physical pixels (used for wgpu
+    /// surface configuration). `logical` is the same drawable in logical
+    /// pixels (lpx) — written to the viewport uniform. Both are carried by
+    /// `Event::WindowResized`; platform callbacks already have both in scope.
+    pub fn resize(&mut self, physical: (u32, u32), logical: (u32, u32)) {
         // Early-return if device is lost - no point attempting resize
         if self.device_lost.load(Ordering::Acquire) {
             log::trace!(target: "slate::resize", "Renderer::resize skipped: device lost");
@@ -520,8 +529,8 @@ impl Renderer {
         }
 
         let max = self.device.limits().max_texture_dimension_2d;
-        let (w, h) = (new_size.0.max(1).min(max), new_size.1.max(1).min(max));
-        log::trace!(target: "slate::resize", "Renderer::resize called: {:?} -> {}x{} (target currently: {:?})", new_size, w, h, self.target.size());
+        let (w, h) = (physical.0.max(1).min(max), physical.1.max(1).min(max));
+        log::trace!(target: "slate::resize", "Renderer::resize called: physical={:?} logical={:?} -> {}x{} (target currently: {:?})", physical, logical, w, h, self.target.size());
         if self.target.size() == (w, h) {
             log::trace!(target: "slate::resize", "Renderer::resize: no change needed");
             return;
@@ -538,15 +547,15 @@ impl Renderer {
             // Continue with old size - viewport uniform will match target.size()
         }
 
-        // Use actual target size for viewport uniform - if ResizeBuffers failed,
-        // target.size() will be the old size, keeping viewport/render-target in sync.
-        let (actual_w, actual_h) = self.target.size();
-        log::trace!(target: "slate::resize", "After configure: target.size()={}x{} (requested {}x{})", actual_w, actual_h, w, h);
+        // Viewport uniform is in logical pixels (lpx). Surface configure stays
+        // physical; the shader's `pos / size` NDC math is scale-invariant.
+        let (logical_w, logical_h) = logical;
+        log::trace!(target: "slate::resize", "After configure: target.size()={:?} viewport-lpx=({}, {})", self.target.size(), logical_w, logical_h);
         self.queue.write_buffer(
             &self.viewport_buf,
             0,
             bytemuck::bytes_of(&ViewportUniform {
-                size: [actual_w as f32, actual_h as f32],
+                size: [Lpx(logical_w as f32), Lpx(logical_h as f32)],
                 _pad: [0.0; 2],
             }),
         );

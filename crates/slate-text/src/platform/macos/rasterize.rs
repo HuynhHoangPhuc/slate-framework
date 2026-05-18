@@ -10,8 +10,6 @@ use objc2_core_graphics::{CGBitmapContextCreate, CGContext, CGImageAlphaInfo};
 use objc2_core_text::{CTFont, CTFontOrientation};
 use std::ptr::NonNull;
 
-use super::PT_TO_LPX;
-
 /// Maximum rasterization buffer dimension in pixels.
 ///
 /// Prevents unbounded memory allocation for extremely large font sizes.
@@ -139,7 +137,7 @@ pub fn rasterize(
             1,
         );
     }
-    let advance_x_lpx = (advance.width as f32) * PT_TO_LPX;
+    let advance_x_lpx = advance.width as f32;
 
     // Tight-crop: find bounding box of non-zero pixels
     let (min_x, min_y, max_x, max_y) = find_tight_bounds(&buffer, render_w, render_h);
@@ -213,8 +211,8 @@ pub fn get_glyph_bounds(
         return Ok(GlyphBounds::ZERO);
     }
 
-    let width = (bounds.size.width as f32 * PT_TO_LPX * scale).ceil() as u32;
-    let height = (bounds.size.height as f32 * PT_TO_LPX * scale).ceil() as u32;
+    let width = (bounds.size.width as f32 * scale).ceil() as u32;
+    let height = (bounds.size.height as f32 * scale).ceil() as u32;
 
     Ok(GlyphBounds { width, height })
 }

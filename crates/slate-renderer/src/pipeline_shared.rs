@@ -12,6 +12,8 @@ use std::mem;
 use std::num::NonZeroU64;
 
 use bytemuck::{Pod, Zeroable};
+
+use crate::units::Lpx;
 use wgpu::{
     AddressMode, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout,
     BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, Buffer,
@@ -23,11 +25,17 @@ use wgpu::{
 /// CPU mirror of WGSL `Viewport { size: vec2<f32>, _pad: vec2<f32> }`.
 ///
 /// 16 bytes — meets the uniform-buffer minimum binding size.
+///
+/// `size` is in **logical pixels (lpx)**. The shader maps pixel-space → NDC
+/// with `pixel_pos / viewport.size`, which is scale-invariant: feeding both
+/// numerator and denominator in lpx yields the same NDC value as feeding both
+/// in physical pixels, so the WGSL math is unchanged.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, Pod, Zeroable)]
 pub struct ViewportUniform {
-    /// Physical-pixel viewport `[width, height]`.
-    pub size: [f32; 2],
+    /// Logical-pixel viewport `[width, height]`. Shader uses this scale-
+    /// invariantly under `pos / size` NDC mapping.
+    pub size: [Lpx; 2],
     /// Padding to 16 bytes (uniform-address-space alignment).
     pub _pad: [f32; 2],
 }

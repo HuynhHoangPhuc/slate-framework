@@ -15,7 +15,7 @@
 mod common;
 
 use slate_renderer::{
-    InstancedRectPipeline, RectInstance, ViewportUniform, create_unit_quad,
+    InstancedRectPipeline, Lpx, RectInstance, ViewportUniform, create_unit_quad,
     srgb_u8_to_linear_premul, viewport_bind_group_layout,
 };
 use wgpu::{
@@ -44,7 +44,7 @@ fn premul_red_half_alpha_round_trips_through_pipeline() {
         &viewport_buf,
         0,
         bytemuck::bytes_of(&ViewportUniform {
-            size: [w as f32, h as f32],
+            size: [Lpx(w as f32), Lpx(h as f32)],
             _pad: [0.0; 2],
         }),
     );
@@ -60,9 +60,9 @@ fn premul_red_half_alpha_round_trips_through_pipeline() {
     let mut pipeline = InstancedRectPipeline::new(&device, format, &bgl);
 
     let instances = [RectInstance {
-        rect: [4.0, 4.0, 24.0, 24.0],
+        rect: [Lpx(4.0), Lpx(4.0), Lpx(24.0), Lpx(24.0)],
         color: srgb_u8_to_linear_premul([255, 0, 0, 128]),
-        corner_radius: 0.0,
+        corner_radius: Lpx(0.0),
         _pad: [0.0; 3],
     }];
     pipeline.prepare(&device, &queue, &instances);

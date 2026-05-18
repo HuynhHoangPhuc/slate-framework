@@ -43,6 +43,8 @@ use std::ops::Range;
 
 use bytemuck::{Pod, Zeroable};
 
+use crate::units::Lpx;
+
 /// Truncate a `Vec::len()` to `u32`. The `Range<u32>` ranges in [`Layer`]
 /// cap a single scene at 4 G primitives per kind (256 GB at 64 B / instance —
 /// no realistic frame hits this); `debug_assert!` catches the boundary in
@@ -70,11 +72,11 @@ fn len_as_u32(n: usize) -> u32 {
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct RectInstance {
     /// `[x, y, w, h]` in logical pixels (top-left origin, +Y down).
-    pub rect: [f32; 4],
+    pub rect: [Lpx; 4],
     /// Linear RGBA, premultiplied (rgb already × a).
     pub color: [f32; 4],
     /// Corner radius in logical pixels (0 = sharp).
-    pub corner_radius: f32,
+    pub corner_radius: Lpx,
     /// Explicit padding to reach 48-byte / 16-byte aligned layout.
     pub _pad: [f32; 3],
 }
@@ -93,13 +95,13 @@ const _: () = assert!(core::mem::align_of::<RectInstance>() == 4);
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct ShadowInstance {
     /// Unexpanded `[x, y, w, h]` of the shadowed shape (logical pixels).
-    pub rect: [f32; 4],
+    pub rect: [Lpx; 4],
     /// Linear RGBA, premultiplied.
     pub color: [f32; 4],
     /// Corner radius of the shadowed shape, in logical pixels.
-    pub corner_radius: f32,
+    pub corner_radius: Lpx,
     /// Gaussian σ (blur radius) in logical pixels.
-    pub blur_radius: f32,
+    pub blur_radius: Lpx,
     /// Padding to 48-byte stride.
     pub _pad: [f32; 2],
 }
@@ -116,7 +118,7 @@ const _: () = assert!(core::mem::size_of::<ShadowInstance>() == 48);
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct ImageInstance {
     /// Destination `[x, y, w, h]` on screen, in logical pixels.
-    pub rect: [f32; 4],
+    pub rect: [Lpx; 4],
     /// Source `[u0, v0, u1, v1]` rect in the atlas, normalized 0..1.
     pub uv_rect: [f32; 4],
     /// Linear RGBA premultiplied tint multiplier (white = no tint).
@@ -137,7 +139,7 @@ const _: () = assert!(core::mem::size_of::<ImageInstance>() == 48);
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct GlyphInstance {
     /// Destination `[x, y, w, h]` on screen, in logical pixels.
-    pub rect: [f32; 4],
+    pub rect: [Lpx; 4],
     /// Source `[u0, v0, u1, v1]` rect in the glyph atlas, normalized 0..1.
     pub uv_rect: [f32; 4],
     /// Linear RGBA premultiplied ink color (alpha-mask × this).
@@ -321,26 +323,26 @@ mod tests {
 
     fn dummy_rect() -> RectInstance {
         RectInstance {
-            rect: [0.0, 0.0, 10.0, 10.0],
+            rect: [Lpx(0.0), Lpx(0.0), Lpx(10.0), Lpx(10.0)],
             color: [0.5, 0.5, 0.5, 0.5],
-            corner_radius: 0.0,
+            corner_radius: Lpx(0.0),
             _pad: [0.0; 3],
         }
     }
 
     fn dummy_shadow() -> ShadowInstance {
         ShadowInstance {
-            rect: [0.0, 0.0, 10.0, 10.0],
+            rect: [Lpx(0.0), Lpx(0.0), Lpx(10.0), Lpx(10.0)],
             color: [0.0, 0.0, 0.0, 0.5],
-            corner_radius: 0.0,
-            blur_radius: 4.0,
+            corner_radius: Lpx(0.0),
+            blur_radius: Lpx(4.0),
             _pad: [0.0; 2],
         }
     }
 
     fn dummy_image() -> ImageInstance {
         ImageInstance {
-            rect: [0.0; 4],
+            rect: [Lpx(0.0); 4],
             uv_rect: [0.0, 0.0, 1.0, 1.0],
             tint: [1.0; 4],
         }
@@ -348,7 +350,7 @@ mod tests {
 
     fn dummy_glyph() -> GlyphInstance {
         GlyphInstance {
-            rect: [0.0; 4],
+            rect: [Lpx(0.0); 4],
             uv_rect: [0.0, 0.0, 1.0, 1.0],
             color: [1.0; 4],
             sub_pixel_variant: 0,

@@ -9,8 +9,6 @@ use objc2_core_foundation::{CFIndex, CFRange, CFRetained, CGPoint, CGSize};
 use objc2_core_text::{CTFont, CTRun, kCTFontAttributeName};
 use std::ffi::c_void;
 
-use super::PT_TO_LPX;
-
 /// One CTFont captured from a `CTRun`, paired with the `FontHandle` derived
 /// from its raw pointer + the line's size/scale. The font is `CFRetained` so
 /// it outlives the borrowed reference returned by `CFDictionaryGetValue`.
@@ -283,9 +281,9 @@ pub(crate) fn shape_line(
                     glyph_id,
                     font_id: FontId::PRIMARY,
                     font_handle: run_font_handle,
-                    x_advance_lpx: x_advance_pt * PT_TO_LPX,
-                    x_offset_lpx: x_offset_pt * PT_TO_LPX,
-                    y_offset_lpx: y_offset_pt * PT_TO_LPX,
+                    x_advance_lpx: x_advance_pt,
+                    x_offset_lpx: x_offset_pt,
+                    y_offset_lpx: y_offset_pt,
                 });
 
                 total_width_pt += advances[j].width;
@@ -297,7 +295,7 @@ pub(crate) fn shape_line(
         Ok(ShapeResult {
             line: ShapedLine {
                 glyphs,
-                width_lpx: (total_width_pt as f32) * PT_TO_LPX,
+                width_lpx: total_width_pt as f32,
                 ascent_lpx: metrics.ascent_lpx,
                 descent_lpx: metrics.descent_lpx,
                 y_offset_lpx: 0.0,

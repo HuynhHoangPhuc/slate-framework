@@ -1,5 +1,6 @@
 use slate_renderer::{
-    GlyphInstance, ImageInstance, RectInstance, Scene, ShadowInstance, srgb_u8_to_linear_premul,
+    GlyphInstance, ImageInstance, Lpx, RectInstance, Scene, ShadowInstance,
+    srgb_u8_to_linear_premul,
 };
 
 pub const IMG_SIZE: u32 = 256;
@@ -41,12 +42,12 @@ fn hsv_to_srgb(h: f32, s: f32, v: f32) -> (u8, u8, u8) {
 
 /// Build scene with rects, shadows, images, and text glyphs.
 ///
-/// `text_glyphs` contains pre-built GlyphInstances from the native text pipeline.
+/// All coordinates are in logical pixels (lpx); the renderer's viewport
+/// uniform maps lpx → NDC. `text_glyphs` already carry lpx values.
 pub fn build_scene(
     scene: &mut Scene,
-    w: f32,
-    h: f32,
-    scale: f32,
+    w_lpx: f32,
+    h_lpx: f32,
     image_uv: [f32; 4],
     text_glyphs: &[GlyphInstance],
 ) {
@@ -55,32 +56,30 @@ pub fn build_scene(
     // Layer 0: background + shadows + rects
     scene.push_layer();
     scene.push_rect(RectInstance {
-        rect: [0.0, 0.0, w, h],
+        rect: [Lpx(0.0), Lpx(0.0), Lpx(w_lpx), Lpx(h_lpx)],
         color: srgb_u8_to_linear_premul([0x1A, 0x1A, 0x26, 0xFF]),
-        corner_radius: 0.0,
+        corner_radius: Lpx(0.0),
         _pad: [0.0; 3],
     });
 
     // Adaptive color grid: columns based on available width
-    let w_lpx = w / scale;
-    let inset = 30.0;
-    let cell = 48.0;
-    let gap = 12.0;
-    let stride_lpx = cell + gap;
-    let cols = ((w_lpx - 2.0 * inset) / stride_lpx).floor().max(1.0) as usize;
+    let inset = 30.0f32;
+    let cell = 48.0f32;
+    let gap = 12.0f32;
+    let stride = cell + gap;
+    let cols = ((w_lpx - 2.0 * inset) / stride).floor().max(1.0) as usize;
 
-    let size = cell * scale;
-    let stride = stride_lpx * scale;
-    let ox = inset * scale;
-    let oy = 40.0 * scale;
+    let size = cell;
+    let ox = inset;
+    let oy = 40.0f32;
 
     // Dark rectangle for light-on-dark text demo (right-anchored)
-    let dark_w = 200.0;
+    let dark_w = 200.0f32;
     let dark_x = (w_lpx - dark_w - 20.0).max(20.0);
     scene.push_rect(RectInstance {
-        rect: [dark_x * scale, 175.0 * scale, dark_w * scale, 40.0 * scale],
+        rect: [Lpx(dark_x), Lpx(175.0), Lpx(dark_w), Lpx(40.0)],
         color: srgb_u8_to_linear_premul([0x1E, 0x1E, 0x2E, 0xFF]),
-        corner_radius: 6.0 * scale,
+        corner_radius: Lpx(6.0),
         _pad: [0.0; 3],
     });
 
@@ -89,14 +88,14 @@ pub fn build_scene(
     for i in 0..shadow_count {
         scene.push_shadow(ShadowInstance {
             rect: [
-                ox + (i % cols) as f32 * stride + 4.0 * scale,
-                oy + (i / cols) as f32 * stride + 4.0 * scale,
-                size,
-                size,
+                Lpx(ox + (i % cols) as f32 * stride + 4.0),
+                Lpx(oy + (i / cols) as f32 * stride + 4.0),
+                Lpx(size),
+                Lpx(size),
             ],
             color: srgb_u8_to_linear_premul([0, 0, 0, 0x80]),
-            corner_radius: ((i % 5) as f32 + 1.0) * 2.0 * scale,
-            blur_radius: 8.0 * scale,
+            corner_radius: Lpx(((i % 5) as f32 + 1.0) * 2.0),
+            blur_radius: Lpx(8.0),
             _pad: [0.0; 2],
         });
     }
@@ -108,49 +107,47 @@ pub fn build_scene(
         let (r, g, b) = hsv_to_srgb(hue, 0.7, 0.9);
         scene.push_rect(RectInstance {
             rect: [
-                ox + (i % cols) as f32 * stride,
-                oy + (i / cols) as f32 * stride,
-                size,
-                size,
+                Lpx(ox + (i % cols) as f32 * stride),
+                Lpx(oy + (i / cols) as f32 * stride),
+                Lpx(size),
+                Lpx(size),
             ],
             color: srgb_u8_to_linear_premul([r, g, b, 0xCC]),
-            corner_radius: ((i % 5) as f32 + 1.0) * 2.0 * scale,
+            corner_radius: Lpx(((i % 5) as f32 + 1.0) * 2.0),
             _pad: [0.0; 3],
         });
     }
 
     // Layer 1: images + text glyphs
     scene.push_layer();
-    push_images(scene, image_uv, scale, w, h);
+    push_images(scene, image_uv, w_lpx, h_lpx);
 
     for g in text_glyphs {
         scene.push_glyph(*g);
     }
 }
 
-fn push_images(scene: &mut Scene, image_uv: [f32; 4], scale: f32, w: f32, h: f32) {
+fn push_images(scene: &mut Scene, image_uv: [f32; 4], w_lpx: f32, h_lpx: f32) {
     // Adaptive image grid: columns based on available width
-    let w_lpx = w / scale;
-    let inset = 40.0;
-    let img_cell = 64.0;
-    let img_gap = 20.0;
-    let img_stride_lpx = img_cell + img_gap;
-    let cols = ((w_lpx - 2.0 * inset) / img_stride_lpx).floor().max(1.0) as usize;
+    let inset = 40.0f32;
+    let img_cell = 64.0f32;
+    let img_gap = 20.0f32;
+    let stride = img_cell + img_gap;
+    let cols = ((w_lpx - 2.0 * inset) / stride).floor().max(1.0) as usize;
 
-    let size = img_cell * scale;
-    let stride = img_stride_lpx * scale;
-    let ox = inset * scale;
-    let oy = h * 0.55;
+    let size = img_cell;
+    let ox = inset;
+    let oy = h_lpx * 0.55;
 
     for i in 0..20 {
         let hue = i as f32 / 20.0 * 360.0;
         let (r, g, b) = hsv_to_srgb(hue, 0.3, 1.0);
         scene.push_image(ImageInstance {
             rect: [
-                ox + (i % cols) as f32 * stride,
-                oy + (i / cols) as f32 * stride,
-                size,
-                size,
+                Lpx(ox + (i % cols) as f32 * stride),
+                Lpx(oy + (i / cols) as f32 * stride),
+                Lpx(size),
+                Lpx(size),
             ],
             uv_rect: image_uv,
             tint: srgb_u8_to_linear_premul([r, g, b, 0xFF]),

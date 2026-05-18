@@ -13,7 +13,7 @@
 mod common;
 
 use slate_renderer::{
-    InstancedRectPipeline, RectInstance, ViewportUniform, create_unit_quad,
+    InstancedRectPipeline, Lpx, RectInstance, ViewportUniform, create_unit_quad,
     srgb_u8_to_linear_premul, viewport_bind_group_layout,
 };
 use wgpu::{
@@ -39,7 +39,7 @@ fn make_viewport(
         &buffer,
         0,
         bytemuck::bytes_of(&ViewportUniform {
-            size: [w as f32, h as f32],
+            size: [Lpx(w as f32), Lpx(h as f32)],
             _pad: [0.0; 2],
         }),
     );
@@ -73,9 +73,14 @@ fn instanced_pipeline_renders_100_rects_in_one_draw() {
     for j in 0..10 {
         for i in 0..10 {
             instances.push(RectInstance {
-                rect: [i as f32 * 10.0, j as f32 * 10.0, 8.0, 8.0],
+                rect: [
+                    Lpx(i as f32 * 10.0),
+                    Lpx(j as f32 * 10.0),
+                    Lpx(8.0),
+                    Lpx(8.0),
+                ],
                 color: white,
-                corner_radius: 0.0,
+                corner_radius: Lpx(0.0),
                 _pad: [0.0; 3],
             });
         }
@@ -137,9 +142,9 @@ fn capacity_grows_monotonically() {
     );
 
     let dummy = RectInstance {
-        rect: [0.0, 0.0, 1.0, 1.0],
+        rect: [Lpx(0.0), Lpx(0.0), Lpx(1.0), Lpx(1.0)],
         color: [1.0; 4],
-        corner_radius: 0.0,
+        corner_radius: Lpx(0.0),
         _pad: [0.0; 3],
     };
 
@@ -197,34 +202,34 @@ fn multi_layer_disjoint_ranges_in_single_pass() {
     let instances = vec![
         // Layer 0 (indices 0..2): white rects
         RectInstance {
-            rect: [10.0, 10.0, 8.0, 8.0],
+            rect: [Lpx(10.0), Lpx(10.0), Lpx(8.0), Lpx(8.0)],
             color: white,
-            corner_radius: 0.0,
+            corner_radius: Lpx(0.0),
             _pad: [0.0; 3],
         },
         RectInstance {
-            rect: [30.0, 10.0, 8.0, 8.0],
+            rect: [Lpx(30.0), Lpx(10.0), Lpx(8.0), Lpx(8.0)],
             color: white,
-            corner_radius: 0.0,
+            corner_radius: Lpx(0.0),
             _pad: [0.0; 3],
         },
         // Layer 1 (indices 2..5): red rects
         RectInstance {
-            rect: [50.0, 10.0, 8.0, 8.0],
+            rect: [Lpx(50.0), Lpx(10.0), Lpx(8.0), Lpx(8.0)],
             color: red,
-            corner_radius: 0.0,
+            corner_radius: Lpx(0.0),
             _pad: [0.0; 3],
         },
         RectInstance {
-            rect: [70.0, 10.0, 8.0, 8.0],
+            rect: [Lpx(70.0), Lpx(10.0), Lpx(8.0), Lpx(8.0)],
             color: red,
-            corner_radius: 0.0,
+            corner_radius: Lpx(0.0),
             _pad: [0.0; 3],
         },
         RectInstance {
-            rect: [10.0, 30.0, 8.0, 8.0],
+            rect: [Lpx(10.0), Lpx(30.0), Lpx(8.0), Lpx(8.0)],
             color: red,
-            corner_radius: 0.0,
+            corner_radius: Lpx(0.0),
             _pad: [0.0; 3],
         },
     ];
@@ -279,9 +284,14 @@ fn premul_alpha_parity_with_single_instanced_rect() {
     // Single instanced rect at center, same color as smoke_premul test:
     // sRGB (255, 0, 0, 128) → linear premul (0.502, 0, 0, 0.502)
     let instances = vec![RectInstance {
-        rect: [w as f32 / 2.0 - 8.0, h as f32 / 2.0 - 8.0, 16.0, 16.0],
+        rect: [
+            Lpx(w as f32 / 2.0 - 8.0),
+            Lpx(h as f32 / 2.0 - 8.0),
+            Lpx(16.0),
+            Lpx(16.0),
+        ],
         color: srgb_u8_to_linear_premul([255, 0, 0, 128]),
-        corner_radius: 0.0,
+        corner_radius: Lpx(0.0),
         _pad: [0.0; 3],
     }];
     pipeline.prepare(&device, &queue, &instances);
@@ -333,9 +343,9 @@ fn corner_radius_produces_rounded_corners() {
     // with center at (8, 8); radius-8 corners are fully rounded.
     let white = srgb_u8_to_linear_premul([255, 255, 255, 255]);
     let instances = vec![RectInstance {
-        rect: [2.0, 2.0, 16.0, 16.0],
+        rect: [Lpx(2.0), Lpx(2.0), Lpx(16.0), Lpx(16.0)],
         color: white,
-        corner_radius: 8.0,
+        corner_radius: Lpx(8.0),
         _pad: [0.0; 3],
     }];
     pipeline.prepare(&device, &queue, &instances);
@@ -389,9 +399,9 @@ fn empty_range_in_record_is_safe() {
     // Prepare with one rect.
     let white = srgb_u8_to_linear_premul([255, 255, 255, 255]);
     let instances = vec![RectInstance {
-        rect: [10.0, 10.0, 8.0, 8.0],
+        rect: [Lpx(10.0), Lpx(10.0), Lpx(8.0), Lpx(8.0)],
         color: white,
-        corner_radius: 0.0,
+        corner_radius: Lpx(0.0),
         _pad: [0.0; 3],
     }];
     pipeline.prepare(&device, &queue, &instances);

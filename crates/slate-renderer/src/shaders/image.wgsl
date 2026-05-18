@@ -15,6 +15,8 @@
 // (white = `[1, 1, 1, 1]`).
 
 struct Viewport {
+    /// Logical-pixel (lpx) viewport size; `pixel_pos / viewport.size` NDC
+    /// mapping is scale-invariant when both sides agree on units.
     size: vec2<f32>,
     _pad: vec2<f32>,
 };

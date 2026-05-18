@@ -18,10 +18,6 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::marker::PhantomData;
 
-/// CoreText points to logical pixels conversion factor.
-/// 1 lpx = 1/96 inch, 1 pt = 1/72 inch, so lpx = pt * 96/72.
-pub(crate) const PT_TO_LPX: f32 = 96.0 / 72.0;
-
 /// CoreText text backend.
 ///
 /// Marked `!Send + !Sync` for API parity with DirectWrite, though CoreText is thread-safe.
@@ -64,8 +60,7 @@ impl CoreTextBackend {
         debug_assert!(
             {
                 let actual_pt = unsafe { ct_font.size() } as f32;
-                let expected_pt = size_lpx / PT_TO_LPX;
-                (actual_pt - expected_pt).abs() < 0.5
+                (actual_pt - size_lpx).abs() < 0.5
             },
             "substitute CTFont size disagrees with parent line size_lpx={size_lpx}",
         );

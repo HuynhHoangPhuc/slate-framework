@@ -12,7 +12,7 @@ mod common;
 
 use slate_renderer::atlas::{Atlas, Format};
 use slate_renderer::{
-    ImageInstance, ImagePipeline, ViewportUniform, create_unit_quad, linear_to_srgb_channel,
+    ImageInstance, ImagePipeline, Lpx, ViewportUniform, create_unit_quad, linear_to_srgb_channel,
     srgb_u8_to_linear_premul, viewport_bind_group_layout,
 };
 use wgpu::{
@@ -38,7 +38,7 @@ fn make_viewport(
         &buffer,
         0,
         bytemuck::bytes_of(&ViewportUniform {
-            size: [w as f32, h as f32],
+            size: [Lpx(w as f32), Lpx(h as f32)],
             _pad: [0.0; 2],
         }),
     );
@@ -126,7 +126,7 @@ fn opaque_red_patch_renders_red() {
     let mut pipeline = ImagePipeline::new(&device, format, &bgl, &atlas);
 
     let instances = vec![ImageInstance {
-        rect: [0.0, 0.0, w as f32, h as f32],
+        rect: [Lpx(0.0), Lpx(0.0), Lpx(w as f32), Lpx(h as f32)],
         uv_rect,
         tint: [1.0, 1.0, 1.0, 1.0],
     }];
@@ -167,7 +167,7 @@ fn green_tint_zeroes_red_patch() {
     // Premultiplied green tint: red × green = 0 in every channel.
     let green_tint = srgb_u8_to_linear_premul([0, 255, 0, 255]);
     let instances = vec![ImageInstance {
-        rect: [0.0, 0.0, w as f32, h as f32],
+        rect: [Lpx(0.0), Lpx(0.0), Lpx(w as f32), Lpx(h as f32)],
         uv_rect,
         tint: green_tint,
     }];
@@ -207,7 +207,7 @@ fn premul_half_alpha_red_patch_matches_smoke() {
     let mut pipeline = ImagePipeline::new(&device, format, &bgl, &atlas);
 
     let instances = vec![ImageInstance {
-        rect: [0.0, 0.0, w as f32, h as f32],
+        rect: [Lpx(0.0), Lpx(0.0), Lpx(w as f32), Lpx(h as f32)],
         uv_rect,
         tint: [1.0, 1.0, 1.0, 1.0],
     }];
@@ -247,7 +247,7 @@ fn capacity_grows_monotonically() {
     assert!(initial >= 64 * stride);
 
     let dummy = ImageInstance {
-        rect: [0.0; 4],
+        rect: [Lpx(0.0); 4],
         uv_rect: [0.0, 0.0, 1.0, 1.0],
         tint: [1.0; 4],
     };
@@ -294,7 +294,7 @@ fn non_uniform_patch_preserves_orientation() {
     let mut pipeline = ImagePipeline::new(&device, format, &bgl, &atlas);
 
     let instances = vec![ImageInstance {
-        rect: [0.0, 0.0, w as f32, h as f32],
+        rect: [Lpx(0.0), Lpx(0.0), Lpx(w as f32), Lpx(h as f32)],
         uv_rect,
         tint: [1.0, 1.0, 1.0, 1.0],
     }];
@@ -344,12 +344,12 @@ fn multi_layer_disjoint_ranges_in_single_pass() {
     // Layer 0: red on the left half. Layer 1: green on the right half.
     let instances = vec![
         ImageInstance {
-            rect: [0.0, 0.0, 32.0, 32.0],
+            rect: [Lpx(0.0), Lpx(0.0), Lpx(32.0), Lpx(32.0)],
             uv_rect: red_uv,
             tint: [1.0; 4],
         },
         ImageInstance {
-            rect: [32.0, 0.0, 32.0, 32.0],
+            rect: [Lpx(32.0), Lpx(0.0), Lpx(32.0), Lpx(32.0)],
             uv_rect: green_uv,
             tint: [1.0; 4],
         },
@@ -404,7 +404,7 @@ fn rebuild_atlas_bg_does_not_break_subsequent_draws() {
     pipeline.rebuild_atlas_bg(&device, &atlas);
 
     let instances = vec![ImageInstance {
-        rect: [0.0, 0.0, w as f32, h as f32],
+        rect: [Lpx(0.0), Lpx(0.0), Lpx(w as f32), Lpx(h as f32)],
         uv_rect,
         tint: [1.0; 4],
     }];

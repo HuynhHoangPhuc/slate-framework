@@ -30,7 +30,7 @@ use wgpu::{
 use std::sync::Arc;
 
 use slate_reactive::{ObserverId, Runtime};
-use slate_renderer::Scene;
+use slate_renderer::{Lpx, Scene};
 use slate_renderer::atlas::{Atlas, Format};
 use slate_renderer::glyph_pipeline::GlyphPipeline;
 use slate_renderer::image_pipeline::ImagePipeline;
@@ -225,7 +225,7 @@ impl HeadlessApp {
             &viewport_buf,
             0,
             bytemuck::bytes_of(&ViewportUniform {
-                size: [width as f32, height as f32],
+                size: [Lpx(width as f32), Lpx(height as f32)],
                 _pad: [0.0; 2],
             }),
         );
@@ -576,6 +576,13 @@ impl HeadlessApp {
     /// Mutable access to the text system.
     pub fn text_system_mut(&mut self) -> &mut TextSystem {
         &mut self.text_system
+    }
+
+    /// Inspect the most recently rendered scene. Used by wire-format
+    /// regression tests to verify that pushed instances carry lpx coordinates
+    /// regardless of `scale_factor`.
+    pub fn scene(&self) -> &Scene {
+        &self.scene
     }
 
     /// Get the reactive runtime for creating signals in tests.

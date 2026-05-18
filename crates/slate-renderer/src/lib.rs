@@ -46,6 +46,7 @@ pub mod renderer;
 pub mod scene;
 pub mod shadow_pipeline;
 pub mod surface_target;
+pub mod units;
 
 // Platform-specific modules (internal)
 #[cfg(target_os = "macos")]
@@ -77,6 +78,9 @@ pub use device_lost_reason::DeviceLostReason;
 
 // Re-exports from observer
 pub use observer::RendererObserver;
+
+// Re-exports from units
+pub use units::Lpx;
 
 // Re-exports from renderer
 pub use renderer::{RenderError, Renderer, RendererError};

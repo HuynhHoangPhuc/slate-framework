@@ -13,7 +13,7 @@ mod common;
 
 use slate_renderer::atlas::{Atlas, Format, PAGE_SIZE};
 use slate_renderer::{
-    GlyphInstance, GlyphPipeline, ViewportUniform, allocate_glyph, create_unit_quad,
+    GlyphInstance, GlyphPipeline, Lpx, ViewportUniform, allocate_glyph, create_unit_quad,
     linear_to_srgb_channel, viewport_bind_group_layout,
 };
 use wgpu::{
@@ -39,7 +39,7 @@ fn make_viewport(
         &buffer,
         0,
         bytemuck::bytes_of(&ViewportUniform {
-            size: [w as f32, h as f32],
+            size: [Lpx(w as f32), Lpx(h as f32)],
             _pad: [0.0; 2],
         }),
     );
@@ -137,7 +137,7 @@ fn opaque_mask_renders_premul_red() {
     let mut pipeline = GlyphPipeline::new(&device, format, &bgl, &atlas);
 
     let instances = vec![GlyphInstance {
-        rect: [0.0, 0.0, w as f32, h as f32],
+        rect: [Lpx(0.0), Lpx(0.0), Lpx(w as f32), Lpx(h as f32)],
         uv_rect,
         // Premultiplied red, full alpha.
         color: [1.0, 0.0, 0.0, 1.0],
@@ -179,7 +179,7 @@ fn half_alpha_mask_with_red_ink_premultiplies() {
     // Premultiplied red, full ink alpha. Output = color * mask =
     // (0.502, 0, 0, 0.502). Surface sRGB encodes RGB; alpha is linear.
     let instances = vec![GlyphInstance {
-        rect: [0.0, 0.0, w as f32, h as f32],
+        rect: [Lpx(0.0), Lpx(0.0), Lpx(w as f32), Lpx(h as f32)],
         uv_rect,
         color: [1.0, 0.0, 0.0, 1.0],
         sub_pixel_variant: 0,
@@ -263,7 +263,7 @@ fn capacity_grows_monotonically() {
     assert!(initial >= 64 * stride);
 
     let dummy = GlyphInstance {
-        rect: [0.0; 4],
+        rect: [Lpx(0.0); 4],
         uv_rect: [0.0, 0.0, 1.0, 1.0],
         color: [1.0; 4],
         sub_pixel_variant: 0,
@@ -313,7 +313,7 @@ fn rebuild_atlas_bg_does_not_break_subsequent_draws() {
     pipeline.rebuild_atlas_bg(&device, &atlas);
 
     let instances = vec![GlyphInstance {
-        rect: [0.0, 0.0, w as f32, h as f32],
+        rect: [Lpx(0.0), Lpx(0.0), Lpx(w as f32), Lpx(h as f32)],
         uv_rect,
         color: [1.0, 1.0, 1.0, 1.0],
         sub_pixel_variant: 0,
@@ -363,7 +363,7 @@ fn gutter_blocks_neighbor_bleed_at_render_time() {
 
     // Render only glyph A. Premultiplied red ink, full ink alpha.
     let instances = vec![GlyphInstance {
-        rect: [0.0, 0.0, w as f32, h as f32],
+        rect: [Lpx(0.0), Lpx(0.0), Lpx(w as f32), Lpx(h as f32)],
         uv_rect: uv_a,
         color: [1.0, 0.0, 0.0, 1.0],
         sub_pixel_variant: 0,
@@ -429,7 +429,7 @@ fn ten_glyphs_in_one_draw_render_correct_centers() {
                 [0.0, 1.0, 0.0, 1.0]
             };
             GlyphInstance {
-                rect: [(i * cell) as f32, 0.0, cell as f32, cell as f32],
+                rect: [Lpx((i * cell) as f32), Lpx(0.0), Lpx(cell as f32), Lpx(cell as f32)],
                 uv_rect,
                 color,
                 sub_pixel_variant: i,
@@ -486,7 +486,7 @@ fn sub_pixel_variant_does_not_affect_phase1_output() {
     let mut pipeline = GlyphPipeline::new(&device, format, &bgl, &atlas);
 
     let make_instance = |variant: u32| GlyphInstance {
-        rect: [0.0, 0.0, w as f32, h as f32],
+        rect: [Lpx(0.0), Lpx(0.0), Lpx(w as f32), Lpx(h as f32)],
         uv_rect,
         color: [1.0, 0.0, 0.0, 1.0],
         sub_pixel_variant: variant,

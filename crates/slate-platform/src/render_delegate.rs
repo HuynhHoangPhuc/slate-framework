@@ -94,6 +94,20 @@ impl PhysicalRect {
             height,
         }
     }
+
+    /// Build a physical-pixel rect from a logical-pixel rect by scaling.
+    ///
+    /// `scale` is the window's HiDPI scale factor (1.0 on @1x, 2.0 on Retina).
+    /// X/Y are rounded; width is floored with a 1-px minimum so a 1-lpx caret
+    /// stroke never collapses to 0 at fractional scales. Height matches the
+    /// rounding rule used in `TextField`'s caret-rect synthesis.
+    pub fn from_lpx_rect(x: f32, y: f32, w: f32, h: f32, scale: f32) -> Self {
+        let phys_x = (x * scale).round() as i32;
+        let phys_y = (y * scale).round() as i32;
+        let phys_w = (w * scale).max(1.0) as u32;
+        let phys_h = (h * scale).round() as u32;
+        Self::new(phys_x, phys_y, phys_w, phys_h)
+    }
 }
 
 /// Receives synchronous render notifications from a [`Window`](crate::Window).

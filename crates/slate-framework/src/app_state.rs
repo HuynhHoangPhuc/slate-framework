@@ -1159,7 +1159,7 @@ impl<V: View> AppState<V> {
             return;
         }
         if let Some(r) = self.renderer.borrow_mut().as_mut() {
-            r.resize(size.as_tuple());
+            r.resize(size.as_tuple(), self.window.logical_size());
         }
         self.last_resize_size.set(Some(size));
     }
@@ -1168,7 +1168,7 @@ impl<V: View> AppState<V> {
     /// Platform now drives WindowRedrawRequested post-resize.
     pub fn handle_window_resized(&self, physical_size: (u32, u32)) {
         if let Some(r) = self.renderer.borrow_mut().as_mut() {
-            r.resize(physical_size);
+            r.resize(physical_size, self.window.logical_size());
         }
     }
 

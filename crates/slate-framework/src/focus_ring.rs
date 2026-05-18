@@ -10,6 +10,7 @@
 //! opted into focus via `focusable(true)`), so the per-frame cost is bounded
 //! by the number of focusable elements, not the full tree.
 
+use slate_renderer::Lpx;
 use slate_renderer::scene::{RectInstance, Scene};
 
 use crate::types::Bounds;
@@ -57,30 +58,40 @@ pub(crate) fn emit_focus_ring(scene: &mut Scene, info: FocusBounds) {
 
     // Top stroke
     scene.push_rect(RectInstance {
-        rect: [x, y, w, stroke],
+        rect: [Lpx(x), Lpx(y), Lpx(w), Lpx(stroke)],
         color: FOCUS_RING_COLOR,
-        corner_radius: 0.0,
+        corner_radius: Lpx(0.0),
         _pad: pad,
     });
     // Bottom stroke
     scene.push_rect(RectInstance {
-        rect: [x, y + h - stroke, w, stroke],
+        rect: [Lpx(x), Lpx(y + h - stroke), Lpx(w), Lpx(stroke)],
         color: FOCUS_RING_COLOR,
-        corner_radius: 0.0,
+        corner_radius: Lpx(0.0),
         _pad: pad,
     });
     // Left stroke
     scene.push_rect(RectInstance {
-        rect: [x, y + stroke, stroke, h - 2.0 * stroke],
+        rect: [
+            Lpx(x),
+            Lpx(y + stroke),
+            Lpx(stroke),
+            Lpx(h - 2.0 * stroke),
+        ],
         color: FOCUS_RING_COLOR,
-        corner_radius: 0.0,
+        corner_radius: Lpx(0.0),
         _pad: pad,
     });
     // Right stroke
     scene.push_rect(RectInstance {
-        rect: [x + w - stroke, y + stroke, stroke, h - 2.0 * stroke],
+        rect: [
+            Lpx(x + w - stroke),
+            Lpx(y + stroke),
+            Lpx(stroke),
+            Lpx(h - 2.0 * stroke),
+        ],
         color: FOCUS_RING_COLOR,
-        corner_radius: 0.0,
+        corner_radius: Lpx(0.0),
         _pad: pad,
     });
 

@@ -42,6 +42,7 @@ use std::hash::{Hash, Hasher};
 
 use taffy::prelude::*;
 
+use slate_renderer::Lpx;
 use slate_renderer::scene::ImageInstance;
 
 use crate::context::{LayoutCtx, PaintCtx, PrepaintCtx};
@@ -298,15 +299,15 @@ impl Element for Image {
             cx.queue,
         );
 
-        // Build and push ImageInstance if allocation succeeded
+        // Build and push ImageInstance if allocation succeeded. Scene wire
+        // format is in logical pixels.
         if let Some(alloc) = alloc {
-            let scale = cx.scale_factor as f32;
             cx.scene.push_image(ImageInstance {
                 rect: [
-                    bounds.origin.x * scale,
-                    bounds.origin.y * scale,
-                    bounds.size.width * scale,
-                    bounds.size.height * scale,
+                    Lpx(bounds.origin.x),
+                    Lpx(bounds.origin.y),
+                    Lpx(bounds.size.width),
+                    Lpx(bounds.size.height),
                 ],
                 uv_rect: alloc.uv_rect,
                 tint: [1.0, 1.0, 1.0, 1.0], // premultiplied linear white (no tint)

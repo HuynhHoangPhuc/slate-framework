@@ -10,7 +10,8 @@
 mod common;
 
 use slate_renderer::{
-    ShadowInstance, ShadowPipeline, ViewportUniform, create_unit_quad, viewport_bind_group_layout,
+    Lpx, ShadowInstance, ShadowPipeline, ViewportUniform, create_unit_quad,
+    viewport_bind_group_layout,
 };
 use wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindingResource, Buffer,
@@ -35,7 +36,7 @@ fn make_viewport(
         &buffer,
         0,
         bytemuck::bytes_of(&ViewportUniform {
-            size: [w as f32, h as f32],
+            size: [Lpx(w as f32), Lpx(h as f32)],
             _pad: [0.0; 2],
         }),
     );
@@ -107,10 +108,10 @@ fn shadow_center_has_high_alpha_edge_has_low() {
     let sigma = 8.0f32;
 
     let instances = [ShadowInstance {
-        rect: [32.0, 32.0, 64.0, 64.0],
+        rect: [Lpx(32.0), Lpx(32.0), Lpx(64.0), Lpx(64.0)],
         color: [0.0, 0.0, 0.0, 1.0],
-        corner_radius: 0.0,
-        blur_radius: sigma,
+        corner_radius: Lpx(0.0),
+        blur_radius: Lpx(sigma),
         _pad: [0.0; 2],
     }];
 
@@ -147,10 +148,15 @@ fn sigma_sweep_no_clipping() {
         let center = sz as f32 / 2.0;
 
         let instances = [ShadowInstance {
-            rect: [center - rect_half, center - rect_half, rect_size, rect_size],
+            rect: [
+                Lpx(center - rect_half),
+                Lpx(center - rect_half),
+                Lpx(rect_size),
+                Lpx(rect_size),
+            ],
             color: [0.0, 0.0, 0.0, 1.0],
-            corner_radius: 0.0,
-            blur_radius: sigma,
+            corner_radius: Lpx(0.0),
+            blur_radius: Lpx(sigma),
             _pad: [0.0; 2],
         }];
 
@@ -185,10 +191,10 @@ fn rounded_corner_shadow_falloff() {
     let corner_radius = 20.0f32;
 
     let instances = [ShadowInstance {
-        rect: [32.0, 32.0, 64.0, 64.0],
+        rect: [Lpx(32.0), Lpx(32.0), Lpx(64.0), Lpx(64.0)],
         color: [0.0, 0.0, 0.0, 1.0],
-        corner_radius,
-        blur_radius: sigma,
+        corner_radius: Lpx(corner_radius),
+        blur_radius: Lpx(sigma),
         _pad: [0.0; 2],
     }];
 
@@ -241,10 +247,10 @@ fn capacity_grows_monotonically() {
     let mut pipeline = ShadowPipeline::new(&device, format, &bgl);
 
     let shadow = ShadowInstance {
-        rect: [0.0, 0.0, 10.0, 10.0],
+        rect: [Lpx(0.0), Lpx(0.0), Lpx(10.0), Lpx(10.0)],
         color: [0.0, 0.0, 0.0, 1.0],
-        corner_radius: 0.0,
-        blur_radius: 4.0,
+        corner_radius: Lpx(0.0),
+        blur_radius: Lpx(4.0),
         _pad: [0.0; 2],
     };
 
@@ -276,10 +282,10 @@ fn sigma_zero_produces_sharp_box_no_nan() {
 
     // 32×32 rect centered at (16,16) with blur_radius=0 → sharp box shadow.
     let instances = [ShadowInstance {
-        rect: [16.0, 16.0, 32.0, 32.0],
+        rect: [Lpx(16.0), Lpx(16.0), Lpx(32.0), Lpx(32.0)],
         color: [0.0, 0.0, 0.0, 1.0],
-        corner_radius: 0.0,
-        blur_radius: 0.0,
+        corner_radius: Lpx(0.0),
+        blur_radius: Lpx(0.0),
         _pad: [0.0; 2],
     }];
 
@@ -313,10 +319,10 @@ fn corner_radius_exceeding_half_size_no_artifact() {
     // 40×40 rect with corner_radius=30 (exceeds half of min dimension=20).
     // Shader clamps to min(half.x, half.y)=20, producing a circular shadow.
     let instances = [ShadowInstance {
-        rect: [44.0, 44.0, 40.0, 40.0],
+        rect: [Lpx(44.0), Lpx(44.0), Lpx(40.0), Lpx(40.0)],
         color: [0.0, 0.0, 0.0, 1.0],
-        corner_radius: 30.0,
-        blur_radius: 6.0,
+        corner_radius: Lpx(30.0),
+        blur_radius: Lpx(6.0),
         _pad: [0.0; 2],
     }];
 

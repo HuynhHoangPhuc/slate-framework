@@ -29,6 +29,7 @@ mod grapheme;
 mod handlers;
 
 use slate_reactive::Signal;
+use slate_renderer::Lpx;
 use slate_renderer::scene::RectInstance;
 use taffy::prelude::*;
 
@@ -274,17 +275,17 @@ impl Element for TextField {
         let line_height = layout_state.line_height;
         let scale = cx.scale_factor as f32;
 
-        // Optional background
+        // Optional background. Scene wire format is in logical pixels.
         if let Some(bg) = self.style.background {
             cx.scene.push_rect(RectInstance {
                 rect: [
-                    bounds.origin.x,
-                    bounds.origin.y,
-                    bounds.size.width,
-                    line_height,
+                    Lpx(bounds.origin.x),
+                    Lpx(bounds.origin.y),
+                    Lpx(bounds.size.width),
+                    Lpx(line_height),
                 ],
                 color: bg,
-                corner_radius: 0.0,
+                corner_radius: Lpx(0.0),
                 _pad: [0.0; 3],
             });
         }
@@ -386,13 +387,13 @@ impl Element for TextField {
         if paint_state.focused {
             cx.scene.push_rect(RectInstance {
                 rect: [
-                    bounds.origin.x + caret_pixel_x,
-                    bounds.origin.y,
-                    1.0,
-                    line_height,
+                    Lpx(bounds.origin.x + caret_pixel_x),
+                    Lpx(bounds.origin.y),
+                    Lpx(1.0),
+                    Lpx(line_height),
                 ],
                 color: self.style.caret_color,
-                corner_radius: 0.0,
+                corner_radius: Lpx(0.0),
                 _pad: [0.0; 3],
             });
         }
@@ -406,13 +407,13 @@ impl Element for TextField {
                 let underline_y = bounds.origin.y + shaped.ascent_lpx + 1.0;
                 cx.scene.push_rect(RectInstance {
                     rect: [
-                        bounds.origin.x + preedit_start_px,
-                        underline_y,
-                        preedit_width,
-                        1.0,
+                        Lpx(bounds.origin.x + preedit_start_px),
+                        Lpx(underline_y),
+                        Lpx(preedit_width),
+                        Lpx(1.0),
                     ],
                     color: self.style.color,
-                    corner_radius: 0.0,
+                    corner_radius: Lpx(0.0),
                     _pad: [0.0; 3],
                 });
             }
@@ -437,13 +438,13 @@ impl Element for TextField {
                 if sel_w > 0.0 {
                     cx.scene.push_rect(RectInstance {
                         rect: [
-                            bounds.origin.x + sel_start_px,
-                            bounds.origin.y,
-                            sel_w,
-                            line_height,
+                            Lpx(bounds.origin.x + sel_start_px),
+                            Lpx(bounds.origin.y),
+                            Lpx(sel_w),
+                            Lpx(line_height),
                         ],
                         color: self.style.preedit_selection_color,
-                        corner_radius: 0.0,
+                        corner_radius: Lpx(0.0),
                         _pad: [0.0; 3],
                     });
                 }
@@ -452,19 +453,17 @@ impl Element for TextField {
 
         // Update ImeState.caret_screen_rect for OS IME query channel.
         // `try_borrow_mut` skips silently on re-entrancy (handler re-entering paint).
-        let caret_phys_x = ((bounds.origin.x + caret_pixel_x) * scale).round() as i32;
-        let caret_phys_y = (bounds.origin.y * scale).round() as i32;
-        let caret_phys_w = (1.0_f32 * scale).max(1.0) as u32;
-        let caret_phys_h = (line_height * scale).round() as u32;
-
+        // Scene-space coordinates are lpx; convert to physical here since IME
+        // delegates report screen-space physical pixels to the OS.
         if let Some(state_rc) = cx.ime_registry.borrow().get(element_id)
             && let Ok(mut state) = state_rc.try_borrow_mut()
         {
-            state.caret_screen_rect = slate_platform::PhysicalRect::new(
-                caret_phys_x,
-                caret_phys_y,
-                caret_phys_w,
-                caret_phys_h,
+            state.caret_screen_rect = slate_platform::PhysicalRect::from_lpx_rect(
+                bounds.origin.x + caret_pixel_x,
+                bounds.origin.y,
+                1.0,
+                line_height,
+                scale,
             );
         }
     }

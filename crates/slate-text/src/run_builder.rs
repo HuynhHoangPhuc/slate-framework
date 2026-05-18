@@ -1,5 +1,6 @@
 //! Text run builder — converts shaped glyphs to GPU instances.
 
+use slate_renderer::Lpx;
 use slate_renderer::atlas::Atlas;
 use slate_renderer::scene::GlyphInstance;
 
@@ -158,12 +159,19 @@ impl<'a, B: TextBackend> TextRunBuilder<'a, B> {
                 let origin_y_px =
                     (self.baseline_lpx[1] + y_offset_lpx - cg.metrics.bearing_y_lpx) * scale;
 
+                // Snap to physical-pixel grid, then divide by scale to land
+                // back in lpx for the scene wire format.
+                let origin_x_lpx = origin_x_px.floor() / scale;
+                let origin_y_lpx = origin_y_px.round() / scale;
+                let width_lpx = cg.metrics.width as f32 / scale;
+                let height_lpx = cg.metrics.height as f32 / scale;
+
                 out.push(GlyphInstance {
                     rect: [
-                        origin_x_px.floor(),
-                        origin_y_px.round(),
-                        cg.metrics.width as f32,
-                        cg.metrics.height as f32,
+                        Lpx(origin_x_lpx),
+                        Lpx(origin_y_lpx),
+                        Lpx(width_lpx),
+                        Lpx(height_lpx),
                     ],
                     uv_rect: cg.alloc.uv_rect,
                     color: self.color,

@@ -8,6 +8,7 @@
 
 use std::sync::Arc;
 
+use slate_renderer::Lpx;
 use slate_renderer::scene::RectInstance;
 use taffy::prelude::*;
 
@@ -614,18 +615,18 @@ impl Element for Div {
         _paint_state: &mut Self::PaintState,
         cx: &mut PaintCtx,
     ) {
-        // Paint background if set
+        // Paint background if set. Scene wire format is in logical pixels;
+        // the renderer's viewport maps lpx → NDC, so no `* scale_factor` here.
         if let Some(color) = self.visual.background {
-            let scale = cx.scale_factor as f32;
             cx.scene.push_rect(RectInstance {
                 rect: [
-                    bounds.origin.x * scale,
-                    bounds.origin.y * scale,
-                    bounds.size.width * scale,
-                    bounds.size.height * scale,
+                    Lpx(bounds.origin.x),
+                    Lpx(bounds.origin.y),
+                    Lpx(bounds.size.width),
+                    Lpx(bounds.size.height),
                 ],
                 color,
-                corner_radius: self.visual.corner_radius * scale,
+                corner_radius: Lpx(self.visual.corner_radius),
                 _pad: [0.0; 3],
             });
         }

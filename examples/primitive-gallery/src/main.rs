@@ -86,7 +86,7 @@ fn main() {
 
         Event::WindowResized { physical_size, .. } => {
             if let Some(r) = renderer.borrow_mut().as_mut() {
-                r.resize(physical_size);
+                r.resize(physical_size, window_ref.logical_size());
             }
         }
 
@@ -95,7 +95,9 @@ fn main() {
                 return;
             }
 
-            let (w, h) = window_ref.physical_size();
+            // Scene wire format is in logical pixels; the renderer's viewport
+            // maps lpx → NDC and the surface is configured in physical pixels.
+            let (w_lpx, h_lpx) = window_ref.logical_size();
             let scale = window_ref.scale_factor() as f32;
             let fps = *current_fps.borrow();
             let uv = *image_uv.borrow();
@@ -109,14 +111,14 @@ fn main() {
                 &renderer,
                 fps,
                 scale,
-                w as f32,
+                w_lpx as f32,
             );
 
             // Finish line layout cache frame (two-frame rolling)
             line_cache.borrow().finish_frame();
 
             let mut s = scene.borrow_mut();
-            build_scene(&mut s, w as f32, h as f32, scale, uv, &text_glyphs);
+            build_scene(&mut s, w_lpx as f32, h_lpx as f32, uv, &text_glyphs);
 
             let result = renderer.borrow_mut().as_mut().unwrap().render_scene(&mut s);
             if let Err(e) = result {
