@@ -433,6 +433,7 @@ impl HeadlessApp {
                 &self.executor.foreground,
                 self.scale_factor,
                 &self.ime_registry,
+                None,
             );
             root.paint(root_bounds, &mut cx);
         }

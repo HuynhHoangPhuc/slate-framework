@@ -15,22 +15,21 @@
 //! that no other element needs. This lock is documented here so future devs do
 //! not re-litigate the Div-wrapper alternative.
 //!
-//! # Out of scope (Phase 10)
+//! # Out of scope
 //!
-//! - Text selection beyond the preedit overlay
-//! - Clipboard cut/copy/paste
-//! - Undo/redo
-//! - Click-to-position caret
-//! - Blinking caret
-//!
-//! See `plans/260517-0930-slate-phase-9c-ime-composition/phase-05-minimal-textfield-element.md`.
+//! - Multi-line editing, wrap, vertical nav, scroll viewport — future `TextArea`.
+//! - Rich text / styled spans.
+//! - Bidi visual↔logical reorder.
 
 mod grapheme;
 mod handlers;
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+/// Caret blink half-period. Matches macOS `NSTextInsertionPointBlinkPeriod`.
+const CARET_BLINK_PERIOD: Duration = Duration::from_millis(530);
 
 use slate_reactive::Signal;
 use slate_renderer::Lpx;
@@ -52,38 +51,152 @@ use handlers::{
 };
 
 // ---------------------------------------------------------------------------
-// Undo scaffolding (Phase 10a.7) — bindings land in 10b.3.
+// Undo / redo — Apple Notes coalesce (Phase 10b.3)
 // ---------------------------------------------------------------------------
 
 const UNDO_STACK_CAP: usize = 100;
+const COALESCE_TIME_GAP: Duration = Duration::from_millis(500);
 
+/// Snapshot of TextField state. Stored as **post-edit** snapshots — the state
+/// the field was in immediately after the edit that produced it. `entries[0]`
+/// is the baseline (initial value) so undo can always walk back to "before the
+/// first edit".
 #[derive(Clone, Debug)]
-#[allow(dead_code)] // Fields read by the Cmd+Z binding in 10b.3.
 pub(super) struct EditSnapshot {
     pub(super) text: String,
-    /// Pre-edit caret position — the restore target Cmd+Z navigates back to.
     pub(super) caret: usize,
     pub(super) anchor: Option<usize>,
-    pub(super) t: Instant,
 }
 
-#[derive(Debug, Default)]
+/// Classification of an edit for coalesce decisions. `Insert` and `Backspace`
+/// are coalescible bursts; `Discrete` (paste, cut, selection-delete, IME
+/// commit) always pushes a fresh undo step.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum EditOp {
+    Insert,
+    Backspace,
+    Discrete,
+}
+
+/// Apple Notes-style coalesce: typing within 500 ms of the previous typing
+/// keystroke folds into the same undo step; anything else (motion, time gap,
+/// op-type change, discrete op) opens a new step.
+#[derive(Debug)]
 pub(super) struct UndoStack {
+    /// History of post-edit states. Always non-empty; `entries[0]` is the
+    /// baseline. `entries[cursor]` reflects the live document.
     entries: VecDeque<EditSnapshot>,
-    /// Index of the next-undo target. With the always-push coalesce stub this
-    /// tracks `entries.len()` (top of stack); 10b.3 introduces a 4-trigger
-    /// policy that may leave the cursor mid-stack after Cmd+Z walks back.
     cursor: usize,
+    /// Op that produced the head entry. `None` after undo/redo so the next
+    /// edit pushes fresh rather than coalescing into a state the user already
+    /// walked back through.
+    head_op: Option<EditOp>,
+    head_edit_t: Option<Instant>,
+    /// Set by non-typing caret motion (arrow / Home / End / click / drag).
+    /// Forces the next edit to open a fresh undo step.
+    motion_since_last_edit: bool,
 }
 
 impl UndoStack {
-    pub(super) fn push(&mut self, snap: EditSnapshot) {
-        // Ring buffer: drop the oldest entry on overflow.
-        if self.entries.len() == UNDO_STACK_CAP {
-            self.entries.pop_front();
+    /// Construct an undo stack seeded with the field's initial state.
+    pub(super) fn with_baseline(text: String, caret: usize) -> Self {
+        let mut entries = VecDeque::with_capacity(UNDO_STACK_CAP);
+        entries.push_back(EditSnapshot {
+            text,
+            caret,
+            anchor: None,
+        });
+        Self {
+            entries,
+            cursor: 0,
+            head_op: None,
+            head_edit_t: None,
+            motion_since_last_edit: false,
         }
-        self.entries.push_back(snap);
-        self.cursor = self.entries.len();
+    }
+
+    /// Record a completed edit. `post` is the state *after* the mutation. The
+    /// 4-trigger policy decides whether to push a new entry or overwrite the
+    /// head entry in place.
+    pub(super) fn record_edit(&mut self, op: EditOp, post: EditSnapshot) {
+        // New edits truncate the redo tail.
+        if self.cursor + 1 < self.entries.len() {
+            self.entries.drain(self.cursor + 1..);
+        }
+
+        if self.should_push(op) {
+            if self.entries.len() == UNDO_STACK_CAP {
+                self.entries.pop_front();
+                self.cursor = self.cursor.saturating_sub(1);
+            }
+            self.entries.push_back(post);
+            self.cursor = self.entries.len() - 1;
+        } else if let Some(slot) = self.entries.get_mut(self.cursor) {
+            *slot = post;
+        }
+
+        self.head_op = Some(op);
+        self.head_edit_t = Some(Instant::now());
+        self.motion_since_last_edit = false;
+    }
+
+    /// Mark that the caret moved without an edit. Forces the next edit to
+    /// open a fresh undo step.
+    pub(super) fn mark_motion(&mut self) {
+        self.motion_since_last_edit = true;
+    }
+
+    /// Pop one undo step. Returns the state to restore (and the field's live
+    /// state should be assigned from it). `None` when nothing left to undo.
+    pub(super) fn undo(&mut self) -> Option<EditSnapshot> {
+        if self.cursor == 0 {
+            return None;
+        }
+        self.cursor -= 1;
+        // After undo, the head op is no longer the live op — the next edit
+        // must open a new step, never coalesce with what the user walked back.
+        self.head_op = None;
+        self.head_edit_t = None;
+        self.motion_since_last_edit = false;
+        Some(self.entries[self.cursor].clone())
+    }
+
+    /// Step forward through redo. Returns the state to restore, or `None` if
+    /// nothing to redo.
+    pub(super) fn redo(&mut self) -> Option<EditSnapshot> {
+        if self.cursor + 1 >= self.entries.len() {
+            return None;
+        }
+        self.cursor += 1;
+        self.head_op = None;
+        self.head_edit_t = None;
+        self.motion_since_last_edit = false;
+        Some(self.entries[self.cursor].clone())
+    }
+
+    fn should_push(&self, op: EditOp) -> bool {
+        let Some(prev_op) = self.head_op else {
+            return true;
+        };
+        // Trigger 4: discrete ops never coalesce (in either direction).
+        if op == EditOp::Discrete || prev_op == EditOp::Discrete {
+            return true;
+        }
+        // Trigger 3: op-type change.
+        if prev_op != op {
+            return true;
+        }
+        // Trigger 1: time gap > 500 ms since last edit.
+        if let Some(t) = self.head_edit_t
+            && t.elapsed() > COALESCE_TIME_GAP
+        {
+            return true;
+        }
+        // Trigger 2: caret moved by non-typing action since last edit.
+        if self.motion_since_last_edit {
+            return true;
+        }
+        false
     }
 
     #[cfg(test)]
@@ -155,12 +268,15 @@ pub struct TextField {
 impl TextField {
     /// Create a new TextField bound to `value`.
     pub fn new(value: Signal<String>) -> Self {
+        let initial = value.get_untracked();
+        let caret = initial.len();
+        let undo = Arc::new(Mutex::new(UndoStack::with_baseline(initial, caret)));
         Self {
             value,
             style: TextFieldStyle::default(),
             font: None,
             last_id: None,
-            undo: Arc::new(Mutex::new(UndoStack::default())),
+            undo,
         }
     }
 
@@ -338,7 +454,7 @@ impl Element for TextField {
         cx.register_mouse_handlers(
             element_id,
             MouseHandlers {
-                on_mouse_down: Some(build_mouse_down_handler()),
+                on_mouse_down: Some(build_mouse_down_handler(Arc::clone(&self.undo))),
                 on_mouse_move: Some(build_mouse_move_handler()),
                 on_mouse_up: Some(build_mouse_up_handler()),
             },
@@ -539,9 +655,45 @@ impl Element for TextField {
             }
         }
 
-        // 4. Caret — 1px vertical line, visible only when focused.
-        //    Drawn last so it sits on top of selection / preedit overlays.
-        if paint_state.focused {
+        // 4. Caret — 1px vertical line, visible only when focused and inside
+        //    the "on" half of the blink cycle. Drawn last so it sits on top
+        //    of selection / preedit overlays.
+        //
+        //    Blink: 530 ms half-period (matches macOS NSTextInsertionPointBlinkPeriod).
+        //    On every focused paint we advance the cycle: if the deadline has
+        //    passed we flip `visible` and arm the next deadline; either way we
+        //    ask the platform to redraw at the deadline so the cycle continues
+        //    without input. Unfocused: blink state stays at its defaults; no
+        //    timer scheduled — zero CPU.
+        let mut caret_visible = false;
+        if let Some(state_rc) = cx.ime_registry.borrow().get(element_id)
+            && let Ok(mut state) = state_rc.try_borrow_mut()
+        {
+            if paint_state.focused {
+                let now = Instant::now();
+                match state.blink.next {
+                    None => {
+                        state.blink.visible = true;
+                        state.blink.next = Some(now + CARET_BLINK_PERIOD);
+                    }
+                    Some(t) if now >= t => {
+                        state.blink.visible = !state.blink.visible;
+                        state.blink.next = Some(now + CARET_BLINK_PERIOD);
+                    }
+                    Some(_) => {}
+                }
+                caret_visible = state.blink.visible;
+                if let Some(deadline) = state.blink.next {
+                    cx.schedule_redraw_at(deadline);
+                }
+            } else {
+                // Unfocused: drop any in-flight blink so the next focus gain
+                // starts a fresh cycle from visible=true.
+                state.blink.visible = true;
+                state.blink.next = None;
+            }
+        }
+        if paint_state.focused && caret_visible {
             cx.scene.push_rect(RectInstance {
                 rect: [
                     Lpx(bounds.origin.x + caret_pixel_x),
@@ -595,7 +747,7 @@ impl IntoElement for TextField {
 }
 
 // ---------------------------------------------------------------------------
-// Unit tests — UndoStack scaffolding (Phase 10a.7)
+// Unit tests — UndoStack coalesce policy (Phase 10b.3)
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -607,44 +759,111 @@ mod undo_tests {
             text: text.to_string(),
             caret,
             anchor: None,
-            t: Instant::now(),
         }
     }
 
+    fn fresh() -> UndoStack {
+        UndoStack::with_baseline(String::new(), 0)
+    }
+
     #[test]
-    fn push_grows_then_caps_at_capacity() {
-        let mut s = UndoStack::default();
-        // Push twice the cap; ring buffer must clamp at UNDO_STACK_CAP.
-        for i in 0..(UNDO_STACK_CAP * 2) {
-            s.push(snap(&format!("{i}"), i));
+    fn baseline_is_present_and_undo_returns_none() {
+        let mut s = fresh();
+        assert_eq!(s.len(), 1);
+        assert_eq!(s.cursor(), 0);
+        assert!(s.undo().is_none());
+    }
+
+    #[test]
+    fn typing_burst_coalesces_into_single_step() {
+        let mut s = fresh();
+        s.record_edit(EditOp::Insert, snap("a", 1));
+        s.record_edit(EditOp::Insert, snap("ab", 2));
+        s.record_edit(EditOp::Insert, snap("abc", 3));
+        // Baseline + one coalesced typing entry.
+        assert_eq!(s.len(), 2);
+        let restored = s.undo().expect("undo should restore baseline");
+        assert_eq!(restored.text, "");
+    }
+
+    #[test]
+    fn op_type_change_opens_new_step() {
+        let mut s = fresh();
+        s.record_edit(EditOp::Insert, snap("a", 1));
+        s.record_edit(EditOp::Backspace, snap("", 0));
+        // Baseline + insert + backspace = 3.
+        assert_eq!(s.len(), 3);
+    }
+
+    #[test]
+    fn motion_marks_split_typing_into_two_steps() {
+        let mut s = fresh();
+        s.record_edit(EditOp::Insert, snap("a", 1));
+        s.mark_motion();
+        s.record_edit(EditOp::Insert, snap("ab", 2));
+        assert_eq!(s.len(), 3);
+    }
+
+    #[test]
+    fn discrete_op_never_coalesces() {
+        let mut s = fresh();
+        s.record_edit(EditOp::Discrete, snap("p", 1));
+        s.record_edit(EditOp::Discrete, snap("pp", 2));
+        // Two discrete ops in a row both push.
+        assert_eq!(s.len(), 3);
+    }
+
+    #[test]
+    fn typing_after_discrete_op_does_not_coalesce_backward() {
+        let mut s = fresh();
+        s.record_edit(EditOp::Discrete, snap("pasted", 6));
+        s.record_edit(EditOp::Insert, snap("pastedX", 7));
+        assert_eq!(s.len(), 3);
+    }
+
+    #[test]
+    fn undo_then_edit_truncates_redo_tail() {
+        let mut s = fresh();
+        s.record_edit(EditOp::Insert, snap("a", 1));
+        s.record_edit(EditOp::Backspace, snap("", 0));
+        s.undo();
+        // cursor now at the insert entry; new edit truncates redo tail.
+        s.record_edit(EditOp::Insert, snap("aX", 2));
+        assert_eq!(s.len(), 3);
+        assert_eq!(s.cursor(), 2);
+        assert!(s.redo().is_none(), "redo tail must be empty after new edit");
+    }
+
+    #[test]
+    fn redo_walks_forward_after_undo() {
+        let mut s = fresh();
+        s.record_edit(EditOp::Insert, snap("a", 1));
+        s.record_edit(EditOp::Backspace, snap("", 0));
+        let _ = s.undo();
+        let redone = s.redo().expect("redo available");
+        assert_eq!(redone.text, "");
+    }
+
+    #[test]
+    fn capacity_overflow_drops_oldest_and_clamps_cursor() {
+        let mut s = fresh();
+        // Force a fresh push every step (motion between Inserts).
+        for i in 1..=(UNDO_STACK_CAP + 5) {
+            s.record_edit(EditOp::Insert, snap(&"x".repeat(i), i));
+            s.mark_motion();
         }
         assert_eq!(s.len(), UNDO_STACK_CAP);
-        assert_eq!(s.cursor(), UNDO_STACK_CAP);
-        // Oldest retained entry is the one at index UNDO_STACK_CAP (the first
-        // entry to survive the pop_front cycle).
-        assert_eq!(
-            s.entries.front().map(|e| e.caret),
-            Some(UNDO_STACK_CAP),
-            "oldest retained entry caret must be UNDO_STACK_CAP after overflow"
-        );
-        assert_eq!(
-            s.entries.back().map(|e| e.caret),
-            Some(UNDO_STACK_CAP * 2 - 1),
-            "newest entry caret must be the last value pushed"
-        );
+        // cursor points at the latest entry — never out of range.
+        assert!(s.cursor() < s.len());
     }
 
     #[test]
-    fn cursor_tracks_top_of_stack_under_always_push() {
-        let mut s = UndoStack::default();
-        assert_eq!(s.cursor(), 0);
-        for i in 1..=5 {
-            s.push(snap("x", 0));
-            assert_eq!(
-                s.cursor(),
-                i,
-                "cursor must follow entries.len() in scaffolding"
-            );
-        }
+    fn undo_after_typing_burst_restores_pre_burst_state() {
+        let mut s = fresh();
+        s.record_edit(EditOp::Insert, snap("h", 1));
+        s.record_edit(EditOp::Insert, snap("he", 2));
+        s.record_edit(EditOp::Insert, snap("hel", 3));
+        let restored = s.undo().expect("undo");
+        assert_eq!(restored.text, "", "Apple Notes: one undo erases the burst");
     }
 }

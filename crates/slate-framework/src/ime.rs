@@ -23,6 +23,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::rc::Rc;
+use std::time::Instant;
 
 use slate_platform::{PhysicalRect, WindowId};
 
@@ -45,6 +46,34 @@ pub struct Preedit {
     /// IME-highlighted target-converted range, UTF-8 byte range into `text`.
     /// `None` if the OS provided no highlight (e.g. macOS Roman, raw mode).
     pub selection: Option<Range<usize>>,
+}
+
+// ---------------------------------------------------------------------------
+// BlinkState (caret blink)
+// ---------------------------------------------------------------------------
+
+/// Blink state for the editable-text caret. Lives on `ImeState` so handlers
+/// reading the per-element `RefCell<ImeState>` can reset the cycle in the same
+/// borrow they use for caret motion. The 530 ms cycle matches macOS
+/// `NSTextInsertionPointBlinkPeriod`.
+#[derive(Clone, Debug)]
+pub struct BlinkState {
+    /// Whether the caret is currently shown. `paint()` checks this each frame
+    /// while focused; reset to `true` on every caret-affecting input.
+    pub visible: bool,
+    /// Instant at which the caret should next toggle. `None` while the field
+    /// is unfocused or has not painted yet — paint arms the timer on first
+    /// focused frame.
+    pub next: Option<Instant>,
+}
+
+impl Default for BlinkState {
+    fn default() -> Self {
+        Self {
+            visible: true,
+            next: None,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -94,6 +123,9 @@ pub struct ImeState {
     /// `on_mouse_down`, cleared on `on_mouse_up`. Drives the "anchor on first
     /// drag move" rule in `on_mouse_move`.
     pub dragging: bool,
+    /// Caret blink state. Reset by handlers on caret-affecting input; advanced
+    /// by `paint()` while focused.
+    pub blink: BlinkState,
 }
 
 impl ImeState {

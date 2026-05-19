@@ -26,6 +26,23 @@ pub use slate_platform::{Key, KeyCode, Modifiers, MouseButton, NamedKey};
 use crate::ime::{ImeRegistry, ImeState};
 use crate::types::ElementId;
 
+/// Cross-platform "command modifier" check for keyboard shortcuts.
+///
+/// Returns `true` when the platform's command modifier is held: `Cmd` on macOS,
+/// `Ctrl` elsewhere. Use this in shortcut handlers so the keybinding code stays
+/// free of `cfg(target_os)` branches.
+#[inline]
+pub fn is_command_modifier(m: &Modifiers) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        m.meta
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        m.ctrl
+    }
+}
+
 /// Handler closure type for mouse events (click, down, up, move).
 pub(crate) type MouseHandler = Arc<dyn Fn(&MouseEvent, &mut EventCtx) + Send + Sync + 'static>;
 

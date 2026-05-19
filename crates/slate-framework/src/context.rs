@@ -454,6 +454,9 @@ pub struct PaintCtx<'a> {
     /// first consumer is the TextField element added in Phase 5.
     #[allow(dead_code)]
     pub(crate) ime_registry: &'a RefCell<ImeRegistry>,
+    /// Platform window, when one is attached. Animations (caret blink, etc.)
+    /// call `schedule_redraw_at` through here. `None` in headless rendering.
+    pub(crate) window: Option<&'a dyn slate_platform::Window>,
 }
 
 impl<'a> PaintCtx<'a> {
@@ -470,6 +473,7 @@ impl<'a> PaintCtx<'a> {
         executor: &'a ForegroundExecutor,
         scale_factor: f64,
         ime_registry: &'a RefCell<ImeRegistry>,
+        window: Option<&'a dyn slate_platform::Window>,
     ) -> Self {
         Self {
             taffy,
@@ -482,6 +486,16 @@ impl<'a> PaintCtx<'a> {
             executor,
             scale_factor,
             ime_registry,
+            window,
+        }
+    }
+
+    /// Request a one-shot redraw at `deadline`. No-op in headless mode (no
+    /// window attached). Multiple calls within a single paint replace the
+    /// in-flight timer — per `Window::schedule_redraw_at` contract.
+    pub fn schedule_redraw_at(&self, deadline: std::time::Instant) {
+        if let Some(w) = self.window {
+            w.schedule_redraw_at(deadline);
         }
     }
 }

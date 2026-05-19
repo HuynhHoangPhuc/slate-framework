@@ -1094,6 +1094,7 @@ impl<V: View> AppState<V> {
                 &self.executor.foreground,
                 scale_factor,
                 &self.ime_registry,
+                Some(self.window.as_ref()),
             );
 
             root.paint(root_bounds, &mut cx);
