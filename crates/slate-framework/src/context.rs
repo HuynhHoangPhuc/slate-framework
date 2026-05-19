@@ -15,7 +15,7 @@ use slate_renderer::atlas::Atlas;
 use slate_renderer::scene::Scene;
 use taffy::TaffyTree;
 
-use crate::event::{Handlers, ImeHandlers, KeyHandlers};
+use crate::event::{Handlers, ImeHandlers, KeyHandlers, MouseHandlers};
 use crate::executor::ForegroundExecutor;
 use crate::focus::{FocusRegistry, FocusableEntry};
 use crate::focus_ring::FocusBounds;
@@ -115,6 +115,10 @@ pub struct PrepaintCtx<'a> {
     // --- Event handler collection (Phase 5a) ---
     /// Collected event handlers per element (populated during prepaint).
     pub(crate) handler_map: &'a mut HashMap<ElementId, Handlers>,
+    /// Focused mouse-handler bundles registered by elements that opt into the
+    /// MouseHandlers surface (TextField, future TextArea). Walked alongside
+    /// `handler_map` by the mouse dispatchers.
+    pub(crate) mouse_handler_map: &'a mut HashMap<ElementId, MouseHandlers>,
     /// Parent map for ancestor iteration during event dispatch.
     pub(crate) parent_map: &'a mut HashMap<ElementId, ElementId>,
 
@@ -165,6 +169,7 @@ impl<'a> PrepaintCtx<'a> {
         state_registry: &'a mut StateRegistry,
         text_shaping_cache: &'a mut TextShapingCache,
         handler_map: &'a mut HashMap<ElementId, Handlers>,
+        mouse_handler_map: &'a mut HashMap<ElementId, MouseHandlers>,
         parent_map: &'a mut HashMap<ElementId, ElementId>,
         key_handler_map: &'a mut HashMap<ElementId, KeyHandlers>,
         focus_registry: &'a mut FocusRegistry,
@@ -187,6 +192,7 @@ impl<'a> PrepaintCtx<'a> {
             next_key: None,
             a11y_stack: Vec::new(),
             handler_map,
+            mouse_handler_map,
             parent_map,
             key_handler_map,
             focus_registry,
@@ -268,6 +274,17 @@ impl<'a> PrepaintCtx<'a> {
     pub(crate) fn register_key_handlers(&mut self, id: ElementId, handlers: KeyHandlers) {
         if handlers.has_any() {
             self.key_handler_map.insert(id, handlers);
+        }
+    }
+
+    /// Register per-element mouse handlers (Phase 10a — TextField v2).
+    ///
+    /// Mirrors [`register_key_handlers`] for the focused-element mouse surface
+    /// used by TextField (and, later, TextArea). Empty bundles are skipped so
+    /// `mouse_handler_map` only carries elements that actually opted in.
+    pub(crate) fn register_mouse_handlers(&mut self, id: ElementId, handlers: MouseHandlers) {
+        if handlers.has_any() {
+            self.mouse_handler_map.insert(id, handlers);
         }
     }
 

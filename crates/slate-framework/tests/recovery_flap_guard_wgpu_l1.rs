@@ -118,7 +118,11 @@ fn l1_wgpu_callback_flap_gives_up() {
     });
 
     let final_state = state.current_recovery_state();
-    assert_eq!(losses_fired.get(), 2, "did not fire both WgpuCallback losses");
+    assert_eq!(
+        losses_fired.get(),
+        2,
+        "did not fire both WgpuCallback losses"
+    );
     match final_state {
         RecoveryState::GiveUp { reason } => assert_eq!(
             reason,

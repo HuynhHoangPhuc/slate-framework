@@ -31,10 +31,10 @@ use crate::image_pipeline::ImagePipeline;
 use crate::instanced_rect_pipeline::InstancedRectPipeline;
 use crate::observer::RendererObserver;
 use crate::pipeline_shared::{self, ViewportUniform};
-use crate::units::Lpx;
 use crate::scene::Scene;
 use crate::shadow_pipeline::ShadowPipeline;
 use crate::surface_target::{CompositionTarget, ConfigureError, FrameAcquireError};
+use crate::units::Lpx;
 
 #[cfg(target_os = "macos")]
 use crate::mac_surface;

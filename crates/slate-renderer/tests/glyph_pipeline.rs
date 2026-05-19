@@ -429,7 +429,12 @@ fn ten_glyphs_in_one_draw_render_correct_centers() {
                 [0.0, 1.0, 0.0, 1.0]
             };
             GlyphInstance {
-                rect: [Lpx((i * cell) as f32), Lpx(0.0), Lpx(cell as f32), Lpx(cell as f32)],
+                rect: [
+                    Lpx((i * cell) as f32),
+                    Lpx(0.0),
+                    Lpx(cell as f32),
+                    Lpx(cell as f32),
+                ],
                 uv_rect,
                 color,
                 sub_pixel_variant: i,

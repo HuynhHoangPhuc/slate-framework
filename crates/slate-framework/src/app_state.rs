@@ -34,9 +34,9 @@ use crate::event::{
     ElementImeCommitHandler, ElementImeLifecycleHandler, ElementImePreeditHandler,
     ElementKeyHandler, ElementTextInputHandler, EventCtx, Handlers, ImeCommitEvent,
     ImeCommitHandler, ImeHandlers, ImeLifecycleEvent, ImeLifecycleHandler, ImePreeditEvent,
-    ImePreeditHandler, KeyEvent, KeyHandler, KeyHandlers, MouseEvent, MouseHandler, PendingFocusOp,
-    PointerEvent, PointerEventKind, PointerHandler, ScrollEvent, ScrollHandler, TextInputEvent,
-    TextInputHandler,
+    ImePreeditHandler, KeyEvent, KeyHandler, KeyHandlers, MouseEvent, MouseHandler, MouseHandlers,
+    PendingFocusOp, PointerEvent, PointerEventKind, PointerHandler, ScrollEvent, ScrollHandler,
+    TextInputEvent, TextInputHandler,
 };
 use crate::executor::{Executor, RedrawRequester};
 use crate::focus::FocusRegistry;
@@ -205,6 +205,11 @@ pub struct AppState<V: View> {
 
     // Mouse event dispatch state
     pub(crate) handler_map: RefCell<HashMap<ElementId, Handlers>>,
+    /// Per-element focused mouse handler bundles. Sister map to `handler_map`
+    /// for elements (TextField, future TextArea) that want the focused
+    /// three-method bundle. Walked alongside `handler_map` by the same
+    /// dispatchers, in the same ancestor order.
+    pub(crate) mouse_handler_map: RefCell<HashMap<ElementId, MouseHandlers>>,
     pub parent_map: RefCell<HashMap<ElementId, ElementId>>,
     pub hovered_element: RefCell<Option<ElementId>>,
     pub button_state: RefCell<u8>,
@@ -373,6 +378,7 @@ impl<V: View> AppState<V> {
             scene: RefCell::new(Scene::new()),
 
             handler_map: RefCell::new(HashMap::new()),
+            mouse_handler_map: RefCell::new(HashMap::new()),
             parent_map: RefCell::new(HashMap::new()),
             hovered_element: RefCell::new(None),
             button_state: RefCell::new(0),
@@ -686,7 +692,10 @@ impl<V: View> AppState<V> {
                 self.window.request_redraw();
                 return AppSignal::None;
             }
-            RecoveryState::DetectedLost { detected_at, reason } => {
+            RecoveryState::DetectedLost {
+                detected_at,
+                reason,
+            } => {
                 let reason = self.maybe_upgrade_reason(reason);
                 *state = RecoveryState::CooldownGate {
                     since: detected_at,
@@ -991,6 +1000,7 @@ impl<V: View> AppState<V> {
             let mut sr = self.state_registry.borrow_mut();
             let mut tsc = self.text_shaping_cache.borrow_mut();
             let mut hm = self.handler_map.borrow_mut();
+            let mut mhm = self.mouse_handler_map.borrow_mut();
             let mut pm = self.parent_map.borrow_mut();
             let mut khm = self.key_handler_map.borrow_mut();
             let mut fr = self.focus_registry.borrow_mut();
@@ -1001,6 +1011,7 @@ impl<V: View> AppState<V> {
             hit.clear();
             a11y.clear();
             hm.clear();
+            mhm.clear();
             pm.clear();
             khm.clear();
             fr.clear();
@@ -1022,6 +1033,7 @@ impl<V: View> AppState<V> {
                 &mut sr,
                 &mut tsc,
                 &mut hm,
+                &mut mhm,
                 &mut pm,
                 &mut khm,
                 &mut fr,
@@ -1279,13 +1291,26 @@ impl<V: View> AppState<V> {
         }
 
         if let Some(t) = target {
-            // Collect handlers first, then invoke (clone-before-drop pattern)
-            let mouse_handlers: SmallVec<[MouseHandler; 8]> = {
+            // Collect handlers first, then invoke (clone-before-drop pattern).
+            // Per ancestor, the focused MouseHandlers surface (TextField v2) fires
+            // before the broad Handlers surface so editor state observes the click
+            // first under a shared `stopped` flag. The MouseHandlers surface
+            // carries its owning element id so the handler can resolve its own
+            // `ImeState` via `cx.ime_state(id)`; broad handlers carry `None`.
+            let mouse_handlers: SmallVec<[(Option<ElementId>, MouseHandler); 8]> = {
                 let hm = self.handler_map.borrow();
+                let mhm = self.mouse_handler_map.borrow();
                 let pm = self.parent_map.borrow();
-                ancestors(t, &pm)
-                    .filter_map(|id| hm.get(&id).and_then(|h| h.on_mouse_down.clone()))
-                    .collect()
+                let mut acc: SmallVec<[(Option<ElementId>, MouseHandler); 8]> = SmallVec::new();
+                for id in ancestors(t, &pm) {
+                    if let Some(h) = mhm.get(&id).and_then(|h| h.on_mouse_down.clone()) {
+                        acc.push((Some(id), h));
+                    }
+                    if let Some(h) = hm.get(&id).and_then(|h| h.on_mouse_down.clone()) {
+                        acc.push((None, h));
+                    }
+                }
+                acc
             };
             let pointer_handlers: SmallVec<[PointerHandler; 8]> = {
                 let hm = self.handler_map.borrow();
@@ -1301,8 +1326,11 @@ impl<V: View> AppState<V> {
             let mut stopped = false;
             let mut pending_focus_op: Option<PendingFocusOp> = None;
             let focused = self.focus_registry.borrow().focused();
-            for handler in &mouse_handlers {
+            for (id_opt, handler) in &mouse_handlers {
                 let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused);
+                if let Some(id) = id_opt {
+                    ctx = ctx.with_ime(*id, &self.ime_registry);
+                }
                 handler(&mouse_event, &mut ctx);
                 if stopped {
                     break;
@@ -1364,13 +1392,24 @@ impl<V: View> AppState<V> {
         let target = captured.or(up_hit);
 
         if let Some(t) = target {
-            // Collect handlers (clone-before-drop pattern)
-            let mouse_up_handlers: SmallVec<[MouseHandler; 8]> = {
+            // Collect handlers (clone-before-drop pattern). MouseHandlers
+            // surface fires first per ancestor, then Handlers, under shared
+            // stopped flag. Focused-surface entries carry their owning id so
+            // the handler can resolve `ImeState`; broad entries carry `None`.
+            let mouse_up_handlers: SmallVec<[(Option<ElementId>, MouseHandler); 8]> = {
                 let hm = self.handler_map.borrow();
+                let mhm = self.mouse_handler_map.borrow();
                 let pm = self.parent_map.borrow();
-                ancestors(t, &pm)
-                    .filter_map(|id| hm.get(&id).and_then(|h| h.on_mouse_up.clone()))
-                    .collect()
+                let mut acc: SmallVec<[(Option<ElementId>, MouseHandler); 8]> = SmallVec::new();
+                for id in ancestors(t, &pm) {
+                    if let Some(h) = mhm.get(&id).and_then(|h| h.on_mouse_up.clone()) {
+                        acc.push((Some(id), h));
+                    }
+                    if let Some(h) = hm.get(&id).and_then(|h| h.on_mouse_up.clone()) {
+                        acc.push((None, h));
+                    }
+                }
+                acc
             };
             let pointer_handlers: SmallVec<[PointerHandler; 8]> = {
                 let hm = self.handler_map.borrow();
@@ -1394,8 +1433,11 @@ impl<V: View> AppState<V> {
             let mut stopped = false;
             let mut pending_focus_op: Option<PendingFocusOp> = None;
             let focused = self.focus_registry.borrow().focused();
-            for handler in &mouse_up_handlers {
+            for (id_opt, handler) in &mouse_up_handlers {
                 let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused);
+                if let Some(id) = id_opt {
+                    ctx = ctx.with_ime(*id, &self.ime_registry);
+                }
                 handler(&mouse_event, &mut ctx);
                 if stopped {
                     break;
@@ -1583,9 +1625,16 @@ impl<V: View> AppState<V> {
     }
 
     /// Dispatch CaptureLost event.
+    ///
+    /// Mouse capture can be revoked outside the normal mouse_up path (window
+    /// loses focus, modal popup steals it, SetCapture stolen by a sibling).
+    /// Any `ImeState.dragging` flag set by `mouse_down` must be cleared here
+    /// — otherwise the next `mouse_move` over that element would silently
+    /// re-extend the selection without a preceding mouse_down (Phase 10a.5).
     pub(crate) fn dispatch_capture_lost(&self) -> AppSignal {
         *self.capture_target.borrow_mut() = None;
         *self.button_state.borrow_mut() = 0;
+        self.ime_registry.borrow().clear_drag_flags();
         AppSignal::None
     }
 
@@ -2171,13 +2220,41 @@ impl<V: View> AppState<V> {
                         modifiers: Modifiers::default(),
                         timestamp: Instant::now(),
                     };
-                    bubble_mouse_handler(
-                        t,
-                        &mouse_event,
-                        &self.handler_map.borrow(),
-                        &self.parent_map.borrow(),
-                        |h| h.on_mouse_move.clone(),
-                    );
+                    // Collect from both surfaces (MouseHandlers first per ancestor,
+                    // then Handlers) under shared stopped flag — mirrors the
+                    // down/up dispatchers so drag tracking on TextField sees the
+                    // move before any broad on_mouse_move below. Focused-surface
+                    // entries carry their owning id for `ImeState` resolution.
+                    let chain: SmallVec<[(Option<ElementId>, MouseHandler); 8]> = {
+                        let hm = self.handler_map.borrow();
+                        let mhm = self.mouse_handler_map.borrow();
+                        let pm = self.parent_map.borrow();
+                        let mut acc: SmallVec<[(Option<ElementId>, MouseHandler); 8]> =
+                            SmallVec::new();
+                        for id in ancestors(t, &pm) {
+                            if let Some(h) = mhm.get(&id).and_then(|h| h.on_mouse_move.clone()) {
+                                acc.push((Some(id), h));
+                            }
+                            if let Some(h) = hm.get(&id).and_then(|h| h.on_mouse_move.clone()) {
+                                acc.push((None, h));
+                            }
+                        }
+                        acc
+                    };
+                    let mut stopped = false;
+                    let mut pending_focus_op: Option<PendingFocusOp> = None;
+                    let focused = self.focus_registry.borrow().focused();
+                    for (id_opt, handler) in &chain {
+                        let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused);
+                        if let Some(id) = id_opt {
+                            ctx = ctx.with_ime(*id, &self.ime_registry);
+                        }
+                        handler(&mouse_event, &mut ctx);
+                        if stopped {
+                            break;
+                        }
+                    }
+                    self.apply_pending_focus_op(pending_focus_op);
                 }
 
                 *self.last_dispatched_move_pos.borrow_mut() = Some(pos);
@@ -2689,6 +2766,29 @@ impl<V: View> AppState<V> {
         self.dispatch_mouse_down(position, button, modifiers)
     }
 
+    /// Dispatch a synthetic `MouseMoved` then flush the coalesced move so the
+    /// `on_mouse_move` handlers fire on the same call. Test-only.
+    pub fn dispatch_mouse_move_for_test(&self, position: (f32, f32)) -> AppSignal {
+        let _ = self.dispatch_mouse_moved(position, Modifiers::default());
+        self.flush_coalesced_move();
+        AppSignal::RequestRedraw
+    }
+
+    /// Dispatch a synthetic `MouseUp` at `position`. Test-only.
+    pub fn dispatch_mouse_up_for_test(
+        &self,
+        position: (f32, f32),
+        button: crate::event::MouseButton,
+        modifiers: Modifiers,
+    ) -> AppSignal {
+        self.dispatch_mouse_up(position, button, modifiers)
+    }
+
+    /// Dispatch a synthetic `CaptureLost`. Test-only.
+    pub fn dispatch_capture_lost_for_test(&self) -> AppSignal {
+        self.dispatch_capture_lost()
+    }
+
     /// Register a per-element keyboard handler bundle. Test-only — production
     /// code wires this through `PrepaintCtx::register_key_handlers` from Div.
     pub fn install_element_key_handlers_for_test(
@@ -2750,6 +2850,17 @@ impl<V: View> AppState<V> {
         handlers: crate::event::ImeHandlers,
     ) {
         self.ime_handler_map.borrow_mut().insert(id, handlers);
+    }
+
+    /// Register a per-element mouse handler bundle. Test-only — production
+    /// code wires this through `PrepaintCtx::register_mouse_handlers` from
+    /// TextField (Phase 10a.5).
+    pub fn install_element_mouse_handlers_for_test(
+        &self,
+        id: ElementId,
+        handlers: crate::event::MouseHandlers,
+    ) {
+        self.mouse_handler_map.borrow_mut().insert(id, handlers);
     }
 
     /// Register an IME-capable element in the registry (get-or-insert).

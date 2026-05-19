@@ -28,6 +28,10 @@
 mod grapheme;
 mod handlers;
 
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
+
 use slate_reactive::Signal;
 use slate_renderer::Lpx;
 use slate_renderer::scene::RectInstance;
@@ -35,7 +39,7 @@ use taffy::prelude::*;
 
 use crate::context::{LayoutCtx, PaintCtx, PrepaintCtx};
 use crate::element::{Element, IntoElement, Sealed};
-use crate::event::{ImeHandlers, KeyHandlers};
+use crate::event::{ImeHandlers, KeyHandlers, MouseHandlers};
 use crate::focus::FocusableEntry;
 use crate::hit_test::{CursorStyle, HitRegion};
 use crate::text_system::PlatformFont;
@@ -43,8 +47,64 @@ use crate::types::{Bounds, ElementId, LayoutId};
 
 use handlers::{
     build_ime_commit_handler, build_ime_preedit_handler, build_key_down_handler,
+    build_mouse_down_handler, build_mouse_move_handler, build_mouse_up_handler,
     build_text_input_handler,
 };
+
+// ---------------------------------------------------------------------------
+// Undo scaffolding (Phase 10a.7) — bindings land in 10b.3.
+// ---------------------------------------------------------------------------
+
+const UNDO_STACK_CAP: usize = 100;
+
+#[derive(Clone, Debug)]
+#[allow(dead_code)] // Fields read by the Cmd+Z binding in 10b.3.
+pub(super) struct EditSnapshot {
+    pub(super) text: String,
+    /// Pre-edit caret position — the restore target Cmd+Z navigates back to.
+    pub(super) caret: usize,
+    pub(super) anchor: Option<usize>,
+    pub(super) t: Instant,
+}
+
+#[derive(Debug, Default)]
+pub(super) struct UndoStack {
+    entries: VecDeque<EditSnapshot>,
+    /// Index of the next-undo target. With the always-push coalesce stub this
+    /// tracks `entries.len()` (top of stack); 10b.3 introduces a 4-trigger
+    /// policy that may leave the cursor mid-stack after Cmd+Z walks back.
+    cursor: usize,
+}
+
+impl UndoStack {
+    pub(super) fn push(&mut self, snap: EditSnapshot) {
+        // Ring buffer: drop the oldest entry on overflow.
+        if self.entries.len() == UNDO_STACK_CAP {
+            self.entries.pop_front();
+        }
+        self.entries.push_back(snap);
+        self.cursor = self.entries.len();
+    }
+
+    #[cfg(test)]
+    pub(super) fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    #[cfg(test)]
+    pub(super) fn cursor(&self) -> usize {
+        self.cursor
+    }
+}
+
+/// Shared, thread-safe handle to a TextField's undo history.
+///
+/// Lock-order invariant: when both are held in the same handler, the
+/// `RefCell<ImeState>` borrow comes **first**, then `Mutex<UndoStack>`.
+/// Reversing the order would deadlock against the RefCell panic on
+/// re-entry and is forbidden — all current call sites snapshot inside
+/// the live `RefMut<ImeState>` to enforce this naturally.
+pub(super) type UndoStackHandle = Arc<Mutex<UndoStack>>;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -87,6 +147,9 @@ pub struct TextField {
     font: Option<PlatformFont>,
     /// Stable ElementId allocated during prepaint (available after prepaint).
     last_id: Option<ElementId>,
+    /// Per-field undo history. Handlers push a pre-mutation snapshot before
+    /// every text edit (10a.7 scaffolding; bindings in 10b.3).
+    undo: UndoStackHandle,
 }
 
 impl TextField {
@@ -97,6 +160,7 @@ impl TextField {
             style: TextFieldStyle::default(),
             font: None,
             last_id: None,
+            undo: Arc::new(Mutex::new(UndoStack::default())),
         }
     }
 
@@ -242,9 +306,15 @@ impl Element for TextField {
         cx.register_key_handlers(
             element_id,
             KeyHandlers {
-                on_key_down: Some(build_key_down_handler(self.value.clone())),
+                on_key_down: Some(build_key_down_handler(
+                    self.value.clone(),
+                    Arc::clone(&self.undo),
+                )),
                 on_key_up: None,
-                on_text_input: Some(build_text_input_handler(self.value.clone())),
+                on_text_input: Some(build_text_input_handler(
+                    self.value.clone(),
+                    Arc::clone(&self.undo),
+                )),
             },
         );
 
@@ -252,9 +322,25 @@ impl Element for TextField {
             element_id,
             ImeHandlers {
                 on_ime_preedit: Some(build_ime_preedit_handler()),
-                on_ime_commit: Some(build_ime_commit_handler(self.value.clone())),
+                on_ime_commit: Some(build_ime_commit_handler(
+                    self.value.clone(),
+                    Arc::clone(&self.undo),
+                )),
                 on_ime_enabled: None,
                 on_ime_disabled: None,
+            },
+        );
+
+        // Click-to-position + drag-select. Builders read the cached ShapedLine
+        // and paint_origin_x written by paint() on the previous frame; the
+        // first-frame race (no cached shape yet) resolves itself on the next
+        // paint.
+        cx.register_mouse_handlers(
+            element_id,
+            MouseHandlers {
+                on_mouse_down: Some(build_mouse_down_handler()),
+                on_mouse_move: Some(build_mouse_move_handler()),
+                on_mouse_up: Some(build_mouse_up_handler()),
             },
         );
 
@@ -295,14 +381,22 @@ impl Element for TextField {
             None => return,
         };
 
-        // Snapshot ImeState to avoid holding a RefCell borrow across shaping calls
-        let (committed_text, caret_byte, preedit_snapshot) = {
+        // Snapshot ImeState into owned locals. The borrow is released before
+        // `shape_line` (which is fallible and may log) and before the
+        // `try_borrow_mut` at the end of paint() that updates
+        // `caret_screen_rect` — keeping the registry borrow scope narrow.
+        let (committed_text, caret_byte, preedit_snapshot, selection_anchor) = {
             match cx.ime_registry.borrow().get(element_id) {
                 Some(rc) => {
                     let s = rc.borrow();
-                    (s.text.clone(), s.caret, s.preedit.clone())
+                    (
+                        s.text.clone(),
+                        s.caret,
+                        s.preedit.clone(),
+                        s.selection_anchor,
+                    )
                 }
-                None => (self.value.get_untracked(), 0, None),
+                None => (self.value.get_untracked(), 0, None, None),
             }
         };
 
@@ -330,40 +424,55 @@ impl Element for TextField {
 
         let baseline_x = bounds.origin.x;
         let baseline_y = bounds.origin.y + shaped.ascent_lpx;
+        let display_caret = caret_safe; // byte offset into display_string
 
-        // Build glyph advance table (index i = x-offset before glyph i).
-        // MVP approximation: one glyph ≈ one character. Breaks for multi-glyph clusters
-        // (e.g. certain Indic scripts). Full glyph↔byte mapping deferred to Phase 10.
-        let mut advances: Vec<f32> = Vec::with_capacity(shaped.glyphs.len() + 1);
+        // Cluster-aware byte→pixel-x. Snaps to grapheme boundaries, so CJK
+        // ligatures, Indic clusters, and emoji ZWJ sequences all behave.
+        let pixel_x =
+            |byte: usize| -> f32 { slate_text::pixel_x_at_byte(&shaped, &display_string, byte) };
+        let caret_pixel_x = pixel_x(display_caret);
+
+        // 1. User selection rect (gated). Rendered behind glyphs so glyphs
+        //    sit on top. Suppressed while a composition is active —
+        //    selection vs. preedit interaction is settled in 10a.5.
+        if preedit_snapshot.is_none()
+            && let Some(anchor) = selection_anchor
         {
-            let mut x = 0.0f32;
-            for g in &shaped.glyphs {
-                advances.push(x);
-                x += g.x_advance_lpx;
+            // Editor paths should keep `selection_anchor` on a char boundary;
+            // `pixel_x_at_byte` snap-floors mid-codepoint values silently, so
+            // this assertion exists to catch upstream bugs before the visual
+            // boundary moves.
+            debug_assert!(
+                committed_text.is_char_boundary(anchor.min(committed_text.len())),
+                "selection_anchor must land on a char boundary"
+            );
+            let anchor_safe = anchor.min(committed_text.len());
+            let (lo, hi) = if anchor_safe <= caret_safe {
+                (anchor_safe, caret_safe)
+            } else {
+                (caret_safe, anchor_safe)
+            };
+            if lo < hi {
+                let lo_px = pixel_x(lo);
+                let hi_px = pixel_x(hi);
+                let w = (hi_px - lo_px).max(0.0);
+                if w > 0.0 {
+                    cx.scene.push_rect(RectInstance {
+                        rect: [
+                            Lpx(bounds.origin.x + lo_px),
+                            Lpx(bounds.origin.y),
+                            Lpx(w),
+                            Lpx(line_height),
+                        ],
+                        color: self.style.preedit_selection_color,
+                        corner_radius: Lpx(0.0),
+                        _pad: [0.0; 3],
+                    });
+                }
             }
-            advances.push(x); // sentinel: pixel position after last glyph
         }
 
-        let display_caret = caret_safe; // byte offset into display_string
-        let caret_char_idx = display_string[..display_caret].chars().count();
-        let preedit_start_char = caret_char_idx;
-        let preedit_char_count = preedit_snapshot
-            .as_ref()
-            .map(|p| p.text.chars().count())
-            .unwrap_or(0);
-
-        let get_advance = |char_idx: usize| -> f32 {
-            advances
-                .get(char_idx)
-                .copied()
-                .unwrap_or_else(|| advances.last().copied().unwrap_or(0.0))
-        };
-
-        let caret_pixel_x = get_advance(caret_char_idx);
-        let preedit_start_px = get_advance(preedit_start_char);
-        let preedit_end_px = get_advance(preedit_start_char + preedit_char_count);
-
-        // Rasterize and push glyphs
+        // 2. Glyphs
         match cx.text.rasterize_text_run(
             font,
             &shaped,
@@ -383,23 +492,11 @@ impl Element for TextField {
             }
         }
 
-        // Caret — 1px vertical line, visible only when focused
-        if paint_state.focused {
-            cx.scene.push_rect(RectInstance {
-                rect: [
-                    Lpx(bounds.origin.x + caret_pixel_x),
-                    Lpx(bounds.origin.y),
-                    Lpx(1.0),
-                    Lpx(line_height),
-                ],
-                color: self.style.caret_color,
-                corner_radius: Lpx(0.0),
-                _pad: [0.0; 3],
-            });
-        }
-
-        // Preedit underline + optional selection highlight
+        // 3. Preedit underline + IME target-converted overlay
         if let Some(ref preedit) = preedit_snapshot {
+            let preedit_end_byte = display_caret + preedit.text.len();
+            let preedit_start_px = pixel_x(display_caret);
+            let preedit_end_px = pixel_x(preedit_end_byte);
             let preedit_width = (preedit_end_px - preedit_start_px).max(0.0);
 
             // 1px underline beneath baseline
@@ -418,21 +515,12 @@ impl Element for TextField {
                 });
             }
 
-            // Translucent selection rect for IME target-converted range
+            // Translucent overlay for the OS target-converted sub-range.
             if let Some(ref sel) = preedit.selection {
-                let sel_sc = preedit
-                    .text
-                    .get(..sel.start.min(preedit.text.len()))
-                    .map(|s| s.chars().count())
-                    .unwrap_or(0);
-                let sel_ec = preedit
-                    .text
-                    .get(..sel.end.min(preedit.text.len()))
-                    .map(|s| s.chars().count())
-                    .unwrap_or(0);
-
-                let sel_start_px = get_advance(preedit_start_char + sel_sc);
-                let sel_end_px = get_advance(preedit_start_char + sel_ec);
+                let sel_start_byte = display_caret + sel.start.min(preedit.text.len());
+                let sel_end_byte = display_caret + sel.end.min(preedit.text.len());
+                let sel_start_px = pixel_x(sel_start_byte);
+                let sel_end_px = pixel_x(sel_end_byte);
                 let sel_w = (sel_end_px - sel_start_px).max(0.0);
 
                 if sel_w > 0.0 {
@@ -451,7 +539,27 @@ impl Element for TextField {
             }
         }
 
-        // Update ImeState.caret_screen_rect for OS IME query channel.
+        // 4. Caret — 1px vertical line, visible only when focused.
+        //    Drawn last so it sits on top of selection / preedit overlays.
+        if paint_state.focused {
+            cx.scene.push_rect(RectInstance {
+                rect: [
+                    Lpx(bounds.origin.x + caret_pixel_x),
+                    Lpx(bounds.origin.y),
+                    Lpx(1.0),
+                    Lpx(line_height),
+                ],
+                color: self.style.caret_color,
+                corner_radius: Lpx(0.0),
+                _pad: [0.0; 3],
+            });
+        }
+
+        // Update ImeState.caret_screen_rect for OS IME query channel AND cache
+        // the just-shaped line + paint origin so the mouse handlers can compute
+        // click-to-byte on the next frame. Folding both writes into a single
+        // borrow keeps the registry borrow scope narrow and matches the
+        // try_borrow_mut re-entrancy guard already in place.
         // `try_borrow_mut` skips silently on re-entrancy (handler re-entering paint).
         // Scene-space coordinates are lpx; convert to physical here since IME
         // delegates report screen-space physical pixels to the OS.
@@ -465,6 +573,8 @@ impl Element for TextField {
                 line_height,
                 scale,
             );
+            state.last_shaped = Some(std::rc::Rc::new(shaped));
+            state.paint_origin_x = bounds.origin.x;
         }
     }
 
@@ -481,5 +591,60 @@ impl IntoElement for TextField {
     type Element = Self;
     fn into_element(self) -> Self {
         self
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests — UndoStack scaffolding (Phase 10a.7)
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod undo_tests {
+    use super::*;
+
+    fn snap(text: &str, caret: usize) -> EditSnapshot {
+        EditSnapshot {
+            text: text.to_string(),
+            caret,
+            anchor: None,
+            t: Instant::now(),
+        }
+    }
+
+    #[test]
+    fn push_grows_then_caps_at_capacity() {
+        let mut s = UndoStack::default();
+        // Push twice the cap; ring buffer must clamp at UNDO_STACK_CAP.
+        for i in 0..(UNDO_STACK_CAP * 2) {
+            s.push(snap(&format!("{i}"), i));
+        }
+        assert_eq!(s.len(), UNDO_STACK_CAP);
+        assert_eq!(s.cursor(), UNDO_STACK_CAP);
+        // Oldest retained entry is the one at index UNDO_STACK_CAP (the first
+        // entry to survive the pop_front cycle).
+        assert_eq!(
+            s.entries.front().map(|e| e.caret),
+            Some(UNDO_STACK_CAP),
+            "oldest retained entry caret must be UNDO_STACK_CAP after overflow"
+        );
+        assert_eq!(
+            s.entries.back().map(|e| e.caret),
+            Some(UNDO_STACK_CAP * 2 - 1),
+            "newest entry caret must be the last value pushed"
+        );
+    }
+
+    #[test]
+    fn cursor_tracks_top_of_stack_under_always_push() {
+        let mut s = UndoStack::default();
+        assert_eq!(s.cursor(), 0);
+        for i in 1..=5 {
+            s.push(snap("x", 0));
+            assert_eq!(
+                s.cursor(),
+                i,
+                "cursor must follow entries.len() in scaffolding"
+            );
+        }
     }
 }

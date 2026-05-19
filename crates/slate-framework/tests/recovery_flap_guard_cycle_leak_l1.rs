@@ -147,7 +147,10 @@ fn l1_cycle_leak_regression_luid_after_luid() {
         wake_run_loop();
     });
 
-    assert!(first_fired.get() && second_fired.get(), "did not fire both losses");
+    assert!(
+        first_fired.get() && second_fired.get(),
+        "did not fire both losses"
+    );
     let observed = observed_state_after_second.into_inner();
     assert!(
         matches!(observed, Some(RecoveryState::NotLost)),

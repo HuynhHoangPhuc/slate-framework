@@ -63,11 +63,37 @@ pub struct ImeState {
     pub text: String,
     /// Byte offset into `text` of the caret.
     pub caret: usize,
+    /// Anchor end of a non-empty selection, as a byte offset into `text`. The
+    /// selected range is `min(caret, anchor) .. max(caret, anchor)`; `None`
+    /// means caret-only (no selection).
+    ///
+    /// Selection state lives alongside the IME composition fields here for
+    /// framework-internal cohesion (single struct, single registry slot, no
+    /// extra borrow churn around the dispatch loop). Once `TextArea` arrives
+    /// the editor-state side should split out so this struct only carries
+    /// what the platform IME contract actually requires.
+    pub selection_anchor: Option<usize>,
     /// Active composition, if any. `None` outside of IME sessions.
     pub preedit: Option<Preedit>,
     /// Screen-coord physical-pixel rect of the caret. Updated by the element
     /// during paint; consumed by the cache republish path.
     pub caret_screen_rect: PhysicalRect,
+    // ----- TextField paint cache + interaction state (NOT IME contract) -----
+    /// Most recent shaped line, cached during paint so that mouse handlers can
+    /// invert pixel-x to byte offset without re-shaping (the dispatch path has
+    /// no `TextSystem` access). At most one frame stale relative to `text`.
+    ///
+    /// Like `selection_anchor`, this rides on `ImeState` for framework-internal
+    /// cohesion. The 10a.3 split-on-TextArea contract applies here too.
+    pub last_shaped: Option<Rc<slate_text::ShapedLine>>,
+    /// Logical-px x-origin of the element's painted bounds. Mouse handlers
+    /// subtract this from the window-relative event position to get a
+    /// line-relative x for `byte_at_pixel_x`. Updated during paint.
+    pub paint_origin_x: f32,
+    /// True while a primary-button drag is in progress on this element. Set on
+    /// `on_mouse_down`, cleared on `on_mouse_up`. Drives the "anchor on first
+    /// drag move" rule in `on_mouse_move`.
+    pub dragging: bool,
 }
 
 impl ImeState {
@@ -78,10 +104,21 @@ impl ImeState {
         self.text.get(range).map(|s| s.to_string())
     }
 
-    /// Answer `WindowImeDelegate::ime_selected_range`. Currently caret-only —
-    /// returns `caret..caret` (an empty range collapsed at the caret).
+    /// Answer `WindowImeDelegate::ime_selected_range`. Returns
+    /// `min(caret, anchor)..max(caret, anchor)` when a selection anchor is
+    /// set; otherwise the caret-only collapsed range `caret..caret`.
     pub fn answer_selected_range(&self) -> Option<Range<usize>> {
-        Some(self.caret..self.caret)
+        match self.selection_anchor {
+            Some(anchor) => {
+                let (lo, hi) = if self.caret <= anchor {
+                    (self.caret, anchor)
+                } else {
+                    (anchor, self.caret)
+                };
+                Some(lo..hi)
+            }
+            None => Some(self.caret..self.caret),
+        }
     }
 
     /// Answer `WindowImeDelegate::ime_marked_range`. Returns the preedit
@@ -157,6 +194,21 @@ impl ImeRegistry {
     /// True if no ime-capable elements are registered.
     pub fn is_empty(&self) -> bool {
         self.states.is_empty()
+    }
+
+    /// Clear the `dragging` flag on every registered `ImeState`.
+    ///
+    /// Called when mouse capture is revoked outside the normal mouse_up path
+    /// (alt-tab, modal popup, SetCapture stolen by a sibling, drag-off-window).
+    /// Without this, an `ImeState` whose mouse_up never arrived would observe
+    /// `dragging == true` forever and re-extend the selection on the next
+    /// `mouse_move`, looking like a ghost drag.
+    pub fn clear_drag_flags(&self) {
+        for state_rc in self.states.values() {
+            if let Ok(mut state) = state_rc.try_borrow_mut() {
+                state.dragging = false;
+            }
+        }
     }
 }
 
@@ -286,6 +338,47 @@ mod tests {
     fn answer_marked_range_none_when_no_preedit() {
         let s = ImeState::default();
         assert_eq!(s.answer_marked_range(), None);
+    }
+
+    #[test]
+    fn selection_anchor_defaults_to_none() {
+        let s = ImeState::default();
+        assert!(s.selection_anchor.is_none());
+    }
+
+    #[test]
+    fn answer_selected_range_with_anchor_forward() {
+        let s = ImeState {
+            text: "abcdef".to_string(),
+            caret: 5,
+            selection_anchor: Some(2),
+            ..Default::default()
+        };
+        assert_eq!(s.answer_selected_range(), Some(2..5));
+    }
+
+    #[test]
+    fn answer_selected_range_with_anchor_reverse() {
+        // Drag right-to-left: anchor > caret.
+        let s = ImeState {
+            text: "abcdef".to_string(),
+            caret: 1,
+            selection_anchor: Some(4),
+            ..Default::default()
+        };
+        assert_eq!(s.answer_selected_range(), Some(1..4));
+    }
+
+    #[test]
+    fn answer_selected_range_collapsed_anchor() {
+        // anchor == caret → empty range at caret.
+        let s = ImeState {
+            text: "abc".to_string(),
+            caret: 2,
+            selection_anchor: Some(2),
+            ..Default::default()
+        };
+        assert_eq!(s.answer_selected_range(), Some(2..2));
     }
 
     #[test]

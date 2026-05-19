@@ -412,6 +412,7 @@ mod tests {
                     x_advance_lpx: 10.0,
                     x_offset_lpx: 0.0,
                     y_offset_lpx: 0.0,
+                    cluster: 0,
                 })
                 .collect(),
             width_lpx: glyph_count as f32 * 10.0,

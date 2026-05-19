@@ -142,7 +142,11 @@ fn l1_luid_migration_never_gives_up() {
         wake_run_loop();
     });
 
-    assert_eq!(losses_fired.get(), 3, "did not fire all 3 LuidMigration losses");
+    assert_eq!(
+        losses_fired.get(),
+        3,
+        "did not fire all 3 LuidMigration losses"
+    );
     assert!(
         !matches!(state.current_recovery_state(), RecoveryState::GiveUp { .. }),
         "L1: 3× LuidMigration must NOT GiveUp, got {:?}",

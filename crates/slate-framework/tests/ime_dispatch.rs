@@ -165,6 +165,7 @@ fn dispatch_ime_commit_with_empty_text_only_clears_preedit() {
                 selection: None,
             }),
             caret_screen_rect: PhysicalRect::default(),
+            ..Default::default()
         },
     );
 

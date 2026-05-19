@@ -82,15 +82,12 @@ fn viewport_uniform_size_is_lpx_typed() {
 
 #[test]
 fn rect_instance_round_trips_through_bytemuck_cast_slice() {
-    let xs = [
-        RectInstance {
-            rect: [Lpx(1.0), Lpx(2.0), Lpx(3.0), Lpx(4.0)],
-            color: [0.0; 4],
-            corner_radius: Lpx(0.0),
-            _pad: [0.0; 3],
-        };
-        4
-    ];
+    let xs = [RectInstance {
+        rect: [Lpx(1.0), Lpx(2.0), Lpx(3.0), Lpx(4.0)],
+        color: [0.0; 4],
+        corner_radius: Lpx(0.0),
+        _pad: [0.0; 3],
+    }; 4];
     let raw: &[u8] = bytemuck::cast_slice(&xs);
     assert_eq!(raw.len(), 4 * core::mem::size_of::<RectInstance>());
 }

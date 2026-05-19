@@ -72,6 +72,30 @@ impl ImeHandlers {
     }
 }
 
+/// Per-element mouse handler bundle. Mirrors [`KeyHandlers`] / [`ImeHandlers`];
+/// stored in `AppState::mouse_handler_map` and consulted by
+/// `dispatch_mouse_down` / `dispatch_mouse_up` / the coalesced-move flush in
+/// addition to the legacy `Handlers` map. Lets focused elements (TextField,
+/// future TextArea) register a focused, three-method bundle without paying for
+/// Div's full Handlers struct surface (click, pointer, scroll). Bubble order is
+/// shared with `handler_map`: MouseHandlers entries fire before Handlers
+/// entries at each ancestor.
+#[allow(dead_code)] // Populated by elements that opt in; consumed by AppState dispatchers.
+#[derive(Clone, Default)]
+#[doc(hidden)]
+pub struct MouseHandlers {
+    pub on_mouse_down: Option<MouseHandler>,
+    pub on_mouse_move: Option<MouseHandler>,
+    pub on_mouse_up: Option<MouseHandler>,
+}
+
+impl MouseHandlers {
+    #[allow(dead_code)] // Used by registration helper to skip empty bundles.
+    pub fn has_any(&self) -> bool {
+        self.on_mouse_down.is_some() || self.on_mouse_move.is_some() || self.on_mouse_up.is_some()
+    }
+}
+
 /// Per-element keyboard handler bundle. Mirrors [`Handlers`] for mouse; stored
 /// in `AppState::key_handler_map` (Phase 3) and looked up during the focused-chain
 /// bubble dispatch.

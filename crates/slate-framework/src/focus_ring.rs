@@ -72,12 +72,7 @@ pub(crate) fn emit_focus_ring(scene: &mut Scene, info: FocusBounds) {
     });
     // Left stroke
     scene.push_rect(RectInstance {
-        rect: [
-            Lpx(x),
-            Lpx(y + stroke),
-            Lpx(stroke),
-            Lpx(h - 2.0 * stroke),
-        ],
+        rect: [Lpx(x), Lpx(y + stroke), Lpx(stroke), Lpx(h - 2.0 * stroke)],
         color: FOCUS_RING_COLOR,
         corner_radius: Lpx(0.0),
         _pad: pad,

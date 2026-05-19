@@ -137,6 +137,9 @@ fn l1_upgrade_then_flap_gives_up() {
             DeviceLossReason::WgpuCallback,
             "upgrade-then-flap GiveUp reason must be WgpuCallback"
         ),
-        other => panic!("L1 upgrade+flap must GiveUp{{WgpuCallback}}, got {:?}", other),
+        other => panic!(
+            "L1 upgrade+flap must GiveUp{{WgpuCallback}}, got {:?}",
+            other
+        ),
     }
 }

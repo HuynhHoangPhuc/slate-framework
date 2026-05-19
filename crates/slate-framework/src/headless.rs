@@ -30,17 +30,17 @@ use wgpu::{
 use std::sync::Arc;
 
 use slate_reactive::{ObserverId, Runtime};
-use slate_renderer::{Lpx, Scene};
 use slate_renderer::atlas::{Atlas, Format};
 use slate_renderer::glyph_pipeline::GlyphPipeline;
 use slate_renderer::image_pipeline::ImagePipeline;
 use slate_renderer::instanced_rect_pipeline::InstancedRectPipeline;
 use slate_renderer::pipeline_shared::{self, ViewportUniform};
 use slate_renderer::shadow_pipeline::ShadowPipeline;
+use slate_renderer::{Lpx, Scene};
 
 use crate::context::{LayoutCtx, PaintCtx, PrepaintCtx};
 use crate::element::AnyElement;
-use crate::event::{Handlers, ImeHandlers, KeyHandlers};
+use crate::event::{Handlers, ImeHandlers, KeyHandlers, MouseHandlers};
 use crate::executor::{Executor, RedrawRequester};
 use crate::focus::FocusRegistry;
 use crate::focus_ring::FocusBounds;
@@ -107,6 +107,7 @@ pub struct HeadlessApp {
 
     // Phase 5a: Event handler collection (for headless testing parity)
     handler_map: HashMap<ElementId, Handlers>,
+    mouse_handler_map: HashMap<ElementId, MouseHandlers>,
     parent_map: HashMap<ElementId, ElementId>,
 
     // Phase 9b: keyboard + focus state collected each prepaint (headless parity).
@@ -309,6 +310,7 @@ impl HeadlessApp {
             text_shaping_cache,
             image_cache,
             handler_map,
+            mouse_handler_map: HashMap::new(),
             parent_map,
             key_handler_map,
             focus_registry,
@@ -381,6 +383,7 @@ impl HeadlessApp {
                 &mut self.state_registry,
                 &mut self.text_shaping_cache,
                 &mut self.handler_map,
+                &mut self.mouse_handler_map,
                 &mut self.parent_map,
                 &mut self.key_handler_map,
                 &mut self.focus_registry,
