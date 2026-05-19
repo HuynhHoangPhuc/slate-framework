@@ -55,7 +55,17 @@ unsafe extern "C" {
     /// Returns a pointer to an array of UTF-16 source indices, one per glyph
     /// in the run. Indices reference the originating attributed string (which
     /// for our shape_line is the UTF-16 encoding of the input `&str`).
+    ///
+    /// Returns NULL when the run does not store indices in a directly
+    /// addressable form — typical for substitute / fallback runs. Callers must
+    /// fall back to `CTRunGetStringIndices` (the copy variant) in that case.
     fn CTRunGetStringIndicesPtr(run: *const c_void) -> *const CFIndex;
+
+    /// Copy variant of `CTRunGetStringIndicesPtr`. Always succeeds when the run
+    /// has indices (CoreText always tracks them — only the direct-pointer
+    /// optimisation may be unavailable). `range` selects a contiguous slice of
+    /// glyph indices; `buffer` must have capacity for `range.length` entries.
+    fn CTRunGetStringIndices(run: *const c_void, range: CFRange, buffer: *mut CFIndex);
     fn CTRunGetAttributes(run: *const c_void) -> *const c_void;
     fn CFDictionaryGetValue(dict: *const c_void, key: *const c_void) -> *const c_void;
     fn CFRetain(cf: *const c_void) -> *const c_void;
@@ -275,20 +285,23 @@ pub(crate) fn shape_line(
             // Get advances
             CTRunGetAdvances(run, range, advances.as_mut_ptr());
 
-            // Per-glyph UTF-16 source indices (borrowed; valid for the run's
-            // lifetime). The pointer is null only when CoreText cannot supply
-            // indices directly — extremely rare for our single-CTRun
-            // attributed strings, but we degrade to cluster=0 just in case.
+            // Per-glyph UTF-16 source indices. Prefer the direct pointer (no
+            // copy); fall back to the copy variant when CoreText can't expose
+            // a contiguous internal buffer — happens for substitute / fallback
+            // runs (emoji, regional-indicator pairs, ZWJ sequences, NFD with
+            // combining marks). Falling back is critical: without it those
+            // glyphs all collapse to cluster=0 and `pixel_x_at_byte` walks the
+            // entire run before finding a glyph past the requested byte.
             let indices_ptr = CTRunGetStringIndicesPtr(run);
-            // SAFETY: CTRunGetStringIndicesPtr returns a pointer with exactly
-            // CTRunGetGlyphCount(run) CFIndex entries, valid until `line`
-            // (which owns this CTRun) drops. We consume the slice fully inside
-            // the per-glyph loop below, which finishes before this iteration
-            // of the for-run loop ends — long before `line` drops.
-            let string_indices: Option<&[CFIndex]> = if indices_ptr.is_null() {
-                None
+            let mut indices_owned: Vec<CFIndex> = Vec::new();
+            let string_indices: &[CFIndex] = if !indices_ptr.is_null() {
+                // SAFETY: pointer is valid for `glyph_count` entries for the
+                // lifetime of `run`, which outlives this loop iteration.
+                std::slice::from_raw_parts(indices_ptr, glyph_count)
             } else {
-                Some(std::slice::from_raw_parts(indices_ptr, glyph_count))
+                indices_owned.resize(glyph_count, 0);
+                CTRunGetStringIndices(run, range, indices_owned.as_mut_ptr());
+                &indices_owned[..]
             };
 
             // Convert to ShapedGlyph
@@ -298,13 +311,8 @@ pub(crate) fn shape_line(
                 let x_offset_pt = positions[j].x as f32;
                 let y_offset_pt = positions[j].y as f32;
 
-                let cluster = match string_indices {
-                    Some(idx) => {
-                        let utf16_pos = idx[j] as usize;
-                        utf16_to_utf8.get(utf16_pos).copied().unwrap_or(0)
-                    }
-                    None => 0,
-                };
+                let utf16_pos = string_indices[j] as usize;
+                let cluster = utf16_to_utf8.get(utf16_pos).copied().unwrap_or(0);
 
                 glyphs.push(ShapedGlyph {
                     glyph_id,
