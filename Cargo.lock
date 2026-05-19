@@ -2331,6 +2331,7 @@ dependencies = [
  "slate-renderer",
  "thiserror",
  "ttf-parser",
+ "unicode-segmentation",
  "wgpu",
  "windows",
  "windows-core",
