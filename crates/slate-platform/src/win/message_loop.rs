@@ -7,7 +7,8 @@ use std::sync::Arc;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Dxgi::IDXGIFactory2;
 use windows::Win32::Graphics::Gdi::{
-    HMONITOR, MONITOR_DEFAULTTONULL, MonitorFromWindow, ScreenToClient, ValidateRect,
+    HMONITOR, InvalidateRect, MONITOR_DEFAULTTONULL, MonitorFromWindow, ScreenToClient,
+    ValidateRect,
 };
 use windows::Win32::System::SystemServices::{MK_CONTROL, MK_SHIFT};
 use windows::Win32::UI::Controls::{HOVER_DEFAULT, WM_MOUSELEAVE};
@@ -35,7 +36,9 @@ use super::ime::{
     read_composition_string_utf8, set_composition_window, utf16_units_to_utf8_bytes,
 };
 use super::keymap;
-use super::{IN_SIZE_MOVE, SIZE_MOVE_TIMER_ID, WM_APP_WAKE, clear_wake_hwnd, dispatch_event};
+use super::{
+    IN_SIZE_MOVE, REDRAW_TIMER_ID, SIZE_MOVE_TIMER_ID, WM_APP_WAKE, clear_wake_hwnd, dispatch_event,
+};
 use crate::{
     Event, Key, Modifiers, MouseButton, PhysicalSize, WindowId, WindowImeDelegate,
     WindowRenderDelegate,
@@ -136,6 +139,11 @@ pub struct WinWindowInner {
     /// `WM_KEYUP`/`WM_SYSKEYUP` so orphan highs from stalled sequences do not
     /// leak into the next keypress.
     pub(crate) pending_high_surrogate: Cell<Option<u16>>,
+    /// True iff a one-shot redraw timer is currently armed via
+    /// `Window::schedule_redraw_at` (Phase 10a.6). Used to `KillTimer`
+    /// before re-arming so a fast caller replaces an in-flight timer
+    /// without double-fire, and to clean up on `WM_DESTROY`.
+    pub(crate) redraw_timer_armed: Cell<bool>,
 }
 
 impl WinWindowInner {
@@ -178,6 +186,12 @@ impl WinWindowInner {
                 if self.composition_active.replace(false) {
                     dispatch_event(Event::ImeDisabled { window: self.id });
                 }
+                // Cancel any in-flight redraw timer so the OS does not raise
+                // a stray WM_TIMER against a destroyed window (Phase 10a.6).
+                if self.redraw_timer_armed.replace(false) {
+                    // SAFETY: hwnd is still valid inside WM_DESTROY.
+                    let _ = unsafe { KillTimer(Some(hwnd), REDRAW_TIMER_ID) };
+                }
                 dispatch_event(Event::WindowDestroyed { window: self.id });
                 // SAFETY: PostQuitMessage is always safe to call from a WM_DESTROY handler.
                 unsafe { PostQuitMessage(0) };
@@ -219,6 +233,19 @@ impl WinWindowInner {
                 self.with_delegate(|d| d.on_redraw(self.id));
                 dispatch_event(Event::WindowRedrawRequested { window: self.id });
                 let _ = unsafe { ValidateRect(Some(hwnd), None) };
+                LRESULT(0)
+            }
+            // One-shot redraw scheduled via Window::schedule_redraw_at (10a.6).
+            // KillTimer immediately so the id is reusable for the next arm and
+            // a stuck-set "armed" flag can't outlive the fire.
+            WM_TIMER if _wparam.0 == REDRAW_TIMER_ID => {
+                // SAFETY: hwnd is valid; KillTimer is idempotent.
+                let _ = unsafe { KillTimer(Some(hwnd), REDRAW_TIMER_ID) };
+                self.redraw_timer_armed.set(false);
+                // SAFETY: hwnd is valid; None invalidates the entire client
+                // area, matching `Window::request_redraw`. Letting WM_PAINT
+                // handle the actual redraw keeps a single redraw code path.
+                let _ = unsafe { InvalidateRect(Some(hwnd), None, false) };
                 LRESULT(0)
             }
             WM_ERASEBKGND => LRESULT(1),

@@ -101,6 +101,29 @@ pub trait Window: HasWindowHandle + HasDisplayHandle + 'static {
     fn in_size_move(&self) -> bool {
         false
     }
+
+    /// Schedule a one-shot redraw at or shortly after `deadline`.
+    ///
+    /// Used by long-period animation drivers like the caret blink: the
+    /// caller arms one timer for the next desired tick, then re-arms on
+    /// the redraw it triggered. Single-shot semantics avoid leaking a
+    /// repeating timer when the focused element changes or the window
+    /// loses focus mid-animation (Phase 10a.6 charter, OQ3 resolution).
+    ///
+    /// `deadline` in the past still fires — it is clamped up to the
+    /// platform's minimum timer resolution (Win32 `USER_TIMER_MINIMUM` =
+    /// 10ms; macOS GCD = effectively immediate) rather than dropped, so
+    /// "fire ASAP" callers never silently no-op. Calling this while a
+    /// previous timer for the same window is still pending REPLACES it
+    /// (no double-fire). Replacement is per-window, not per-caller;
+    /// callers that share a window must coordinate.
+    ///
+    /// Default impl is a no-op so headless test harnesses and mock
+    /// `Window` impls compile without animation support. Concrete
+    /// platform impls override.
+    fn schedule_redraw_at(&self, deadline: std::time::Instant) {
+        let _ = deadline;
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -440,6 +463,8 @@ pub enum Event {
 
 mod render_delegate;
 pub use render_delegate::{PhysicalRect, PhysicalSize, WindowImeDelegate, WindowRenderDelegate};
+
+pub mod clipboard;
 
 #[cfg(target_os = "macos")]
 mod mac;

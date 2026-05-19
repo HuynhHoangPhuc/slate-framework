@@ -4,6 +4,9 @@ use std::cell::RefCell;
 use std::ptr::NonNull;
 use std::rc::Weak;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use dispatch::Queue;
 
 use objc2::MainThreadOnly;
 use objc2::rc::Retained;
@@ -42,6 +45,15 @@ pub struct MacWindow {
     /// IME query delegate for sync OS composition queries (Phase 9c).
     /// Wired into `MetalView` via Phase 2 once `NSTextInputClient` is implemented.
     pub(crate) ime_delegate: RefCell<Option<Weak<dyn WindowImeDelegate>>>,
+    /// Generation counter for `schedule_redraw_at` (Phase 10a.6).
+    ///
+    /// Bumped on every call; the GCD-dispatched closure captures its target
+    /// generation and skips the redraw if `redraw_gen` has moved on. This is
+    /// how we honour the documented "replaces in-flight timer" contract on
+    /// macOS, where GCD `dispatch_after` blocks are not directly cancelable.
+    /// `Arc<AtomicU64>` so the closure (which must be `Send + 'static`) can
+    /// hold a clone independent of `MacWindow`'s lifetime.
+    redraw_gen: Arc<AtomicU64>,
 }
 
 impl MacWindow {
@@ -131,6 +143,7 @@ impl MacWindow {
             _display_link: display_link,
             render_delegate: RefCell::new(None),
             ime_delegate: RefCell::new(None),
+            redraw_gen: Arc::new(AtomicU64::new(0)),
         });
 
         // Register in thread-local registry for delegate dispatch from Obj-C callbacks.
@@ -199,6 +212,28 @@ impl Window for MacWindow {
 
     fn set_ime_delegate(&self, delegate: Weak<dyn WindowImeDelegate>) {
         *self.ime_delegate.borrow_mut() = Some(delegate);
+    }
+
+    fn schedule_redraw_at(&self, deadline: std::time::Instant) {
+        let now = std::time::Instant::now();
+        let delay = if deadline > now {
+            deadline.duration_since(now)
+        } else {
+            std::time::Duration::ZERO
+        };
+        // Bump generation so any earlier in-flight closure sees a mismatch
+        // and silently no-ops — that's our "replaces in-flight timer" path
+        // since GCD dispatch_after blocks aren't directly cancelable.
+        let my_gen = self.redraw_gen.fetch_add(1, Ordering::AcqRel) + 1;
+        let gen_ref = Arc::clone(&self.redraw_gen);
+        let window_id = self.id;
+        Queue::main().exec_after(delay, move || {
+            if gen_ref.load(Ordering::Acquire) != my_gen {
+                // A later `schedule_redraw_at` call superseded this one.
+                return;
+            }
+            post_redraw_event(window_id);
+        });
     }
 }
 

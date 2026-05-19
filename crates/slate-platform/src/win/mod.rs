@@ -51,6 +51,12 @@ thread_local! {
 
 pub(crate) const SIZE_MOVE_TIMER_ID: usize = 0x5_1A_7E;
 
+/// Timer id reserved by `Window::schedule_redraw_at` (Phase 10a.6). A single
+/// id per window so a second `schedule_redraw_at` call REPLACES the in-flight
+/// timer rather than stacking — matches the documented "no double-fire"
+/// contract on the trait method.
+pub(crate) const REDRAW_TIMER_ID: usize = 0x5_1A_7F;
+
 /// Custom message for wake events from background threads.
 pub(crate) const WM_APP_WAKE: u32 = WM_APP + 1;
 

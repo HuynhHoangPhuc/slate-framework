@@ -19,14 +19,15 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CW_USEDEFAULT, CreateWindowExW, DestroyWindow, GetClientRect, SetWindowTextW, WS_DISABLED,
-    WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_OVERLAPPEDWINDOW, WS_POPUP, WS_VISIBLE,
+    CW_USEDEFAULT, CreateWindowExW, DestroyWindow, GetClientRect, KillTimer, SetTimer,
+    SetWindowTextW, USER_TIMER_MINIMUM, WS_DISABLED, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW,
+    WS_OVERLAPPEDWINDOW, WS_POPUP, WS_VISIBLE,
 };
 use windows::core::PCWSTR;
 
 use super::message_loop::WinWindowInner;
 use super::platform::CLASS_NAME;
-use super::{next_window_id, register_wake_hwnd, to_wide};
+use super::{REDRAW_TIMER_ID, next_window_id, register_wake_hwnd, to_wide};
 use crate::{Window, WindowId, WindowImeDelegate, WindowOptions, WindowRenderDelegate};
 
 // ---------------------------------------------------------------------------
@@ -77,6 +78,7 @@ impl WinWindow {
             last_monitor: Cell::new(HMONITOR(std::ptr::null_mut())),
             pending_monitor_change: Cell::new(false),
             pending_high_surrogate: Cell::new(None),
+            redraw_timer_armed: Cell::new(false),
         });
 
         let inner_ptr = Arc::as_ptr(&inner);
@@ -238,12 +240,51 @@ impl Window for WinWindow {
     fn in_size_move(&self) -> bool {
         self.inner.in_size_move.get()
     }
+
+    fn schedule_redraw_at(&self, deadline: std::time::Instant) {
+        let now = std::time::Instant::now();
+        // Win32 `SetTimer` takes a `u32` millisecond interval and treats 0 as
+        // "fire ASAP." Clamp to `USER_TIMER_MINIMUM` (10ms) so the timer is
+        // not coalesced with WM_PAINT into the same iteration when callers
+        // pass a deadline that's already past, and saturate to `u32::MAX` to
+        // avoid silent truncation on huge deadlines.
+        let ms: u32 = if deadline > now {
+            let micros = deadline.duration_since(now).as_micros();
+            ((micros / 1000) as u64).clamp(USER_TIMER_MINIMUM as u64, u32::MAX as u64) as u32
+        } else {
+            USER_TIMER_MINIMUM
+        };
+        // Replace an in-flight timer so a second call before fire does not
+        // double-schedule. Per-window single timer id (`REDRAW_TIMER_ID`).
+        if self.inner.redraw_timer_armed.get() {
+            // SAFETY: hwnd is valid for the lifetime of this WinWindow.
+            // KillTimer is idempotent on already-fired ids.
+            let _ = unsafe { KillTimer(Some(self.inner.hwnd), REDRAW_TIMER_ID) };
+        }
+        // SAFETY: hwnd is valid; lpTimerFunc=None routes via WM_TIMER.
+        let assigned = unsafe { SetTimer(Some(self.inner.hwnd), REDRAW_TIMER_ID, ms, None) };
+        self.inner.redraw_timer_armed.set(assigned != 0);
+        if assigned == 0 {
+            log::warn!(
+                target: "slate::win",
+                "SetTimer failed in schedule_redraw_at; redraw deferred to next natural event"
+            );
+        }
+    }
 }
 
 #[cfg(any(test, feature = "test-hooks"))]
 impl WinWindow {
     pub fn set_in_size_move_for_test(&self, v: bool) {
         self.inner.in_size_move.set(v);
+    }
+
+    /// True iff a redraw timer scheduled via `schedule_redraw_at` is currently
+    /// armed (between `SetTimer` and either `WM_TIMER` fire or replacement).
+    /// Test-only — operator stress tests assert this returns to `false` after
+    /// the message pump drains.
+    pub fn redraw_timer_armed_for_test(&self) -> bool {
+        self.inner.redraw_timer_armed.get()
     }
 }
 

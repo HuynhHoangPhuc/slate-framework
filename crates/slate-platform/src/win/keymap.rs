@@ -150,16 +150,7 @@ pub(crate) fn vk_to_character(vk: u32, scancode: u32) -> Option<String> {
     let mut buf = [0u16; 8];
     // SAFETY: ToUnicodeEx writes up to buf.len() UTF-16 units into buf. Flag
     // 0x02 = don't disturb kernel keyboard state (dead-key composition).
-    let n = unsafe {
-        ToUnicodeEx(
-            vk,
-            scancode,
-            &keyboard_state,
-            &mut buf,
-            0x02,
-            Some(layout),
-        )
-    };
+    let n = unsafe { ToUnicodeEx(vk, scancode, &keyboard_state, &mut buf, 0x02, Some(layout)) };
 
     if n <= 0 {
         // 0 = no translation; -1 = dead key (no character produced yet).
