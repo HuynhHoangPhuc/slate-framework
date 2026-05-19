@@ -3,6 +3,7 @@
 //! Provides native text shaping and rasterization using the Windows DirectWrite API.
 //! Uses IDWriteInMemoryFontFileLoader (DirectWrite 5+) to load fonts from static byte slices.
 
+mod font_id;
 mod font_load;
 mod rasterize;
 mod shaping;

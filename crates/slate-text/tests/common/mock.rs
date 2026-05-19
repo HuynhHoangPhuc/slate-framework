@@ -81,9 +81,8 @@ impl TextBackend for MockBackend {
         size_lpx: f32,
         scale: f32,
     ) -> Result<Self::Font, TextError> {
-        let ptr = 0x12345678 as *const u8;
         Ok(MockFont {
-            handle: FontHandle::from_ptr_size_scale(ptr, size_lpx, scale),
+            handle: FontHandle::from_face_id(0x12345678, size_lpx, scale),
             size_lpx,
             scale,
         })
@@ -96,7 +95,7 @@ impl TextBackend for MockBackend {
         scale: f32,
     ) -> Result<Self::Font, TextError> {
         Ok(MockFont {
-            handle: FontHandle::from_ptr_size_scale(bytes.as_ptr(), size_lpx, scale),
+            handle: FontHandle::from_face_id(bytes.as_ptr() as u64, size_lpx, scale),
             size_lpx,
             scale,
         })

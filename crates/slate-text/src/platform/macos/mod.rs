@@ -3,6 +3,7 @@
 //! Provides native text shaping and rasterization using CoreText and CoreGraphics.
 //! Uses CTFontManagerCreateFontDescriptorFromData to load fonts from static byte slices.
 
+mod font_id;
 mod font_load;
 mod rasterize;
 mod shaping;
@@ -139,9 +140,7 @@ impl TextBackend for CoreTextBackend {
         let (ct_font, data) = font_load::create_font_from_bytes(bytes, size_lpx)?;
         let metrics = font_load::extract_metrics(&ct_font);
 
-        // Build handle from font pointer + size + scale
-        let ptr = CFRetained::as_ptr(&ct_font).as_ptr() as *const u8;
-        let handle = FontHandle::from_ptr_size_scale(ptr, size_lpx, scale);
+        let handle = font_id::font_handle_from_ct_font(&ct_font, size_lpx, scale);
 
         Ok(CoreTextFont {
             ct_font,

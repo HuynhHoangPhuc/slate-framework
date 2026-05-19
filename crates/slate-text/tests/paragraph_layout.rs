@@ -46,7 +46,7 @@ impl TextBackend for MockBackend {
         _scale: f32,
     ) -> Result<Self::Font, TextError> {
         Ok(MockFont {
-            handle: FontHandle::from_ptr_size_scale(0x1000 as *const (), 16.0, 1.0),
+            handle: FontHandle::from_face_id(0x1000, 16.0, 1.0),
             metrics: FontMetrics {
                 ascent_lpx: 12.0,
                 descent_lpx: -4.0,

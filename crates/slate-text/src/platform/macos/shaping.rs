@@ -10,8 +10,9 @@ use objc2_core_text::{CTFont, CTRun, kCTFontAttributeName};
 use std::ffi::c_void;
 
 /// One CTFont captured from a `CTRun`, paired with the `FontHandle` derived
-/// from its raw pointer + the line's size/scale. The font is `CFRetained` so
-/// it outlives the borrowed reference returned by `CFDictionaryGetValue`.
+/// from its PostScript-name hash + the line's size/scale. The font is
+/// `CFRetained` so it outlives the borrowed reference returned by
+/// `CFDictionaryGetValue`.
 pub(crate) struct CapturedFont {
     pub(crate) handle: FontHandle,
     pub(crate) font: CFRetained<CTFont>,
@@ -193,8 +194,7 @@ pub(crate) fn shape_line(
         let mut captured_fonts: Vec<CapturedFont> = Vec::new();
         let mut total_width_pt: f64 = 0.0;
 
-        let primary_ptr = ct_font as *const CTFont as *const u8;
-        let primary_handle = FontHandle::from_ptr_size_scale(primary_ptr, size_lpx, scale);
+        let primary_handle = super::font_id::font_handle_from_ct_font(ct_font, size_lpx, scale);
 
         for i in 0..run_count {
             // CFArrayGetValueAtIndex also returns a borrowed reference.
@@ -219,8 +219,9 @@ pub(crate) fn shape_line(
                 if run_font_ptr.is_null() {
                     FontHandle::default()
                 } else {
-                    let handle = FontHandle::from_ptr_size_scale(
-                        run_font_ptr as *const u8,
+                    let run_font_ref: &CTFont = &*(run_font_ptr as *const CTFont);
+                    let handle = super::font_id::font_handle_from_ct_font(
+                        run_font_ref,
                         size_lpx,
                         scale,
                     );

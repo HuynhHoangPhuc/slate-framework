@@ -137,7 +137,7 @@ mod tests {
     #[test]
     fn cache_insert_and_get() {
         let cache = RasterBoundsCache::new();
-        let font = FontHandle::from_ptr_size_scale(0x1000 as *const u8, 16.0, 2.0);
+        let font = FontHandle::from_face_id(0x1000, 16.0, 2.0);
 
         assert!(cache.get(font, 65).is_none());
 
@@ -154,7 +154,7 @@ mod tests {
     #[test]
     fn cache_get_or_insert() {
         let cache = RasterBoundsCache::new();
-        let font = FontHandle::from_ptr_size_scale(0x2000 as *const u8, 16.0, 1.0);
+        let font = FontHandle::from_face_id(0x2000, 16.0, 1.0);
 
         let mut call_count = 0;
         let bounds = cache.get_or_insert_with(font, 66, || {
@@ -195,7 +195,7 @@ mod tests {
     #[test]
     fn eviction_clears_on_overflow_insert() {
         let cache = RasterBoundsCache::with_max_entries(4);
-        let font = FontHandle::from_ptr_size_scale(0x3000 as *const u8, 12.0, 1.0);
+        let font = FontHandle::from_face_id(0x3000, 12.0, 1.0);
         let bounds = GlyphBounds {
             width: 8,
             height: 8,
@@ -216,7 +216,7 @@ mod tests {
     #[test]
     fn eviction_clears_on_overflow_get_or_insert() {
         let cache = RasterBoundsCache::with_max_entries(3);
-        let font = FontHandle::from_ptr_size_scale(0x4000 as *const u8, 10.0, 1.0);
+        let font = FontHandle::from_face_id(0x4000, 10.0, 1.0);
         let bounds = GlyphBounds {
             width: 5,
             height: 5,

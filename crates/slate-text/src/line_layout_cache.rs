@@ -174,7 +174,7 @@ mod tests {
     use crate::types::FontId;
 
     fn make_font_handle() -> FontHandle {
-        FontHandle::from_ptr_size_scale(0x1000 as *const (), 16.0, 1.0)
+        FontHandle::from_face_id(0x1000, 16.0, 1.0)
     }
 
     fn make_shaped_line(width: f32) -> ShapedLine {

@@ -11,7 +11,7 @@ use windows::Win32::Graphics::DirectWrite::{
     DWRITE_STRIKETHROUGH, DWRITE_UNDERLINE, IDWriteFactory5, IDWriteFontFace, IDWriteInlineObject,
     IDWritePixelSnapping_Impl, IDWriteTextFormat, IDWriteTextRenderer, IDWriteTextRenderer_Impl,
 };
-use windows::core::{BOOL, IUnknown, Interface, Ref, Result, implement};
+use windows::core::{BOOL, IUnknown, Ref, Result, implement};
 
 /// One face captured from a `DrawGlyphRun` callback, paired with the
 /// `FontHandle` derived from its raw COM pointer + the line's size/scale.
@@ -131,8 +131,8 @@ impl IDWriteTextRenderer_Impl for ShapingRenderer_Impl {
         let face_opt: Option<IDWriteFontFace> = (*run.fontFace).clone();
         let font_handle = match face_opt.as_ref() {
             Some(face) => {
-                let ptr = face.as_raw() as *const u8;
-                FontHandle::from_ptr_size_scale(ptr, self.size_lpx, self.scale)
+                let id = super::font_id::idwrite_font_face_id(face);
+                FontHandle::from_face_id(id, self.size_lpx, self.scale)
             }
             None => FontHandle::default(),
         };

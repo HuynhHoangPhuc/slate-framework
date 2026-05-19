@@ -11,7 +11,7 @@ use windows::Win32::Graphics::DirectWrite::{
     IDWriteFactory5, IDWriteFontCollection1, IDWriteFontFace, IDWriteFontFile,
     IDWriteInMemoryFontFileLoader, IDWriteTextFormat,
 };
-use windows::core::{BOOL, HSTRING, Interface};
+use windows::core::{BOOL, HSTRING};
 
 use super::DirectWriteFont;
 
@@ -135,9 +135,8 @@ pub fn load_font_from_bytes(
     }
     .map_err(|e| TextError::FontFileLoad(format!("CreateTextFormat: {e}")))?;
 
-    // Build font handle from COM pointer + size + scale
-    let ptr = font_face.as_raw() as *const u8;
-    let handle = FontHandle::from_ptr_size_scale(ptr, size_lpx, scale);
+    let handle =
+        FontHandle::from_face_id(super::font_id::idwrite_font_face_id(&font_face), size_lpx, scale);
 
     Ok(DirectWriteFont {
         font_face,
@@ -218,8 +217,8 @@ pub fn load_system_font(
     }
     .map_err(|e| TextError::FontFileLoad(format!("CreateTextFormat: {e}")))?;
 
-    let ptr = font_face.as_raw() as *const u8;
-    let handle = FontHandle::from_ptr_size_scale(ptr, size_lpx, scale);
+    let handle =
+        FontHandle::from_face_id(super::font_id::idwrite_font_face_id(&font_face), size_lpx, scale);
 
     Ok(super::DirectWriteFont {
         font_face,

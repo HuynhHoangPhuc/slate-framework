@@ -1,28 +1,27 @@
 //! Font handle for cache keying.
 //!
-//! `FontHandle` uniquely identifies a font instance by combining the platform
-//! font pointer address with size and scale. Pointer alone is insufficient
-//! because CoreText/DirectWrite may recycle pointers across reloads at
-//! different sizes.
+//! `FontHandle` uniquely identifies a font instance by combining a stable
+//! `face_id` (hash of the platform face's PostScript name) with size and scale.
+//! Platform face pointers are NOT used: CoreText returns fresh `CTFont`
+//! addresses for substitute faces across shape calls (notably after IME
+//! input-source switches), so pointer-as-identity causes glyph-cache thrash.
 
 /// Unique identifier for a font instance, used as cache key.
 ///
-/// # Safety Invariant
-///
-/// `FontHandle` is only valid while the originating `Font` value is alive.
-/// Platform font object pointers (CTFont/IDWriteFontFace) are unique per-instance
-/// and stable while held, preventing address reuse.
-///
 /// # Cache Key Uniqueness
 ///
-/// `ptr_addr` is a raw pointer address, NOT a hash. Uniqueness comes from the
-/// `(ptr_addr, size_lpx_bits, scale_bits)` triple. Two fonts at different sizes
-/// from the same byte slice will have distinct handles even if they share the
-/// same underlying pointer.
+/// `face_id` is a 64-bit FxHash of the face's PostScript name (UTF-8 bytes).
+/// Uniqueness comes from the `(face_id, size_lpx_bits, scale_bits)` triple.
+/// Two fonts at different sizes from the same face will have distinct handles
+/// even though they share `face_id`.
+///
+/// Two distinct platform face objects (e.g. substitute `CTFont` instances with
+/// fresh pointer addresses) that represent the same logical face (same PSName)
+/// produce equal `FontHandle`s — by design.
 #[derive(Copy, Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub struct FontHandle {
-    /// Raw pointer address of the platform font object.
-    pub ptr_addr: u64,
+    /// 64-bit FxHash of the face's PostScript name. Stable across pointer churn.
+    pub face_id: u64,
     /// Font size in logical pixels, bit-encoded via `f32::to_bits()`.
     pub size_lpx_bits: u32,
     /// Display scale factor, bit-encoded via `f32::to_bits()`.
@@ -30,16 +29,13 @@ pub struct FontHandle {
 }
 
 impl FontHandle {
-    /// Build from the underlying platform font pointer + size + scale.
+    /// Build from a precomputed `face_id` + size + scale.
     ///
-    /// # Arguments
-    ///
-    /// * `ptr` - Platform font object pointer (CTFont*, IDWriteFontFace*, etc.)
-    /// * `size_lpx` - Font size in logical pixels (1 lpx = 1 DIP at scale=1.0)
-    /// * `scale` - Display scale factor (e.g., 2.0 for Retina)
-    pub fn from_ptr_size_scale<T>(ptr: *const T, size_lpx: f32, scale: f32) -> Self {
+    /// Platform-specific code derives `face_id` via PSName hashing (see
+    /// `platform/macos/font_id.rs`). Tests may pass synthetic ids directly.
+    pub fn from_face_id(face_id: u64, size_lpx: f32, scale: f32) -> Self {
         Self {
-            ptr_addr: ptr as u64,
+            face_id,
             size_lpx_bits: size_lpx.to_bits(),
             scale_bits: scale.to_bits(),
         }

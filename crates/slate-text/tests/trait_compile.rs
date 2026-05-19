@@ -25,9 +25,9 @@ fn send_sync_types() {
 fn font_handle_hash_eq() {
     use std::collections::HashSet;
 
-    let h1 = FontHandle::from_ptr_size_scale(0x1000 as *const (), 16.0, 1.0);
-    let h2 = FontHandle::from_ptr_size_scale(0x1000 as *const (), 16.0, 1.0);
-    let h3 = FontHandle::from_ptr_size_scale(0x1000 as *const (), 24.0, 1.0);
+    let h1 = FontHandle::from_face_id(0x1000, 16.0, 1.0);
+    let h2 = FontHandle::from_face_id(0x1000, 16.0, 1.0);
+    let h3 = FontHandle::from_face_id(0x1000, 24.0, 1.0);
 
     assert_eq!(h1, h2);
     assert_ne!(h1, h3);
@@ -40,7 +40,7 @@ fn font_handle_hash_eq() {
 
 #[test]
 fn font_handle_size_scale_accessors() {
-    let h = FontHandle::from_ptr_size_scale(0x1000 as *const (), 16.5, 2.0);
+    let h = FontHandle::from_face_id(0x1000, 16.5, 2.0);
     assert_eq!(h.size_lpx(), 16.5);
     assert_eq!(h.scale(), 2.0);
 }
