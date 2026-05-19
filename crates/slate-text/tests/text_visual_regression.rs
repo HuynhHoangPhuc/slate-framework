@@ -64,6 +64,7 @@ impl TextBackend for MockBackend {
                 x_advance_lpx: 8.0,
                 x_offset_lpx: 0.0,
                 y_offset_lpx: 0.0,
+                cluster: 0,
             })
             .collect();
         let width = glyphs.len() as f32 * 8.0;
@@ -148,8 +149,14 @@ fn text_pipeline_builds_glyph_instances() {
 
     // Each instance should have valid rect and UV coordinates
     for (i, inst) in instances.iter().enumerate() {
-        assert!(inst.rect[2] > slate_renderer::Lpx(0.0), "glyph {i} has zero width");
-        assert!(inst.rect[3] > slate_renderer::Lpx(0.0), "glyph {i} has zero height");
+        assert!(
+            inst.rect[2] > slate_renderer::Lpx(0.0),
+            "glyph {i} has zero width"
+        );
+        assert!(
+            inst.rect[3] > slate_renderer::Lpx(0.0),
+            "glyph {i} has zero height"
+        );
         assert!(inst.uv_rect[0] >= 0.0 && inst.uv_rect[0] <= 1.0);
         assert!(inst.uv_rect[1] >= 0.0 && inst.uv_rect[1] <= 1.0);
     }

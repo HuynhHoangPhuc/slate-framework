@@ -42,6 +42,10 @@ pub(crate) struct ShapingRenderer {
     /// matching this so the backend registry doesn't store the primary as a
     /// substitute (mirrors macOS `shaping.rs` skip-primary guard).
     primary_handle: FontHandle,
+    /// UTF-16 code-unit → UTF-8 byte-offset map for the layout's source text.
+    /// Used to translate `DWRITE_GLYPH_RUN_DESCRIPTION::clusterMap` (UTF-16
+    /// indexed) into HarfBuzz-style UTF-8 cluster values on each glyph.
+    utf16_to_utf8: Vec<u32>,
 }
 
 impl ShapingRenderer {
@@ -52,6 +56,7 @@ impl ShapingRenderer {
         size_lpx: f32,
         scale: f32,
         primary_handle: FontHandle,
+        utf16_to_utf8: Vec<u32>,
     ) -> Self {
         Self {
             glyphs,
@@ -59,6 +64,7 @@ impl ShapingRenderer {
             size_lpx,
             scale,
             primary_handle,
+            utf16_to_utf8,
         }
     }
 }
@@ -104,7 +110,7 @@ impl IDWriteTextRenderer_Impl for ShapingRenderer_Impl {
         _baselineoriginy: f32,
         _measuringmode: DWRITE_MEASURING_MODE,
         glyphrun: *const DWRITE_GLYPH_RUN,
-        _glyphrundescription: *const DWRITE_GLYPH_RUN_DESCRIPTION,
+        glyphrundescription: *const DWRITE_GLYPH_RUN_DESCRIPTION,
         _clientdrawingeffect: Ref<'_, IUnknown>,
     ) -> Result<()> {
         let run = unsafe { &*glyphrun };
@@ -120,6 +126,61 @@ impl IDWriteTextRenderer_Impl for ShapingRenderer_Impl {
             None
         } else {
             Some(unsafe { std::slice::from_raw_parts(run.glyphOffsets, count) })
+        };
+
+        // Derive per-glyph cluster (UTF-8 byte offset into the source string)
+        // from `DWRITE_GLYPH_RUN_DESCRIPTION::clusterMap`. The cluster map is
+        // indexed by UTF-16 char position within this run; each entry is the
+        // glyph index (within the run) the char maps to. Inverse: for each
+        // glyph, take the smallest char index pointing at it; glyphs that no
+        // char points at directly belong to the preceding glyph's cluster
+        // (HarfBuzz forward-fill convention for multi-glyph clusters).
+        // `glyphrundescription` is null for non-text runs (inline objects);
+        // those have count == 0 and were already short-circuited above.
+        let clusters: Vec<u32> = if !glyphrundescription.is_null() {
+            let desc = unsafe { &*glyphrundescription };
+            let text_position = desc.textPosition as usize;
+            let string_length = desc.stringLength as usize;
+            let cluster_map = if !desc.clusterMap.is_null() && string_length > 0 {
+                Some(unsafe { std::slice::from_raw_parts(desc.clusterMap, string_length) })
+            } else {
+                None
+            };
+
+            let mut glyph_to_char: Vec<Option<u32>> = vec![None; count];
+            if let Some(cm) = cluster_map {
+                for (j, &g) in cm.iter().enumerate() {
+                    let g = g as usize;
+                    if g < count && glyph_to_char[g].is_none() {
+                        glyph_to_char[g] = Some(j as u32);
+                    }
+                }
+                // Forward-fill: glyphs at decomposition tails inherit the
+                // char position of the cluster's leading glyph. The `last = 0`
+                // seed relies on DirectWrite's invariant that clusterMap[0] is
+                // always 0 (run starts at its first char); if that ever fails,
+                // glyph 0 maps to text_position+0 which is still the
+                // leading-char cluster — so do not "fix" this with an Option
+                // wrapper that would break the fallback.
+                let mut last: u32 = 0;
+                for slot in glyph_to_char.iter_mut() {
+                    match slot {
+                        Some(v) => last = *v,
+                        None => *slot = Some(last),
+                    }
+                }
+            }
+
+            glyph_to_char
+                .iter()
+                .map(|slot| {
+                    let char_in_run = slot.unwrap_or(0) as usize;
+                    let utf16_pos = text_position + char_in_run;
+                    self.utf16_to_utf8.get(utf16_pos).copied().unwrap_or(0)
+                })
+                .collect()
+        } else {
+            vec![0u32; count]
         };
 
         // `glyphrun.fontFace` is `ManuallyDrop<Option<IDWriteFontFace>>` borrowed
@@ -173,6 +234,7 @@ impl IDWriteTextRenderer_Impl for ShapingRenderer_Impl {
                 x_advance_lpx: advances[i],
                 x_offset_lpx: offsets.map_or(0.0, |o| o[i].advanceOffset),
                 y_offset_lpx: offsets.map_or(0.0, |o| o[i].ascenderOffset),
+                cluster: clusters[i],
             });
         }
 
@@ -253,6 +315,9 @@ pub(crate) fn shape_line(
     // UTF-8 → UTF-16
     let wide: Vec<u16> = text.encode_utf16().collect();
 
+    // UTF-16 → UTF-8 byte map for cluster derivation in DrawGlyphRun.
+    let utf16_to_utf8 = crate::cluster::utf16_to_utf8_byte_map(text);
+
     // CreateTextLayout takes &[u16]
     let layout = unsafe { factory.CreateTextLayout(&wide, text_format, f32::MAX, f32::MAX) }
         .map_err(|e| TextError::ShapingFailed(format!("CreateTextLayout: {e}")))?;
@@ -266,6 +331,7 @@ pub(crate) fn shape_line(
         size_lpx,
         scale,
         primary_handle,
+        utf16_to_utf8,
     );
     let renderer_iface: IDWriteTextRenderer = renderer.into();
 

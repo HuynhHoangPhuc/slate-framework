@@ -186,6 +186,7 @@ mod tests {
                 x_advance_lpx: width,
                 x_offset_lpx: 0.0,
                 y_offset_lpx: 0.0,
+                cluster: 0,
             }],
             width_lpx: width,
             ascent_lpx: 12.0,

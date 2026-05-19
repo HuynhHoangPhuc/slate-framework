@@ -52,6 +52,10 @@ unsafe extern "C" {
     fn CTRunGetGlyphs(run: *const c_void, range: CFRange, buffer: *mut u16);
     fn CTRunGetPositions(run: *const c_void, range: CFRange, buffer: *mut CGPoint);
     fn CTRunGetAdvances(run: *const c_void, range: CFRange, buffer: *mut CGSize);
+    /// Returns a pointer to an array of UTF-16 source indices, one per glyph
+    /// in the run. Indices reference the originating attributed string (which
+    /// for our shape_line is the UTF-16 encoding of the input `&str`).
+    fn CTRunGetStringIndicesPtr(run: *const c_void) -> *const CFIndex;
     fn CTRunGetAttributes(run: *const c_void) -> *const c_void;
     fn CFDictionaryGetValue(dict: *const c_void, key: *const c_void) -> *const c_void;
     fn CFRetain(cf: *const c_void) -> *const c_void;
@@ -125,6 +129,11 @@ pub(crate) fn shape_line(
     // Create C string from text
     let c_str = std::ffi::CString::new(text)
         .map_err(|_| TextError::ShapingFailed("Text contains null bytes".into()))?;
+
+    // UTF-16 → UTF-8 byte map. `CTRunGetStringIndicesPtr` reports indices into
+    // the CFString (UTF-16); we translate to HarfBuzz-style UTF-8 cluster
+    // values for `ShapedGlyph::cluster`.
+    let utf16_to_utf8 = crate::cluster::utf16_to_utf8_byte_map(text);
 
     // Safety: all CF/CT calls follow Create/Copy ownership rules; owned objects
     // are wrapped in ScopedCf for deterministic release.
@@ -220,11 +229,8 @@ pub(crate) fn shape_line(
                     FontHandle::default()
                 } else {
                     let run_font_ref: &CTFont = &*(run_font_ptr as *const CTFont);
-                    let handle = super::font_id::font_handle_from_ct_font(
-                        run_font_ref,
-                        size_lpx,
-                        scale,
-                    );
+                    let handle =
+                        super::font_id::font_handle_from_ct_font(run_font_ref, size_lpx, scale);
                     // Register the substitute font once per unique handle.
                     // Skip the primary — caller already holds it.
                     if handle != primary_handle
@@ -233,10 +239,8 @@ pub(crate) fn shape_line(
                         // CFRetain the borrowed CTFont so the CFRetained guard
                         // owns a strong reference independent of the run.
                         let _ = CFRetain(run_font_ptr);
-                        let nonnull =
-                            std::ptr::NonNull::new(run_font_ptr as *mut CTFont).expect(
-                                "non-null after null check above",
-                            );
+                        let nonnull = std::ptr::NonNull::new(run_font_ptr as *mut CTFont)
+                            .expect("non-null after null check above");
                         let retained = CFRetained::from_raw(nonnull);
                         captured_fonts.push(CapturedFont {
                             handle,
@@ -271,12 +275,36 @@ pub(crate) fn shape_line(
             // Get advances
             CTRunGetAdvances(run, range, advances.as_mut_ptr());
 
+            // Per-glyph UTF-16 source indices (borrowed; valid for the run's
+            // lifetime). The pointer is null only when CoreText cannot supply
+            // indices directly — extremely rare for our single-CTRun
+            // attributed strings, but we degrade to cluster=0 just in case.
+            let indices_ptr = CTRunGetStringIndicesPtr(run);
+            // SAFETY: CTRunGetStringIndicesPtr returns a pointer with exactly
+            // CTRunGetGlyphCount(run) CFIndex entries, valid until `line`
+            // (which owns this CTRun) drops. We consume the slice fully inside
+            // the per-glyph loop below, which finishes before this iteration
+            // of the for-run loop ends — long before `line` drops.
+            let string_indices: Option<&[CFIndex]> = if indices_ptr.is_null() {
+                None
+            } else {
+                Some(std::slice::from_raw_parts(indices_ptr, glyph_count))
+            };
+
             // Convert to ShapedGlyph
             for j in 0..glyph_count {
                 let glyph_id = glyph_ids[j] as u32;
                 let x_advance_pt = advances[j].width as f32;
                 let x_offset_pt = positions[j].x as f32;
                 let y_offset_pt = positions[j].y as f32;
+
+                let cluster = match string_indices {
+                    Some(idx) => {
+                        let utf16_pos = idx[j] as usize;
+                        utf16_to_utf8.get(utf16_pos).copied().unwrap_or(0)
+                    }
+                    None => 0,
+                };
 
                 glyphs.push(ShapedGlyph {
                     glyph_id,
@@ -285,6 +313,7 @@ pub(crate) fn shape_line(
                     x_advance_lpx: x_advance_pt,
                     x_offset_lpx: x_offset_pt,
                     y_offset_lpx: y_offset_pt,
+                    cluster,
                 });
 
                 total_width_pt += advances[j].width;

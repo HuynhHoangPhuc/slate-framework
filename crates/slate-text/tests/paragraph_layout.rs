@@ -81,6 +81,7 @@ impl TextBackend for MockBackend {
                     x_advance_lpx: advance,
                     x_offset_lpx: 0.0,
                     y_offset_lpx: 0.0,
+                    cluster: 0,
                 }
             })
             .collect();

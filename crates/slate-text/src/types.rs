@@ -52,6 +52,13 @@ pub struct ShapedGlyph {
     pub x_offset_lpx: f32,
     /// Vertical offset from baseline in logical pixels.
     pub y_offset_lpx: f32,
+    /// UTF-8 byte offset into the source string for the leading character of
+    /// the cluster this glyph belongs to (HarfBuzz convention). Glyphs in the
+    /// same cluster share a value. For both LTR and RTL runs the value is the
+    /// smallest UTF-8 byte offset of any character in the cluster, so cluster
+    /// values are monotonically non-decreasing in logical order (which equals
+    /// visual order for LTR; reverse of visual order for RTL).
+    pub cluster: u32,
 }
 
 /// Rasterized glyph bitmap with metrics.

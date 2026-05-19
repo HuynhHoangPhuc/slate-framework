@@ -196,6 +196,11 @@ where
         let Some(&c) = chars.get(i) else { continue };
         let cp = c as u32;
 
+        // Preserve the cluster value set by the primary shaper — `shape_fn`
+        // re-shapes a single char in isolation so its `new_glyph.cluster` is
+        // always 0 and would clobber the line-relative byte offset.
+        let original_cluster = glyph.cluster;
+
         // Check cache first
         if let Some(fb_id) = system.get_cached_fallback(FontId::PRIMARY, cp) {
             // Find the font with this ID and re-shape
@@ -210,6 +215,7 @@ where
             {
                 *glyph = ShapedGlyph {
                     font_id: fb_id,
+                    cluster: original_cluster,
                     ..new_glyph
                 };
                 fixed += 1;
@@ -229,6 +235,7 @@ where
             if let Some(new_glyph) = shape_fn(fallback, c) {
                 *glyph = ShapedGlyph {
                     font_id: fb_id,
+                    cluster: original_cluster,
                     ..new_glyph
                 };
                 system.cache_fallback(FontId::PRIMARY, cp, fb_id);

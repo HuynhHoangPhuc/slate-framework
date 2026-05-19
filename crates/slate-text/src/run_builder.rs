@@ -106,8 +106,7 @@ impl<'a, B: TextBackend> TextRunBuilder<'a, B> {
             let variant = compute_variant(glyph_x_px);
 
             // Sentinel default → use primary; otherwise dispatch on captured face.
-            let use_primary =
-                g.font_handle == FontHandle::default() || g.font_handle == primary_h;
+            let use_primary = g.font_handle == FontHandle::default() || g.font_handle == primary_h;
 
             let (bounds, key_handle) = if use_primary {
                 (
@@ -135,14 +134,7 @@ impl<'a, B: TextBackend> TextRunBuilder<'a, B> {
             }
 
             if use_primary || key_handle == primary_h {
-                cache.materialize(
-                    self.backend,
-                    self.font,
-                    g.glyph_id,
-                    variant,
-                    atlas,
-                    queue,
-                )?;
+                cache.materialize(self.backend, self.font, g.glyph_id, variant, atlas, queue)?;
             } else {
                 cache.materialize_by_handle(
                     self.backend,

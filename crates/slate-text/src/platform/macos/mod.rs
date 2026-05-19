@@ -153,8 +153,13 @@ impl TextBackend for CoreTextBackend {
     }
 
     fn shape_line(&self, font: &Self::Font, text: &str) -> Result<ShapedLine, TextError> {
-        let result =
-            shaping::shape_line(&font.ct_font, text, &font.metrics, font.size_lpx, font.scale)?;
+        let result = shaping::shape_line(
+            &font.ct_font,
+            text,
+            &font.metrics,
+            font.size_lpx,
+            font.scale,
+        )?;
         if !result.captured_fonts.is_empty() {
             let mut reg = self.font_registry.borrow_mut();
             for cf in result.captured_fonts {

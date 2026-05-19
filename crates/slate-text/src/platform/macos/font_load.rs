@@ -9,7 +9,6 @@ use objc2_core_foundation::{CFData, CFRetained, CGFloat};
 use objc2_core_text::{CTFont, CTFontManagerCreateFontDescriptorFromData};
 use std::ptr;
 
-
 /// Create a CTFont from raw TTF/OTF bytes.
 ///
 /// # Note on Data Lifetime

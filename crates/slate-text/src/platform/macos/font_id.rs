@@ -26,10 +26,6 @@ pub(crate) fn ct_font_face_id(font: &CTFont) -> u64 {
 }
 
 /// Build a `FontHandle` whose `face_id` is the PSName hash of `font`.
-pub(crate) fn font_handle_from_ct_font(
-    font: &CTFont,
-    size_lpx: f32,
-    scale: f32,
-) -> FontHandle {
+pub(crate) fn font_handle_from_ct_font(font: &CTFont, size_lpx: f32, scale: f32) -> FontHandle {
     FontHandle::from_face_id(ct_font_face_id(font), size_lpx, scale)
 }
