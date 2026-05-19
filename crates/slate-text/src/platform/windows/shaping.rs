@@ -143,6 +143,13 @@ impl IDWriteTextRenderer_Impl for ShapingRenderer_Impl {
         // so storing it just wastes an `extract_metrics` + heap alloc.
         // Dedup against already-captured substitutes is per-callback; cross-call
         // dedup happens at the HashMap level in `mod.rs` via `entry().or_insert_with`.
+        // Pointer-stability decision (Phase 0 operator probe, 2026-05-19):
+        // 196 consecutive substitute callbacks during `ime-textfield` typing of
+        // `Hello こんにちは🇯🇵 world` all reported the same `IDWriteFontFace`
+        // COM pointer — `IDWriteFactory5` canonicalizes substitute faces per
+        // process. The PSName-hash keying in `font_id::idwrite_font_face_id` is
+        // therefore safe, and its `as_raw() as u64` fallback is also empirically
+        // stable. No follow-up needed for v2.
         if font_handle != self.primary_handle
             && let Some(face) = face_opt
         {
