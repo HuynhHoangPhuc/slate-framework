@@ -107,7 +107,10 @@ pub fn greedy_wrap<B: TextBackend>(
 
         for g in &shaped_word.glyphs {
             let mut adjusted = *g;
-            adjusted.x_offset_lpx += pen_x;
+            // Word was shape_line'd in isolation — positions start at 0.
+            // Shift into the line by the current pen so they sit after the
+            // preceding word + inter-word space.
+            adjusted.position_lpx[0] += pen_x;
             current_glyphs.push(adjusted);
         }
 
@@ -136,9 +139,10 @@ pub fn greedy_wrap<B: TextBackend>(
 
 /// Build a `ShapedLine` from pre-accumulated glyphs.
 ///
-/// Glyphs must already have their `x_offset_lpx` adjusted to their pen
-/// positions within the line. `width_lpx` should be the total advance width
-/// (sum of per-glyph advances including inter-word space advances).
+/// Glyphs must already have their `position_lpx[0]` adjusted to their
+/// absolute positions within the line. `width_lpx` should be the total
+/// advance width (sum of per-glyph advances including inter-word space
+/// advances).
 fn build_line_from_glyphs(
     glyphs: Vec<ShapedGlyph>,
     width_lpx: f32,
@@ -174,10 +178,8 @@ pub fn compute_alignment_offset(
 /// Truncate a shaped line with ellipsis if it exceeds max width.
 ///
 /// Uses cumulative advance to find the optimal cut point, then appends "..."
-/// glyphs. Ellipsis glyphs are appended with their original x_offset_lpx
-/// values unchanged — they are treated as a contiguous run that follows the
-/// truncated text in the glyph stream. Returns the original line unchanged
-/// if it fits.
+/// glyphs shifted to sit immediately after the truncated text. Returns the
+/// original line unchanged if it fits.
 pub fn truncate_with_ellipsis<B: TextBackend>(
     backend: &B,
     font: &B::Font,
@@ -215,16 +217,19 @@ pub fn truncate_with_ellipsis<B: TextBackend>(
         cut_idx = i + 1;
     }
 
-    // Build truncated glyphs + ellipsis
-    // Ellipsis glyphs are appended as-is: their own x_offset_lpx values are
-    // relative to the pen, which naturally follows the last truncated glyph's
-    // advance. We do NOT shift them by truncated_width — that would double-
-    // count the offset for renderers that sum pen + x_offset_lpx.
+    // Build truncated glyphs + ellipsis.
+    //
+    // Ellipsis was shaped in isolation, so its glyphs' `position_lpx[0]` are
+    // [0..ellipsis.width_lpx). Shift them by `truncated_width` so they sit
+    // immediately after the last truncated glyph (in the absolute-position
+    // coordinate space the renderer expects).
     let mut truncated_glyphs = shaped.glyphs[..cut_idx].to_vec();
     let truncated_width = cumulative;
 
     for eg in &ellipsis.glyphs {
-        truncated_glyphs.push(*eg);
+        let mut shifted = *eg;
+        shifted.position_lpx[0] += truncated_width;
+        truncated_glyphs.push(shifted);
     }
 
     Ok(ShapedLine {

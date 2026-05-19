@@ -226,16 +226,37 @@ impl IDWriteTextRenderer_Impl for ShapingRenderer_Impl {
         let mut glyphs = self.glyphs.borrow_mut();
         glyphs.reserve(count);
 
+        // DirectWrite reports `advances[i]` (per-glyph advance) and optional
+        // `offsets[i]` (HarfBuzz-style relative nudge for combining marks).
+        // Accumulate into the canonical absolute `position_lpx` form so the
+        // renderer's contract is identical to CoreText: paint at
+        // `baseline + position_lpx` with no pen accumulator on the consumer
+        // side. `ascenderOffset` is positive-up; we negate so `position_lpx[1]`
+        // matches CoreText's baseline-relative Y convention (Y-up at the
+        // shaper layer — the renderer applies its own axis flip).
+        //
+        // Pen continuity across DrawGlyphRun callbacks: DirectWrite invokes
+        // this callback once per shaped run, but the caller's pen does NOT
+        // reset between callbacks within a single CreateTextLayout / Draw
+        // (the layout's draw pipeline calls into the renderer with
+        // `_baselineoriginx` reflecting the layout's pen). We bridge this by
+        // seeding `pen` with the current line's accumulated width — i.e. the
+        // sum of advances already pushed into `glyphs_store`.
+        let mut pen: f32 = glyphs.iter().map(|g| g.x_advance_lpx).sum();
         for i in 0..count {
+            let (off_x, off_y) = offsets
+                .map(|o| (o[i].advanceOffset, -o[i].ascenderOffset))
+                .unwrap_or((0.0, 0.0));
+            let position = [pen + off_x, off_y];
             glyphs.push(ShapedGlyph {
                 glyph_id: indices[i] as u32,
                 font_id: FontId::PRIMARY,
                 font_handle,
                 x_advance_lpx: advances[i],
-                x_offset_lpx: offsets.map_or(0.0, |o| o[i].advanceOffset),
-                y_offset_lpx: offsets.map_or(0.0, |o| o[i].ascenderOffset),
+                position_lpx: position,
                 cluster: clusters[i],
             });
+            pen += advances[i];
         }
 
         Ok(())

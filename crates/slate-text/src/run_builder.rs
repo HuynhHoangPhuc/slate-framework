@@ -98,10 +98,13 @@ impl<'a, B: TextBackend> TextRunBuilder<'a, B> {
         let scale = self.font.scale();
         let primary_h = self.font.handle();
         let mut out = Vec::with_capacity(shaped.glyphs.len());
-        let mut pen_x_lpx = self.baseline_lpx[0];
 
         for g in &shaped.glyphs {
-            let glyph_x_lpx = pen_x_lpx + g.x_offset_lpx;
+            // `position_lpx` is absolute, relative to the line origin — already
+            // includes all preceding advances and any per-glyph nudge from the
+            // shaper, so there is no pen accumulator on the consumer side.
+            let glyph_x_lpx = self.baseline_lpx[0] + g.position_lpx[0];
+            let glyph_y_lpx = self.baseline_lpx[1] + y_offset_lpx + g.position_lpx[1];
             let glyph_x_px = glyph_x_lpx * scale;
             let variant = compute_variant(glyph_x_px);
 
@@ -129,7 +132,6 @@ impl<'a, B: TextBackend> TextRunBuilder<'a, B> {
             };
 
             if bounds.is_whitespace() {
-                pen_x_lpx += g.x_advance_lpx;
                 continue;
             }
 
@@ -148,8 +150,7 @@ impl<'a, B: TextBackend> TextRunBuilder<'a, B> {
 
             if let Some(cg) = cache.get(key_handle, g.glyph_id, variant) {
                 let origin_x_px = (glyph_x_lpx + cg.metrics.bearing_x_lpx) * scale;
-                let origin_y_px =
-                    (self.baseline_lpx[1] + y_offset_lpx - cg.metrics.bearing_y_lpx) * scale;
+                let origin_y_px = (glyph_y_lpx - cg.metrics.bearing_y_lpx) * scale;
 
                 // Snap to physical-pixel grid, then divide by scale to land
                 // back in lpx for the scene wire format.
@@ -171,8 +172,6 @@ impl<'a, B: TextBackend> TextRunBuilder<'a, B> {
                     _pad: [0; 3],
                 });
             }
-
-            pen_x_lpx += g.x_advance_lpx;
         }
 
         Ok(out)

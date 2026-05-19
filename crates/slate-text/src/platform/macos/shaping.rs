@@ -304,12 +304,16 @@ pub(crate) fn shape_line(
                 &indices_owned[..]
             };
 
-            // Convert to ShapedGlyph
+            // Convert to ShapedGlyph.
+            //
+            // CoreText `positions[j]` is the absolute pen position of glyph j
+            // relative to the CTLine origin (cumulative across the line, with
+            // per-glyph nudges already baked in). Store it directly as
+            // `position_lpx` — this is the canonical absolute form.
             for j in 0..glyph_count {
                 let glyph_id = glyph_ids[j] as u32;
                 let x_advance_pt = advances[j].width as f32;
-                let x_offset_pt = positions[j].x as f32;
-                let y_offset_pt = positions[j].y as f32;
+                let position = [positions[j].x as f32, positions[j].y as f32];
 
                 let utf16_pos = string_indices[j] as usize;
                 let cluster = utf16_to_utf8.get(utf16_pos).copied().unwrap_or(0);
@@ -319,8 +323,7 @@ pub(crate) fn shape_line(
                     font_id: FontId::PRIMARY,
                     font_handle: run_font_handle,
                     x_advance_lpx: x_advance_pt,
-                    x_offset_lpx: x_offset_pt,
-                    y_offset_lpx: y_offset_pt,
+                    position_lpx: position,
                     cluster,
                 });
 

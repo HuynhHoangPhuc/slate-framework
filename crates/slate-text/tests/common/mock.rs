@@ -111,8 +111,7 @@ impl TextBackend for MockBackend {
                 font_id: FontId::PRIMARY,
                 font_handle: Default::default(),
                 x_advance_lpx: advance,
-                x_offset_lpx: 0.0,
-                y_offset_lpx: 0.0,
+                position_lpx: [i as f32 * advance, 0.0],
                 cluster: 0,
             })
             .collect();

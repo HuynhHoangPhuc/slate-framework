@@ -26,13 +26,15 @@ fn shapes_hello_world() {
     assert!(line.width_lpx > 0.0, "width should be positive");
 
     // Positions should be monotonically increasing (LTR)
-    let mut x_pos = 0.0_f32;
+    let mut last_pos = -f32::INFINITY;
     for glyph in &line.glyphs {
         assert!(
-            glyph.x_offset_lpx >= x_pos || glyph.x_advance_lpx > 0.0,
-            "glyphs should progress left-to-right"
+            glyph.position_lpx[0] >= last_pos,
+            "glyphs should progress left-to-right (pos {} < last {})",
+            glyph.position_lpx[0],
+            last_pos,
         );
-        x_pos += glyph.x_advance_lpx;
+        last_pos = glyph.position_lpx[0];
     }
 }
 

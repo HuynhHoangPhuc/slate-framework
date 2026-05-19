@@ -410,8 +410,7 @@ mod tests {
                     font_id: FontId::PRIMARY,
                     font_handle: Default::default(),
                     x_advance_lpx: 10.0,
-                    x_offset_lpx: 0.0,
-                    y_offset_lpx: 0.0,
+                    position_lpx: [0.0, 0.0],
                     cluster: 0,
                 })
                 .collect(),

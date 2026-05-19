@@ -74,13 +74,13 @@ fn entry(n: u64) -> FocusableEntry {
 fn synth_shaped(text: &str, adv: f32) -> ShapedLine {
     let glyphs: Vec<ShapedGlyph> = text
         .char_indices()
-        .map(|(b, _)| ShapedGlyph {
+        .enumerate()
+        .map(|(i, (b, _))| ShapedGlyph {
             glyph_id: 1,
             font_id: FontId::PRIMARY,
             font_handle: slate_text::FontHandle::default(),
             x_advance_lpx: adv,
-            x_offset_lpx: 0.0,
-            y_offset_lpx: 0.0,
+            position_lpx: [i as f32 * adv, 0.0],
             cluster: b as u32,
         })
         .collect();

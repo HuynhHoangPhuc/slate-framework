@@ -100,8 +100,7 @@ mod tests {
             font_id: FontId::PRIMARY,
             font_handle: crate::FontHandle::default(),
             x_advance_lpx: adv,
-            x_offset_lpx: 0.0,
-            y_offset_lpx: 0.0,
+            position_lpx: [0.0, 0.0],
             cluster,
         }
     }

@@ -69,20 +69,22 @@ impl TextBackend for MockBackend {
 
     fn shape_line(&self, font: &Self::Font, text: &str) -> Result<ShapedLine, TextError> {
         // Each non-space char is 10 lpx, space is 5 lpx
+        let mut pen = 0.0f32;
         let glyphs: Vec<ShapedGlyph> = text
             .chars()
             .enumerate()
             .map(|(i, c)| {
                 let advance = if c == ' ' { 5.0 } else { 10.0 };
-                ShapedGlyph {
+                let g = ShapedGlyph {
                     glyph_id: i as u32,
                     font_id: FontId::PRIMARY,
                     font_handle: Default::default(),
                     x_advance_lpx: advance,
-                    x_offset_lpx: 0.0,
-                    y_offset_lpx: 0.0,
+                    position_lpx: [pen, 0.0],
                     cluster: 0,
-                }
+                };
+                pen += advance;
+                g
             })
             .collect();
         let width: f32 = glyphs.iter().map(|g| g.x_advance_lpx).sum();

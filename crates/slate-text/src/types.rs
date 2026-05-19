@@ -48,10 +48,19 @@ pub struct ShapedGlyph {
     pub font_handle: crate::FontHandle,
     /// Horizontal advance to next glyph in logical pixels.
     pub x_advance_lpx: f32,
-    /// Horizontal offset from pen position in logical pixels.
-    pub x_offset_lpx: f32,
-    /// Vertical offset from baseline in logical pixels.
-    pub y_offset_lpx: f32,
+    /// Absolute glyph position `[x, y]` in logical pixels, relative to the
+    /// line origin (line origin = pen at baseline at the start of the line).
+    ///
+    /// `position_lpx[0]` is the X pen position the glyph should be painted at
+    /// (cumulative — already includes all preceding advances and any per-glyph
+    /// nudge from GPOS / combining marks). `position_lpx[1]` is the baseline-
+    /// relative Y, typically 0.0 except for vertically-shifted glyphs.
+    ///
+    /// This matches CoreText's `CTRunGetPositions` semantic directly; the
+    /// DirectWrite adapter accumulates per-glyph advances + `glyphOffsets` into
+    /// the same absolute form. Renderers paint at
+    /// `baseline_lpx + position_lpx` without maintaining a pen accumulator.
+    pub position_lpx: [f32; 2],
     /// UTF-8 byte offset into the source string for the leading character of
     /// the cluster this glyph belongs to (HarfBuzz convention). Glyphs in the
     /// same cluster share a value. For both LTR and RTL runs the value is the
