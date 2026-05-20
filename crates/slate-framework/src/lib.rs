@@ -89,7 +89,8 @@ pub mod reactive {
 pub use context::{LayoutCtx, PaintCtx, PrepaintCtx};
 pub use element::{AnyElement, Element, IntoElement};
 pub use elements::{
-    Div, Image, MAX_IMAGE_DIM, Text, TextAlign, TextField, TextFieldStyle, TextWrap,
+    Div, Image, MAX_IMAGE_DIM, Text, TextAlign, TextArea, TextAreaStyle, TextField, TextFieldStyle,
+    TextWrap,
 };
 pub use executor::{BackgroundExecutor, Executor, ForegroundExecutor, RedrawRequester};
 pub use focus::{FocusRegistry, FocusableEntry};

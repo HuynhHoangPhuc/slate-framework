@@ -29,6 +29,7 @@ pub mod font_handle;
 pub mod glyph_cache;
 pub mod glyph_geometry;
 pub mod line_layout_cache;
+pub mod multiline;
 pub mod paragraph;
 pub mod platform;
 pub mod run_builder;
@@ -44,6 +45,9 @@ pub use font_handle::FontHandle;
 pub use glyph_cache::GlyphCache;
 pub use glyph_geometry::{byte_at_pixel_x, pixel_x_at_byte};
 pub use line_layout_cache::{LineLayoutCache, hash_text};
+pub use multiline::{
+    MultilineLayout, ShapedDocument, ShapedParagraph, VisualLine, shape_document, wrap_document,
+};
 pub use paragraph::{
     ShapedWord, compute_alignment_offset, greedy_wrap, shape_words, truncate_with_ellipsis,
     wrap_shaped_words,

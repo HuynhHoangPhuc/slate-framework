@@ -140,6 +140,17 @@ pub struct ImeState {
     /// one-time guard for `seed_undo_baseline`: `register` is get-or-insert and
     /// its `dirty` flag is registry-wide, so it cannot gate per-element seeding.
     pub undo_seeded: bool,
+    // ----- Multi-line (TextArea) state — `None`/unused on the single-line path -----
+    /// Sticky horizontal target for vertical caret motion (up/down). Set when a
+    /// non-vertical motion moves the caret, consumed by up/down so a run of
+    /// vertical moves tracks a single column. `None` on the single-line path.
+    /// (Wired in a later phase; carried here so multi-line state lives in one
+    /// struct.)
+    pub desired_x: Option<f32>,
+    /// Most recent multi-line layout, cached during paint so mouse/key handlers
+    /// can map bytes↔(line, x) without re-shaping. `None` on the single-line
+    /// path (TextField uses `last_shaped` instead).
+    pub last_layout: Option<Rc<slate_text::MultilineLayout>>,
 }
 
 impl ImeState {

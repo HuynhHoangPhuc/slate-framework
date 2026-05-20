@@ -122,6 +122,17 @@ impl TextSystem {
         slate_text::shape_words(&self.backend, &font.inner, text)
     }
 
+    /// Shape `text` into a byte-aware multi-line document (split on hard `\n`,
+    /// each word shaped once). Fit to any width with [`slate_text::wrap_document`]
+    /// at zero further shaping cost — the multi-line analogue of [`Self::shape_words`].
+    pub fn shape_document(
+        &self,
+        font: &PlatformFont,
+        text: &str,
+    ) -> Result<slate_text::ShapedDocument, TextError> {
+        slate_text::shape_document(&self.backend, &font.inner, text)
+    }
+
     /// Measure text dimensions without rasterizing.
     ///
     /// Returns (width, height) in logical pixels.

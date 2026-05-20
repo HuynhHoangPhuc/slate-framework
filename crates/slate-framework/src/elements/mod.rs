@@ -11,10 +11,12 @@
 pub mod div;
 pub mod image;
 pub mod text;
+pub mod text_area;
 pub mod text_edit;
 pub mod text_field;
 
 pub use div::Div;
 pub use image::{Image, MAX_IMAGE_DIM};
 pub use text::{Text, TextAlign, TextWrap};
+pub use text_area::{TextArea, TextAreaStyle};
 pub use text_field::{TextField, TextFieldStyle};

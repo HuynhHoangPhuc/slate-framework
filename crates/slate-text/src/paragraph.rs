@@ -30,6 +30,11 @@ pub struct ShapedWord {
     pub ascent_lpx: f32,
     /// Descent of the word (drives line descent when first on a line).
     pub descent_lpx: f32,
+    /// UTF-8 byte span of the word in the original `text` passed to
+    /// [`shape_words`]. Lets the multi-line wrap recover per-visual-line byte
+    /// ranges (which `wrap_shaped_words` alone cannot, since it works on the
+    /// pre-shaped glyph runs with no source pointer).
+    pub source_byte_range: std::ops::Range<usize>,
 }
 
 /// Shape every whitespace-delimited word in `text` exactly once.
@@ -52,18 +57,41 @@ pub fn shape_words<B: TextBackend>(
         .map(|s| s.width_lpx)
         .unwrap_or(0.0);
 
+    let words = shape_words_in(backend, font, text, 0)?;
+    Ok((words, space_width))
+}
+
+/// Shape the whitespace-delimited words in `segment`, recording each word's
+/// byte span as an absolute offset into the larger document (`segment_start` is
+/// the byte offset of `segment` within that document; pass 0 when `segment` is
+/// the whole text).
+///
+/// Shared by [`shape_words`] (single segment, offset 0) and the multi-line
+/// paragraph shaper, which calls it once per `\n`-delimited paragraph so word
+/// ranges stay absolute across the document.
+pub(crate) fn shape_words_in<B: TextBackend>(
+    backend: &B,
+    font: &B::Font,
+    segment: &str,
+    segment_start: usize,
+) -> Result<Vec<ShapedWord>, TextError> {
+    let base = segment.as_ptr() as usize;
     let mut words = Vec::new();
-    for word in text.split_whitespace() {
+    for word in segment.split_whitespace() {
         let shaped = backend.shape_line(font, word)?;
+        // `word` is a subslice of `segment`; its pointer offset is the local
+        // byte position, which we lift to an absolute document offset.
+        let local = word.as_ptr() as usize - base;
+        let start = segment_start + local;
         words.push(ShapedWord {
             glyphs: shaped.glyphs,
             advance_width_lpx: shaped.width_lpx,
             ascent_lpx: shaped.ascent_lpx,
             descent_lpx: shaped.descent_lpx,
+            source_byte_range: start..start + word.len(),
         });
     }
-
-    Ok((words, space_width))
+    Ok(words)
 }
 
 /// Fit pre-shaped words into lines by greedy first-fit — pure width arithmetic,
