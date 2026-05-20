@@ -27,6 +27,7 @@ use std::time::Instant;
 
 use slate_platform::{PhysicalRect, WindowId};
 
+use crate::elements::text_field::undo::UndoStack;
 use crate::types::ElementId;
 
 // ---------------------------------------------------------------------------
@@ -126,9 +127,33 @@ pub struct ImeState {
     /// Caret blink state. Reset by handlers on caret-affecting input; advanced
     /// by `paint()` while focused.
     pub blink: BlinkState,
+    /// Undo / redo history for this element. Lives here (not on the per-frame
+    /// `TextField`) so it survives the `value.set()`-driven re-render between
+    /// every keystroke — `register` returns the same `Rc` each frame, so the
+    /// history persists until the element unmounts (`prune_missing`).
+    ///
+    /// `UndoStack` is opaque to external crates (private fields, `pub(crate)`
+    /// methods), so this `pub` field stays externally inert — it only keeps
+    /// `ImeState` constructible by struct literal as before.
+    pub undo: UndoStack,
+    /// Whether the undo baseline has been seeded from the initial value. The
+    /// one-time guard for `seed_undo_baseline`: `register` is get-or-insert and
+    /// its `dirty` flag is registry-wide, so it cannot gate per-element seeding.
+    pub undo_seeded: bool,
 }
 
 impl ImeState {
+    /// Seed the undo baseline from the current `text` / `caret`, exactly once
+    /// per element. Re-running is a no-op once seeded, so the per-frame
+    /// `TextField::prepaint` call never resets a stack that already holds
+    /// recorded edits (re-seeding would reintroduce the lost-history bug).
+    pub fn seed_undo_baseline(&mut self) {
+        if !self.undo_seeded {
+            self.undo = UndoStack::with_baseline(self.text.clone(), self.caret);
+            self.undo_seeded = true;
+        }
+    }
+
     /// Answer `WindowImeDelegate::ime_text`. Returns the substring of `text`
     /// inside `range`, or `None` if `range` is out of bounds or splits a
     /// UTF-8 codepoint.
@@ -411,6 +436,62 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(s.answer_selected_range(), Some(2..2));
+    }
+
+    #[test]
+    fn undo_history_survives_re_registration() {
+        use crate::elements::text_field::undo::{EditOp, EditSnapshot};
+        let mut r = ImeRegistry::new();
+        let s1 = r.register(id(1));
+        {
+            let mut state = s1.borrow_mut();
+            state.text = "a".to_string();
+            state.caret = 1;
+            state.undo.record_edit(
+                EditOp::Insert,
+                EditSnapshot {
+                    text: "a".to_string(),
+                    caret: 1,
+                    anchor: None,
+                },
+            );
+        }
+        // Re-register the same id (what every render does). The registry hands
+        // back the same Rc, so the recorded edit must still be reachable —
+        // the original bug was a fresh stack on every frame.
+        let s2 = r.register(id(1));
+        assert!(Rc::ptr_eq(&s1, &s2));
+        let restored = s2.borrow_mut().undo.undo();
+        assert_eq!(restored.map(|s| s.text), Some(String::new()));
+    }
+
+    #[test]
+    fn seed_undo_baseline_is_one_time() {
+        use crate::elements::text_field::undo::{EditOp, EditSnapshot};
+        let mut state = ImeState {
+            text: "init".to_string(),
+            caret: 4,
+            ..Default::default()
+        };
+        state.seed_undo_baseline();
+        assert!(state.undo_seeded);
+        // Record an edit, then re-run seeding (simulating a later frame). The
+        // guard must keep the stack intact — re-seeding would drop the history.
+        state.undo.record_edit(
+            EditOp::Insert,
+            EditSnapshot {
+                text: "initX".to_string(),
+                caret: 5,
+                anchor: None,
+            },
+        );
+        state.seed_undo_baseline();
+        let restored = state.undo.undo();
+        assert_eq!(
+            restored.map(|s| s.text),
+            Some("init".to_string()),
+            "second seed must not reset a stack with recorded edits"
+        );
     }
 
     #[test]

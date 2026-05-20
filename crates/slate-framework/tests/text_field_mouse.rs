@@ -14,7 +14,7 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
-use slate_framework::app_state::AppState;
+use slate_framework::app_state::{AppSignal, AppState};
 use slate_framework::element::AnyElement;
 use slate_framework::elements::Div;
 use slate_framework::event::{EventCtx, Modifiers, MouseButton, MouseEvent, MouseHandlers};
@@ -373,4 +373,41 @@ fn mouse_down_during_preedit_is_noop() {
         "no anchor seeded during preedit"
     );
     assert!(!s.dragging, "no drag started during preedit");
+}
+
+#[test]
+fn mouse_move_during_capture_requests_redraw() {
+    let state = make_state();
+    let elem_id = id(40);
+    let ime_rc = wire_textfield(&state, elem_id, bounds(0.0, 0.0, 200.0, 20.0));
+    {
+        let mut s = ime_rc.borrow_mut();
+        s.text = "ABCD".into();
+        s.last_shaped = Some(Rc::new(synth_shaped("ABCD", 10.0)));
+        s.paint_origin_x = 0.0;
+    }
+    // mouse_down inside the hit region sets the capture target (button held).
+    state.dispatch_mouse_down_for_test((5.0, 5.0), MouseButton::Left, Modifiers::default());
+    // A bare move while captured must request a redraw so the render-pass
+    // flush_coalesced_move runs and the drag extends the selection. Without
+    // this signal, Windows only redraws on the 530 ms blink and the drag stalls.
+    assert_eq!(
+        state.dispatch_mouse_moved_raw_for_test((35.0, 5.0)),
+        AppSignal::RequestRedraw,
+        "drag-in-progress move must request a redraw"
+    );
+}
+
+#[test]
+fn mouse_move_without_capture_is_none() {
+    let state = make_state();
+    let elem_id = id(41);
+    wire_textfield(&state, elem_id, bounds(0.0, 0.0, 200.0, 20.0));
+    // No prior mouse_down → no capture target → idle hover must stay silent
+    // (returning RequestRedraw here would cause a redraw-storm on every move).
+    assert_eq!(
+        state.dispatch_mouse_moved_raw_for_test((35.0, 5.0)),
+        AppSignal::None,
+        "idle hover (no capture) must not request a redraw"
+    );
 }

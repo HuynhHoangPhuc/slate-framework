@@ -19,7 +19,7 @@ use crate::event::{
 use crate::ime::{ImeState, Preedit};
 
 use super::grapheme::{insert_text_at, next_grapheme_boundary, prev_grapheme_boundary};
-use super::{EditOp, EditSnapshot, UndoStackHandle};
+use super::undo::{EditOp, EditSnapshot};
 
 /// Return the active selection range `(lo, hi)` if non-empty.
 fn selection_range(state: &ImeState) -> Option<(usize, usize)> {
@@ -41,31 +41,18 @@ fn apply_snapshot(state: &mut ImeState, snap: &EditSnapshot) {
     reset_blink(state);
 }
 
-/// Record an edit on the undo stack. `state` must be the **post-mutation**
-/// state. The coalesce policy in `UndoStack::record_edit` decides whether to
-/// push a new entry or overwrite the head. Lock contention is non-existent in
-/// practice — handlers always run on the main thread — so a poisoned mutex is
-/// the only failure mode and is silently ignored to keep typing alive.
-fn record_edit(undo: &UndoStackHandle, op: EditOp, state: &ImeState) {
-    if let Ok(mut stack) = undo.lock() {
-        stack.record_edit(
-            op,
-            EditSnapshot {
-                text: state.text.clone(),
-                caret: state.caret,
-                anchor: state.selection_anchor,
-            },
-        );
-    }
-}
-
-/// Mark the undo stack as having seen a caret-moving event that did not edit
-/// text. Used by Arrow / Home / End / mouse handlers to force the next edit
-/// to open a fresh undo step (coalesce trigger 2).
-fn mark_motion(undo: &UndoStackHandle) {
-    if let Ok(mut stack) = undo.lock() {
-        stack.mark_motion();
-    }
+/// Record an edit on the element's undo stack. `state` must be the
+/// **post-mutation** state — the snapshot is built from it and handed to the
+/// coalesce policy in `UndoStack::record_edit`, which decides whether to push a
+/// new entry or overwrite the head. Operates on the live `ImeState` borrow, so
+/// undo history persists across the per-frame TextField rebuild.
+fn record_edit(state: &mut ImeState, op: EditOp) {
+    let snap = EditSnapshot {
+        text: state.text.clone(),
+        caret: state.caret,
+        anchor: state.selection_anchor,
+    };
+    state.undo.record_edit(op, snap);
 }
 
 /// Reset the caret blink so the caret is visible immediately after a
@@ -114,10 +101,7 @@ enum MotionDir {
 /// Handles: Backspace, ←, →, Home, End (with and without Shift).
 /// Ignores keys while IME preedit is active (IME owns those keystrokes).
 /// Does NOT consume Tab / Enter — they bubble to App level.
-pub(super) fn build_key_down_handler(
-    value: Signal<String>,
-    undo: UndoStackHandle,
-) -> ElementKeyHandler {
+pub(super) fn build_key_down_handler(value: Signal<String>) -> ElementKeyHandler {
     Arc::new(move |ev: &KeyEvent, cx: &mut EventCtx| {
         let id = match cx.element_id() {
             Some(i) => i,
@@ -160,7 +144,7 @@ pub(super) fn build_key_down_handler(
                         let new_text = {
                             let mut state = state_rc.borrow_mut();
                             delete_selection(&mut state);
-                            record_edit(&undo, EditOp::Discrete, &state);
+                            record_edit(&mut state, EditOp::Discrete);
                             reset_blink(&mut state);
                             state.text.clone()
                         };
@@ -193,7 +177,7 @@ pub(super) fn build_key_down_handler(
                         let old_caret = state.caret;
                         let new_caret = insert_text_at(&mut state.text, old_caret, &cleaned);
                         state.caret = new_caret;
-                        record_edit(&undo, EditOp::Discrete, &state);
+                        record_edit(&mut state, EditOp::Discrete);
                         reset_blink(&mut state);
                         state.text.clone()
                     };
@@ -207,17 +191,18 @@ pub(super) fn build_key_down_handler(
                     let is_redo = shift;
                     #[cfg(not(target_os = "macos"))]
                     let is_redo = false;
-                    let restored = if let Ok(mut stack) = undo.lock() {
-                        if is_redo { stack.redo() } else { stack.undo() }
-                    } else {
-                        None
-                    };
                     let _ = shift; // used on macOS only
-                    if let Some(snap) = restored {
-                        {
-                            let mut state = state_rc.borrow_mut();
-                            apply_snapshot(&mut state, &snap);
+                    // One borrow: walk the stack and apply the restored snapshot
+                    // inside it; `value.set` fires after the borrow drops.
+                    let restored = {
+                        let mut state = state_rc.borrow_mut();
+                        let snap = if is_redo { state.undo.redo() } else { state.undo.undo() };
+                        if let Some(ref s) = snap {
+                            apply_snapshot(&mut state, s);
                         }
+                        snap
+                    };
+                    if let Some(snap) = restored {
                         value.set(snap.text);
                     }
                     cx.stop_propagation();
@@ -226,12 +211,15 @@ pub(super) fn build_key_down_handler(
                 // Redo on Windows/Linux: Ctrl+Y (without shift).
                 #[cfg(not(target_os = "macos"))]
                 KeyCode::KeyY if !shift => {
-                    let restored = undo.lock().ok().and_then(|mut s| s.redo());
-                    if let Some(snap) = restored {
-                        {
-                            let mut state = state_rc.borrow_mut();
-                            apply_snapshot(&mut state, &snap);
+                    let restored = {
+                        let mut state = state_rc.borrow_mut();
+                        let snap = state.undo.redo();
+                        if let Some(ref s) = snap {
+                            apply_snapshot(&mut state, s);
                         }
+                        snap
+                    };
+                    if let Some(snap) = restored {
                         value.set(snap.text);
                     }
                     cx.stop_propagation();
@@ -259,7 +247,7 @@ pub(super) fn build_key_down_handler(
                 );
                 if state.selection_anchor.is_some_and(|a| a != state.caret) {
                     delete_selection(&mut state);
-                    record_edit(&undo, EditOp::Discrete, &state);
+                    record_edit(&mut state, EditOp::Discrete);
                     reset_blink(&mut state);
                     cx.stop_propagation();
                     Some(state.text.clone())
@@ -270,7 +258,7 @@ pub(super) fn build_key_down_handler(
                     if new_caret < old_caret {
                         state.text.replace_range(new_caret..old_caret, "");
                         state.caret = new_caret;
-                        record_edit(&undo, EditOp::Backspace, &state);
+                        record_edit(&mut state, EditOp::Backspace);
                         reset_blink(&mut state);
                         cx.stop_propagation();
                         Some(state.text.clone())
@@ -286,8 +274,8 @@ pub(super) fn build_key_down_handler(
                         s.caret = prev_grapheme_boundary(&s.text, s.caret);
                     });
                     reset_blink(&mut state);
+                    state.undo.mark_motion();
                 }
-                mark_motion(&undo);
                 cx.stop_propagation();
                 None
             }
@@ -298,8 +286,8 @@ pub(super) fn build_key_down_handler(
                         s.caret = next_grapheme_boundary(&s.text, s.caret);
                     });
                     reset_blink(&mut state);
+                    state.undo.mark_motion();
                 }
-                mark_motion(&undo);
                 cx.stop_propagation();
                 None
             }
@@ -308,8 +296,8 @@ pub(super) fn build_key_down_handler(
                     let mut state = state_rc.borrow_mut();
                     apply_motion(&mut state, MotionDir::Left, shift, |s| s.caret = 0);
                     reset_blink(&mut state);
+                    state.undo.mark_motion();
                 }
-                mark_motion(&undo);
                 cx.stop_propagation();
                 None
             }
@@ -320,8 +308,8 @@ pub(super) fn build_key_down_handler(
                         s.caret = s.text.len()
                     });
                     reset_blink(&mut state);
+                    state.undo.mark_motion();
                 }
-                mark_motion(&undo);
                 cx.stop_propagation();
                 None
             }
@@ -375,10 +363,7 @@ fn apply_motion(
 ///
 /// Inserts composed text at the caret for non-IME ASCII input.
 /// Ignored when IME preedit is active.
-pub(super) fn build_text_input_handler(
-    value: Signal<String>,
-    undo: UndoStackHandle,
-) -> ElementTextInputHandler {
+pub(super) fn build_text_input_handler(value: Signal<String>) -> ElementTextInputHandler {
     Arc::new(move |ev: &TextInputEvent, cx: &mut EventCtx| {
         let id = match cx.element_id() {
             Some(i) => i,
@@ -416,7 +401,7 @@ pub(super) fn build_text_input_handler(
             } else {
                 EditOp::Insert
             };
-            record_edit(&undo, op, &state);
+            record_edit(&mut state, op);
             reset_blink(&mut state);
             state.text.clone()
         };
@@ -436,7 +421,7 @@ pub(super) fn build_text_input_handler(
 /// IME guard: during an active preedit composition, mouse interaction is a
 /// no-op — platforms expect `selectedRange == markedRange` while composing,
 /// and richer interaction is deferred to a later phase.
-pub(super) fn build_mouse_down_handler(undo: UndoStackHandle) -> MouseHandler {
+pub(super) fn build_mouse_down_handler() -> MouseHandler {
     Arc::new(move |ev: &MouseEvent, cx: &mut EventCtx| {
         let id = match cx.element_id() {
             Some(i) => i,
@@ -466,8 +451,8 @@ pub(super) fn build_mouse_down_handler(undo: UndoStackHandle) -> MouseHandler {
             state.selection_anchor = Some(byte);
             state.dragging = true;
             reset_blink(&mut state);
+            state.undo.mark_motion();
         }
-        mark_motion(&undo);
         cx.stop_propagation();
     })
 }
@@ -574,10 +559,7 @@ pub(super) fn build_ime_preedit_handler() -> ElementImePreeditHandler {
 ///
 /// Empty `text` → clear preedit only (macOS `unmarkText`).
 /// Non-empty `text` → insert at caret, advance caret, clear preedit, fire `value.set`.
-pub(super) fn build_ime_commit_handler(
-    value: Signal<String>,
-    undo: UndoStackHandle,
-) -> ElementImeCommitHandler {
+pub(super) fn build_ime_commit_handler(value: Signal<String>) -> ElementImeCommitHandler {
     Arc::new(move |ev: &ImeCommitEvent, cx: &mut EventCtx| {
         let id = match cx.element_id() {
             Some(i) => i,
@@ -605,7 +587,7 @@ pub(super) fn build_ime_commit_handler(
                 let new_caret = insert_text_at(&mut state.text, old_caret, &ev.text);
                 state.caret = new_caret;
                 state.preedit = None;
-                record_edit(&undo, EditOp::Discrete, &state);
+                record_edit(&mut state, EditOp::Discrete);
                 reset_blink(&mut state);
                 Some(state.text.clone())
             }

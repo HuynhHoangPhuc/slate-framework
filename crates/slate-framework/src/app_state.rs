@@ -1531,7 +1531,16 @@ impl<V: View> AppState<V> {
 
         *self.coalesced_move_pos.borrow_mut() = Some(position);
         *self.last_mouse_pos.borrow_mut() = Some(position);
-        AppSignal::None
+        // A move while a capture target is set means a button is held (drag in
+        // progress). Request a redraw so the render pass runs
+        // `flush_coalesced_move`, which dispatches the coalesced move to the
+        // drag handler. Idle hover (no capture) stays silent to avoid a
+        // redraw-storm on every pointer move.
+        if captured.is_some() {
+            AppSignal::RequestRedraw
+        } else {
+            AppSignal::None
+        }
     }
 
     /// Dispatch MouseScrolled event.
@@ -2773,6 +2782,15 @@ impl<V: View> AppState<V> {
         let _ = self.dispatch_mouse_moved(position, Modifiers::default());
         self.flush_coalesced_move();
         AppSignal::RequestRedraw
+    }
+
+    /// Dispatch a synthetic `MouseMoved` and return its **raw** `AppSignal`
+    /// without the masking flush. Test-only — lets tests assert whether a bare
+    /// move requests a redraw (drag-in-progress) versus stays silent (idle
+    /// hover), which `dispatch_mouse_move_for_test` hides by hardcoding
+    /// `RequestRedraw`.
+    pub fn dispatch_mouse_moved_raw_for_test(&self, position: (f32, f32)) -> AppSignal {
+        self.dispatch_mouse_moved(position, Modifiers::default())
     }
 
     /// Dispatch a synthetic `MouseUp` at `position`. Test-only.
