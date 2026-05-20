@@ -251,6 +251,28 @@ fn ime_commit_inserts_at_caret_mid_document() {
 }
 
 #[test]
+fn enter_inserts_exactly_one_newline() {
+    // Win32 dispatches both KeyDown(Enter) and a subsequent TextInput("\n") for
+    // the same physical keystroke. The text-input handler must drop the
+    // bare-newline payload so only the KeyDown path's "\n" insertion lands.
+    let h = harness();
+    h.enter();
+    h.typ("\n");
+    assert_eq!(h.text(), "\n", "one Enter press yields exactly one newline");
+    assert_eq!(h.caret(), 1);
+}
+
+#[test]
+fn enter_inserts_exactly_one_newline_carriage_return() {
+    // Some platforms normalize Enter to "\r" before delivering as text input.
+    let h = harness();
+    h.enter();
+    h.typ("\r");
+    assert_eq!(h.text(), "\n", "bare \\r from text input is also filtered");
+    assert_eq!(h.caret(), 1);
+}
+
+#[test]
 fn end_key_after_typing_is_visual_line_relative() {
     let h = harness();
     h.typ("a");

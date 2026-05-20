@@ -171,6 +171,14 @@ pub(super) fn build_text_input_handler(value: Signal<String>) -> ElementTextInpu
             None => return,
         };
 
+        // Drop bare newline payloads: hard line breaks come from KeyDown(Enter),
+        // which already inserted "\n". Win32 follows WM_KEYDOWN(VK_RETURN) with a
+        // WM_CHAR carrying "\n", and stopping the key event does not suppress the
+        // subsequent text input. Paste uses the clipboard path, not text input.
+        if ev.text == "\n" || ev.text == "\r" {
+            return;
+        }
+
         {
             let state = state_rc.borrow();
             if state.preedit.is_some() {
