@@ -87,6 +87,11 @@ impl Default for TextStyle {
 pub struct TextLayoutState {
     /// Pre-shaped text lines (one for single-line, multiple for wrapped).
     pub(crate) lines: Vec<ShapedLine>,
+    /// Words shaped once at layout, fit to width arithmetically at prepaint so
+    /// re-wrap on resize does no re-shaping.
+    shaped_words: Vec<slate_text::ShapedWord>,
+    /// Inter-word space advance paired with `shaped_words`.
+    space_width: f32,
     /// Line height in logical pixels.
     line_height: f32,
     /// Intrinsic width of full content as single line (for wrap comparison).
@@ -101,6 +106,8 @@ impl TextLayoutState {
     fn empty(node_id: taffy::NodeId) -> Self {
         Self {
             lines: Vec::new(),
+            shaped_words: Vec::new(),
+            space_width: 0.0,
             line_height: 0.0,
             intrinsic_width: 0.0,
             node_id,
@@ -315,8 +322,24 @@ impl Element for Text {
             log::error!("Text: failed to set node context: {e}; layout proceeds without context");
         }
 
+        // Shape each word once for cached arithmetic wrapping at prepaint.
+        // Re-wrap on resize then reuses these without re-shaping. Only needed
+        // when wrapping is enabled.
+        let (shaped_words, space_width) = if self.style.wrap != TextWrap::None {
+            cx.text
+                .shape_words(font, &self.content)
+                .unwrap_or_else(|e| {
+                    log::warn!("Text word shaping failed: {e}; wrap will not re-fit");
+                    (Vec::new(), 0.0)
+                })
+        } else {
+            (Vec::new(), 0.0)
+        };
+
         let state = TextLayoutState {
             lines,
+            shaped_words,
+            space_width,
             line_height,
             intrinsic_width: width,
             node_id,
@@ -349,63 +372,32 @@ impl Element for Text {
         } else {
             // Cache miss: do normal shaping/wrapping, then cache the result
 
-            // TextWrap::Wrap v1: ASCII whitespace split + greedy fit.
+            // TextWrap::Wrap v1: ASCII whitespace split + greedy fit over
+            // words shaped once at layout (see request_layout). Fitting here is
+            // pure width arithmetic — re-wrap on resize does zero re-shaping.
             // Limitations:
             //   - No UAX#14 line-break (Asian scripts, hyphens, em-dashes break wrong)
             //   - No BiDi reordering
             //   - No hyphenation, no overflow-wrap-anywhere
-            //   - Per-word reshape (2x cost vs caching advance widths)
+            //   - Per-word shaping drops cross-word kerning across the space
             //   - Whitespace-only content: keeps original single-line shape (harmless)
-            // Deferred to v1.1: word-width caching, WrapBreakWord, UAX#14.
+            // Deferred: WrapBreakWord (char-level breaking), UAX#14.
             if self.style.wrap == TextWrap::WrapBreakWord {
                 log::debug!("TextWrap::WrapBreakWord not implemented in v1; falling back to Wrap");
             }
             if self.style.wrap != TextWrap::None
                 && bounds.size.width < layout_state.intrinsic_width
                 && bounds.size.width > 0.0
-                && let Some(font) = &self.font
+                && !layout_state.shaped_words.is_empty()
             {
-                let max_width = bounds.size.width;
-                let words: Vec<&str> = self.content.split_whitespace().collect();
-                let mut lines: Vec<ShapedLine> = Vec::new();
-                let mut current_line = String::new();
-
-                for word in words {
-                    let candidate = if current_line.is_empty() {
-                        word.to_string()
-                    } else {
-                        format!("{} {}", current_line, word)
-                    };
-
-                    // Shape candidate to check width
-                    match cx.text.shape_line(font, &candidate) {
-                        Ok(shaped) if shaped.width_lpx <= max_width || current_line.is_empty() => {
-                            // Fits, or first word on line (must accept even if overflows)
-                            current_line = candidate;
-                        }
-                        Ok(_) => {
-                            // Doesn't fit; commit current line, start new with this word
-                            if let Ok(shaped) = cx.text.shape_line(font, &current_line) {
-                                lines.push(shaped);
-                            }
-                            current_line = word.to_string();
-                        }
-                        Err(e) => {
-                            log::warn!("Text wrap shaping failed: {e}; continuing with partial");
-                            current_line = candidate;
-                        }
-                    }
-                }
-
-                // Push final line
-                if !current_line.is_empty()
-                    && let Ok(shaped) = cx.text.shape_line(font, &current_line)
-                {
-                    lines.push(shaped);
-                }
-
-                if !lines.is_empty() {
-                    layout_state.lines = lines;
+                let wrapped = slate_text::wrap_shaped_words(
+                    &layout_state.shaped_words,
+                    layout_state.space_width,
+                    layout_state.line_height,
+                    bounds.size.width,
+                );
+                if !wrapped.is_empty() {
+                    layout_state.lines = wrapped;
                 }
             }
 

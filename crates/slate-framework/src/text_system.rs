@@ -109,6 +109,19 @@ impl TextSystem {
         self.backend.shape_line(&font.inner, text)
     }
 
+    /// Shape each whitespace-delimited word once for cached wrapping.
+    ///
+    /// Returns the pre-shaped words plus the inter-word space advance. Fit them
+    /// to any width with [`slate_text::wrap_shaped_words`] — re-fitting on a
+    /// resize then costs zero shaping calls.
+    pub fn shape_words(
+        &self,
+        font: &PlatformFont,
+        text: &str,
+    ) -> Result<(Vec<slate_text::ShapedWord>, f32), TextError> {
+        slate_text::shape_words(&self.backend, &font.inner, text)
+    }
+
     /// Measure text dimensions without rasterizing.
     ///
     /// Returns (width, height) in logical pixels.

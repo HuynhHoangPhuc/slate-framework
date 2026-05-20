@@ -44,7 +44,10 @@ pub use font_handle::FontHandle;
 pub use glyph_cache::GlyphCache;
 pub use glyph_geometry::{byte_at_pixel_x, pixel_x_at_byte};
 pub use line_layout_cache::{LineLayoutCache, hash_text};
-pub use paragraph::{compute_alignment_offset, greedy_wrap, truncate_with_ellipsis};
+pub use paragraph::{
+    ShapedWord, compute_alignment_offset, greedy_wrap, shape_words, truncate_with_ellipsis,
+    wrap_shaped_words,
+};
 pub use run_builder::TextRunBuilder;
 pub use types::{
     CachedGlyph, FontDescriptor, FontId, FontMetrics, FontStyle, GlyphBitmap, GlyphBounds,

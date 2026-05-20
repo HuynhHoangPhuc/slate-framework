@@ -6,7 +6,11 @@ use slate_text::types::{
     FontDescriptor, FontId, FontMetrics, GlyphBitmap, GlyphBounds, ShapedGlyph, ShapedLine,
 };
 use slate_text::{Font, TextBackend};
-use slate_text::{TextAlignment, compute_alignment_offset, greedy_wrap, truncate_with_ellipsis};
+use slate_text::{
+    TextAlignment, compute_alignment_offset, greedy_wrap, shape_words, truncate_with_ellipsis,
+    wrap_shaped_words,
+};
+use std::cell::Cell;
 
 /// Mock font for testing.
 struct MockFont {
@@ -126,6 +130,143 @@ impl TextBackend for MockBackend {
 
     fn enumerate_system_fonts(&self) -> Result<Vec<FontDescriptor>, TextError> {
         Ok(vec![])
+    }
+}
+
+/// `MockBackend` variant that counts `shape_line` calls via interior
+/// mutability (`shape_line` takes `&self`). Used to prove that re-fitting
+/// pre-shaped words to a new width triggers no additional shaping.
+struct CountingBackend {
+    shape_calls: Cell<usize>,
+}
+
+impl CountingBackend {
+    fn new() -> Self {
+        Self {
+            shape_calls: Cell::new(0),
+        }
+    }
+    fn calls(&self) -> usize {
+        self.shape_calls.get()
+    }
+}
+
+impl TextBackend for CountingBackend {
+    type Font = MockFont;
+
+    fn load_font(
+        &mut self,
+        _family: &str,
+        _size_lpx: f32,
+        _scale: f32,
+    ) -> Result<Self::Font, TextError> {
+        MockBackend.load_font("mock", 16.0, 1.0)
+    }
+
+    fn load_font_from_bytes(
+        &mut self,
+        _bytes: &'static [u8],
+        _size_lpx: f32,
+        _scale: f32,
+    ) -> Result<Self::Font, TextError> {
+        self.load_font("mock", 16.0, 1.0)
+    }
+
+    fn shape_line(&self, font: &Self::Font, text: &str) -> Result<ShapedLine, TextError> {
+        self.shape_calls.set(self.shape_calls.get() + 1);
+        MockBackend.shape_line(font, text)
+    }
+
+    fn rasterize_glyph(
+        &self,
+        font: &Self::Font,
+        glyph_id: u32,
+        variant: u8,
+    ) -> Result<GlyphBitmap, TextError> {
+        MockBackend.rasterize_glyph(font, glyph_id, variant)
+    }
+
+    fn glyph_raster_bounds(
+        &self,
+        font: &Self::Font,
+        glyph_id: u32,
+    ) -> Result<GlyphBounds, TextError> {
+        MockBackend.glyph_raster_bounds(font, glyph_id)
+    }
+
+    fn enumerate_system_fonts(&self) -> Result<Vec<FontDescriptor>, TextError> {
+        Ok(vec![])
+    }
+}
+
+#[test]
+fn rewrap_at_new_width_does_no_reshaping() {
+    let mut backend = CountingBackend::new();
+    let font = backend.load_font("mock", 16.0, 1.0).unwrap();
+    let line_height = 18.0;
+
+    // Shape words once.
+    let (words, space_width) = shape_words(&backend, &font, "Hello world test again").unwrap();
+    let after_shape = backend.calls();
+    assert!(after_shape > 0, "shaping should call shape_line");
+
+    // Fit at width A — pure arithmetic, no shaping.
+    let lines_a = wrap_shaped_words(&words, space_width, line_height, 80.0);
+    assert_eq!(
+        backend.calls(),
+        after_shape,
+        "first wrap must add zero shape_line calls"
+    );
+
+    // Re-fit the SAME pre-shaped words at width B — still zero shaping.
+    let lines_b = wrap_shaped_words(&words, space_width, line_height, 40.0);
+    assert_eq!(
+        backend.calls(),
+        after_shape,
+        "re-wrap at a new width must add zero shape_line calls"
+    );
+
+    // Sanity: narrower width yields at least as many lines.
+    assert!(lines_b.len() >= lines_a.len());
+}
+
+#[test]
+fn arithmetic_wrap_matches_greedy_wrap() {
+    let mut backend = MockBackend;
+    let font = backend.load_font("mock", 16.0, 1.0).unwrap();
+    // greedy_wrap derives line_height from font metrics: 12 - (-4) + 2 = 18.
+    let line_height = 18.0;
+
+    for (text, width) in [
+        ("Hello world test", 80.0),
+        ("one two three", 50.0),
+        ("singleword", 200.0),
+        ("a b c d e f g", 35.0),
+        ("overflowingsingleword tiny", 30.0),
+    ] {
+        let reference = greedy_wrap(&backend, &font, text, width).unwrap();
+        let (words, space_width) = shape_words(&backend, &font, text).unwrap();
+        let arithmetic = wrap_shaped_words(&words, space_width, line_height, width);
+
+        assert_eq!(
+            arithmetic.len(),
+            reference.len(),
+            "line count mismatch for {text:?} @ {width}"
+        );
+        for (i, (a, r)) in arithmetic.iter().zip(reference.iter()).enumerate() {
+            assert!(
+                (a.width_lpx - r.width_lpx).abs() < 0.01,
+                "line {i} width mismatch for {text:?} @ {width}: {} vs {}",
+                a.width_lpx,
+                r.width_lpx
+            );
+            assert!(
+                (a.y_offset_lpx - r.y_offset_lpx).abs() < 0.01,
+                "line {i} y_offset mismatch for {text:?} @ {width}: {} vs {}",
+                a.y_offset_lpx,
+                r.y_offset_lpx
+            );
+        }
     }
 }
 

@@ -3,10 +3,151 @@
 //! Provides `greedy_wrap` for breaking text into wrapped lines,
 //! `compute_alignment_offset` for paint-time alignment, and
 //! `truncate_with_ellipsis` for single-line truncation.
+//!
+//! Wrapping is split into two stages so callers can re-fit to a new width
+//! without re-shaping: [`shape_words`] shapes each whitespace-delimited word
+//! exactly once (expensive, keyed on text+font), and [`wrap_shaped_words`]
+//! fits those pre-shaped words to a width by pure arithmetic (cheap, keyed on
+//! width). [`greedy_wrap`] is the convenience wrapper that does both.
 
 use crate::backend::{Font, TextBackend};
 use crate::error::TextError;
 use crate::types::{ShapedGlyph, ShapedLine, TextAlignment};
+
+/// A single whitespace-delimited word shaped in isolation.
+///
+/// `glyphs` carry word-origin-relative positions (`position_lpx[0]` starts at
+/// 0); [`wrap_shaped_words`] shifts them by the running line pen when placing
+/// the word. Produced by [`shape_words`], cached, and fit to any width with no
+/// further shaping.
+#[derive(Clone, Debug)]
+pub struct ShapedWord {
+    /// Glyphs with positions relative to the word origin (pen starts at 0).
+    pub glyphs: Vec<ShapedGlyph>,
+    /// Total advance width of the word in logical pixels.
+    pub advance_width_lpx: f32,
+    /// Ascent of the word (drives line ascent when first on a line).
+    pub ascent_lpx: f32,
+    /// Descent of the word (drives line descent when first on a line).
+    pub descent_lpx: f32,
+}
+
+/// Shape every whitespace-delimited word in `text` exactly once.
+///
+/// Returns the per-word shaping results plus the shared inter-word space
+/// advance (the space is shaped once). Pair with [`wrap_shaped_words`] to fit
+/// the words to any width with zero further shaping calls — so re-wrap on a
+/// resize is pure arithmetic.
+///
+/// Consecutive whitespace and newlines collapse (`split_whitespace`); empty or
+/// whitespace-only input yields an empty word list.
+pub fn shape_words<B: TextBackend>(
+    backend: &B,
+    font: &B::Font,
+    text: &str,
+) -> Result<(Vec<ShapedWord>, f32), TextError> {
+    // Shape a space once to get the inter-word advance (reused at every join).
+    let space_width = backend
+        .shape_line(font, " ")
+        .map(|s| s.width_lpx)
+        .unwrap_or(0.0);
+
+    let mut words = Vec::new();
+    for word in text.split_whitespace() {
+        let shaped = backend.shape_line(font, word)?;
+        words.push(ShapedWord {
+            glyphs: shaped.glyphs,
+            advance_width_lpx: shaped.width_lpx,
+            ascent_lpx: shaped.ascent_lpx,
+            descent_lpx: shaped.descent_lpx,
+        });
+    }
+
+    Ok((words, space_width))
+}
+
+/// Fit pre-shaped words into lines by greedy first-fit — pure width arithmetic,
+/// no shaping calls.
+///
+/// Glyphs are concatenated with a per-word pen offset (the same join logic as
+/// [`greedy_wrap`]); cross-word kerning across the space boundary is
+/// intentionally dropped (see module docs). The first word on a line is always
+/// accepted even if it overflows `max_width_lpx`. `line_height` is written into
+/// each line's `y_offset_lpx` as the vertical advance between lines.
+pub fn wrap_shaped_words(
+    words: &[ShapedWord],
+    space_width: f32,
+    line_height: f32,
+    max_width_lpx: f32,
+) -> Vec<ShapedLine> {
+    let mut lines: Vec<ShapedLine> = Vec::new();
+    let mut current_glyphs: Vec<ShapedGlyph> = Vec::new();
+    let mut current_width = 0.0f32;
+    // Metrics from the first word on the current line (ascent/descent).
+    let mut current_ascent = 0.0f32;
+    let mut current_descent = 0.0f32;
+    let mut y_offset = 0.0f32;
+
+    for word in words {
+        // Check if adding this word would exceed max_width.
+        let width_with_word = if current_glyphs.is_empty() {
+            word.advance_width_lpx
+        } else {
+            current_width + space_width + word.advance_width_lpx
+        };
+
+        if width_with_word > max_width_lpx && !current_glyphs.is_empty() {
+            // Wrap: finalize current line from accumulated glyphs.
+            lines.push(build_line_from_glyphs(
+                std::mem::take(&mut current_glyphs),
+                current_width,
+                current_ascent,
+                current_descent,
+                y_offset,
+            ));
+            y_offset += line_height;
+            current_width = 0.0;
+        }
+
+        let pen_x = if current_glyphs.is_empty() {
+            0.0
+        } else {
+            current_width + space_width
+        };
+
+        // First word on a fresh line: capture its metrics for ascent/descent.
+        if pen_x == 0.0 {
+            current_ascent = word.ascent_lpx;
+            current_descent = word.descent_lpx;
+        }
+
+        for g in &word.glyphs {
+            let mut adjusted = *g;
+            // Word glyphs start at pen 0; shift into the line by the running pen.
+            adjusted.position_lpx[0] += pen_x;
+            current_glyphs.push(adjusted);
+        }
+
+        if pen_x == 0.0 {
+            current_width = word.advance_width_lpx;
+        } else {
+            current_width += space_width + word.advance_width_lpx;
+        }
+    }
+
+    // Finalize last line if not empty.
+    if !current_glyphs.is_empty() {
+        lines.push(build_line_from_glyphs(
+            current_glyphs,
+            current_width,
+            current_ascent,
+            current_descent,
+            y_offset,
+        ));
+    }
+
+    lines
+}
 
 /// Wrap text into multiple lines using greedy first-fit algorithm.
 ///
@@ -49,92 +190,11 @@ pub fn greedy_wrap<B: TextBackend>(
     let metrics = font.metrics();
     let line_height = metrics.ascent_lpx - metrics.descent_lpx + metrics.line_gap_lpx;
 
-    // Shape a space to get space width (one call, reused every word boundary)
-    let space_width = backend
-        .shape_line(font, " ")
-        .map(|s| s.width_lpx)
-        .unwrap_or(0.0);
-
-    let mut lines: Vec<ShapedLine> = Vec::new();
-    // Accumulated glyphs for the current in-progress line
-    let mut current_glyphs: Vec<ShapedGlyph> = Vec::new();
-    let mut current_width = 0.0f32;
-    // Metrics from the first word on the current line (used for ascent/descent)
-    let mut current_ascent = metrics.ascent_lpx;
-    let mut current_descent = metrics.descent_lpx;
-    let mut y_offset = 0.0f32;
-
-    for word in text.split_whitespace() {
-        // Shape each word exactly once
-        let shaped_word = backend.shape_line(font, word)?;
-        let word_width = shaped_word.width_lpx;
-
-        // Check if adding this word would exceed max_width
-        let width_with_word = if current_glyphs.is_empty() {
-            word_width
-        } else {
-            current_width + space_width + word_width
-        };
-
-        if width_with_word > max_width_lpx && !current_glyphs.is_empty() {
-            // Wrap: finalize current line from accumulated glyphs
-            let line = build_line_from_glyphs(
-                current_glyphs,
-                current_width,
-                current_ascent,
-                current_descent,
-                y_offset,
-            );
-            lines.push(line);
-
-            y_offset += line_height;
-            current_glyphs = Vec::new();
-            current_width = 0.0;
-        }
-
-        // Append word glyphs to current line, adjusting x offsets
-        let pen_x = if current_glyphs.is_empty() {
-            0.0
-        } else {
-            current_width + space_width
-        };
-
-        // First word on a fresh line: capture its metrics for ascent/descent
-        if pen_x == 0.0 {
-            current_ascent = shaped_word.ascent_lpx;
-            current_descent = shaped_word.descent_lpx;
-        }
-
-        for g in &shaped_word.glyphs {
-            let mut adjusted = *g;
-            // Word was shape_line'd in isolation — positions start at 0.
-            // Shift into the line by the current pen so they sit after the
-            // preceding word + inter-word space.
-            adjusted.position_lpx[0] += pen_x;
-            current_glyphs.push(adjusted);
-        }
-
-        // Advance pen
-        if pen_x == 0.0 {
-            current_width = word_width;
-        } else {
-            current_width += space_width + word_width;
-        }
-    }
-
-    // Finalize last line if not empty
-    if !current_glyphs.is_empty() {
-        let line = build_line_from_glyphs(
-            current_glyphs,
-            current_width,
-            current_ascent,
-            current_descent,
-            y_offset,
-        );
-        lines.push(line);
-    }
-
-    Ok(lines)
+    // Shape each word once, then fit by arithmetic. Splitting the two stages
+    // lets the Text element cache the shaped words and re-fit on resize without
+    // re-shaping; here we just chain them for the one-shot convenience path.
+    let (words, space_width) = shape_words(backend, font, text)?;
+    Ok(wrap_shaped_words(&words, space_width, line_height, max_width_lpx))
 }
 
 /// Build a `ShapedLine` from pre-accumulated glyphs.
