@@ -13,18 +13,18 @@ use slate_text::byte_at_pixel_x;
 
 use crate::event::{
     ElementImeCommitHandler, ElementImePreeditHandler, ElementKeyHandler, ElementTextInputHandler,
-    EventCtx, ImeCommitEvent, ImePreeditEvent, Key, KeyCode, KeyEvent, MouseEvent, MouseHandler,
-    NamedKey, TextInputEvent, is_command_modifier,
+    EventCtx, ImeCommitEvent, ImePreeditEvent, Key, KeyEvent, MouseEvent, MouseHandler,
+    NamedKey, TextInputEvent,
 };
 use crate::ime::Preedit;
 
-use crate::elements::text_edit::clipboard;
 use crate::elements::text_edit::grapheme::{
     insert_text_at, next_grapheme_boundary, prev_grapheme_boundary,
 };
 use crate::elements::text_edit::ops::{
-    MotionDir, apply_motion, apply_snapshot, delete_selection, record_edit, reset_blink,
+    MotionDir, apply_motion, delete_selection, record_edit, reset_blink,
 };
+use crate::elements::text_edit::shortcuts;
 use crate::elements::text_edit::undo::EditOp;
 
 /// Build the `on_key_down` handler for TextField.
@@ -45,105 +45,10 @@ pub(super) fn build_key_down_handler(value: Signal<String>) -> ElementKeyHandler
 
         // Modifier shortcuts run BEFORE the IME guard so Paste can abort an
         // active composition (policy R5) and so Undo/Redo work even when a
-        // stale preedit somehow persists.
-        if is_command_modifier(&ev.modifiers) && !ev.modifiers.alt {
-            let shift = ev.modifiers.shift;
-            match ev.code {
-                KeyCode::KeyC => {
-                    let state = state_rc.borrow();
-                    if state.preedit.is_some() {
-                        return;
-                    }
-                    if let Some(payload) = clipboard::selected_text(&state) {
-                        drop(state);
-                        slate_platform::clipboard::set_text(&payload);
-                    }
-                    cx.stop_propagation();
-                    return;
-                }
-                KeyCode::KeyX => {
-                    let payload = {
-                        let state = state_rc.borrow();
-                        if state.preedit.is_some() {
-                            return;
-                        }
-                        clipboard::selected_text(&state)
-                    };
-                    if let Some(text) = payload {
-                        slate_platform::clipboard::set_text(&text);
-                        let new_text = {
-                            let mut state = state_rc.borrow_mut();
-                            clipboard::apply_cut(&mut state)
-                        };
-                        value.set(new_text);
-                    }
-                    cx.stop_propagation();
-                    return;
-                }
-                KeyCode::KeyV => {
-                    let pasted = match slate_platform::clipboard::get_text() {
-                        Some(t) => t,
-                        None => {
-                            cx.stop_propagation();
-                            return;
-                        }
-                    };
-                    // TextField is single-line: strip newlines (multiline=false).
-                    let cleaned = clipboard::clean_paste(&pasted, false);
-                    if cleaned.is_empty() {
-                        cx.stop_propagation();
-                        return;
-                    }
-                    let new_text = {
-                        let mut state = state_rc.borrow_mut();
-                        clipboard::apply_paste(&mut state, &cleaned)
-                    };
-                    cx.stop_propagation();
-                    value.set(new_text);
-                    return;
-                }
-                // Undo: Cmd/Ctrl+Z (without shift). Redo on macOS: Cmd+Shift+Z.
-                KeyCode::KeyZ => {
-                    #[cfg(target_os = "macos")]
-                    let is_redo = shift;
-                    #[cfg(not(target_os = "macos"))]
-                    let is_redo = false;
-                    let _ = shift; // used on macOS only
-                    // One borrow: walk the stack and apply the restored snapshot
-                    // inside it; `value.set` fires after the borrow drops.
-                    let restored = {
-                        let mut state = state_rc.borrow_mut();
-                        let snap = if is_redo { state.undo.redo() } else { state.undo.undo() };
-                        if let Some(ref s) = snap {
-                            apply_snapshot(&mut state, s);
-                        }
-                        snap
-                    };
-                    if let Some(snap) = restored {
-                        value.set(snap.text);
-                    }
-                    cx.stop_propagation();
-                    return;
-                }
-                // Redo on Windows/Linux: Ctrl+Y (without shift).
-                #[cfg(not(target_os = "macos"))]
-                KeyCode::KeyY if !shift => {
-                    let restored = {
-                        let mut state = state_rc.borrow_mut();
-                        let snap = state.undo.redo();
-                        if let Some(ref s) = snap {
-                            apply_snapshot(&mut state, s);
-                        }
-                        snap
-                    };
-                    if let Some(snap) = restored {
-                        value.set(snap.text);
-                    }
-                    cx.stop_propagation();
-                    return;
-                }
-                _ => {}
-            }
+        // stale preedit somehow persists. TextField is single-line, so paste
+        // strips newlines (`multiline = false`).
+        if shortcuts::handle_command_shortcut(ev, cx, &state_rc, &value, false) {
+            return;
         }
 
         // While IME composition is active, leave all navigation to the IME

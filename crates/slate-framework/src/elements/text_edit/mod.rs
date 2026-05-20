@@ -17,3 +17,4 @@ pub(crate) mod blink;
 pub(crate) mod clipboard;
 pub(crate) mod grapheme;
 pub(crate) mod ops;
+pub(crate) mod shortcuts;

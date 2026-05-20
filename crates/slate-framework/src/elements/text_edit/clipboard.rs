@@ -76,4 +76,19 @@ mod tests {
         assert_eq!(clean_paste("a\rb", true), "a\nb");
         assert_eq!(clean_paste("a\nb", true), "a\nb");
     }
+
+    #[test]
+    fn apply_paste_multiline_inserts_newlines_at_caret() {
+        // End to end: "x" + caret after it + paste "a\nb" → "xa\nb".
+        let mut s = ImeState {
+            text: "x".to_string(),
+            caret: 1,
+            ..Default::default()
+        };
+        let cleaned = clean_paste("a\r\nb", true);
+        let out = apply_paste(&mut s, &cleaned);
+        assert_eq!(out, "xa\nb");
+        assert_eq!(s.caret, 4, "caret advances past the inserted run");
+        assert_eq!(s.selection_anchor, None);
+    }
 }

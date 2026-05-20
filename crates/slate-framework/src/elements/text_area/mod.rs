@@ -16,7 +16,9 @@
 //! [`MultilineLayout`](slate_text::MultilineLayout) is built once in
 //! `request_layout` (to size the Taffy leaf) and reused in `paint`.
 
+mod handlers;
 mod layout;
+mod nav;
 mod paint;
 
 use std::rc::Rc;
@@ -27,6 +29,7 @@ use taffy::prelude::*;
 
 use crate::context::{LayoutCtx, PaintCtx, PrepaintCtx};
 use crate::element::{Element, IntoElement, Sealed};
+use crate::event::{ImeHandlers, KeyHandlers};
 use crate::focus::FocusableEntry;
 use crate::hit_test::{CursorStyle, HitRegion};
 use crate::text_system::PlatformFont;
@@ -228,6 +231,27 @@ impl Element for TextArea {
 
         let focused = cx.focused_element() == Some(element_id);
 
+        // Register multi-line key + IME handlers (mirrors TextField; the key
+        // handler additionally consumes Enter → '\n' and handles ↑/↓/Home/End).
+        cx.register_key_handlers(
+            element_id,
+            KeyHandlers {
+                on_key_down: Some(handlers::build_key_down_handler(self.value.clone())),
+                on_key_up: None,
+                on_text_input: Some(handlers::build_text_input_handler(self.value.clone())),
+            },
+        );
+
+        cx.register_ime_handlers(
+            element_id,
+            ImeHandlers {
+                on_ime_preedit: Some(handlers::build_ime_preedit_handler()),
+                on_ime_commit: Some(handlers::build_ime_commit_handler(self.value.clone())),
+                on_ime_enabled: None,
+                on_ime_disabled: None,
+            },
+        );
+
         TextAreaPaintState {
             element_id,
             focused,
@@ -264,6 +288,16 @@ impl Element for TextArea {
     fn id(&self) -> Option<ElementId> {
         self.last_id
     }
+}
+
+/// Expose the production `on_key_down` handler so headless tests can drive the
+/// real closure (its borrow pattern, ↑/↓/Home/End/Enter arms) through
+/// `AppState::dispatch_key_down`, rather than re-implementing it. Test-only.
+#[cfg(feature = "test-hooks")]
+pub fn build_key_down_handler_for_test(
+    value: Signal<String>,
+) -> crate::event::ElementKeyHandler {
+    handlers::build_key_down_handler(value)
 }
 
 /// A degenerate single-empty-line layout used when font load or shaping fails,

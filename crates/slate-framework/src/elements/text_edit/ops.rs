@@ -121,6 +121,23 @@ pub(crate) fn apply_motion(
     mover(state);
 }
 
+/// Move the caret to a precomputed `target` byte with selection semantics, for
+/// motions whose destination is resolved by layout rather than a byte-walk
+/// (vertical ↑/↓, visual-line Home/End). Unlike [`apply_motion`] there is no
+/// directional collapse: plain motion clears the anchor and jumps to `target`;
+/// Shift motion anchors at the pre-move caret (if unanchored) and extends to
+/// `target`. The caller has already clamped `target` to a valid boundary.
+pub(crate) fn apply_motion_to(state: &mut ImeState, shift: bool, target: usize) {
+    if shift {
+        if state.selection_anchor.is_none() {
+            state.selection_anchor = Some(state.caret);
+        }
+    } else {
+        state.selection_anchor = None;
+    }
+    state.caret = target;
+}
+
 // ---------------------------------------------------------------------------
 // Unit tests — selection model
 // ---------------------------------------------------------------------------
@@ -261,6 +278,26 @@ mod selection_tests {
     fn selection_range_none_for_empty_or_unanchored() {
         assert_eq!(selection_range(&state_with("abc", 1, None)), None);
         assert_eq!(selection_range(&state_with("abc", 1, Some(1))), None);
+    }
+
+    #[test]
+    fn apply_motion_to_plain_jumps_and_clears_anchor() {
+        let mut s = state_with("hello", 1, Some(3));
+        apply_motion_to(&mut s, false, 4);
+        assert_eq!(s.caret, 4);
+        assert_eq!(s.selection_anchor, None);
+    }
+
+    #[test]
+    fn apply_motion_to_shift_anchors_and_extends() {
+        let mut s = state_with("hello", 2, None);
+        apply_motion_to(&mut s, true, 5);
+        assert_eq!(s.selection_anchor, Some(2), "anchors at pre-move caret");
+        assert_eq!(s.caret, 5);
+        // A second shift motion keeps the same anchor.
+        apply_motion_to(&mut s, true, 0);
+        assert_eq!(s.selection_anchor, Some(2));
+        assert_eq!(s.caret, 0);
     }
 
     #[test]
