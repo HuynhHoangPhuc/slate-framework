@@ -18,6 +18,7 @@
 
 mod handlers;
 mod layout;
+mod mouse;
 mod nav;
 mod paint;
 
@@ -29,7 +30,7 @@ use taffy::prelude::*;
 
 use crate::context::{LayoutCtx, PaintCtx, PrepaintCtx};
 use crate::element::{Element, IntoElement, Sealed};
-use crate::event::{ImeHandlers, KeyHandlers};
+use crate::event::{ImeHandlers, KeyHandlers, MouseHandlers};
 use crate::focus::FocusableEntry;
 use crate::hit_test::{CursorStyle, HitRegion};
 use crate::text_system::PlatformFont;
@@ -252,6 +253,17 @@ impl Element for TextArea {
             },
         );
 
+        // Click-to-place + drag-select across visual lines. Handlers read the
+        // cached MultilineLayout + paint origin written by paint() last frame.
+        cx.register_mouse_handlers(
+            element_id,
+            MouseHandlers {
+                on_mouse_down: Some(mouse::build_mouse_down_handler()),
+                on_mouse_move: Some(mouse::build_mouse_move_handler()),
+                on_mouse_up: Some(mouse::build_mouse_up_handler()),
+            },
+        );
+
         TextAreaPaintState {
             element_id,
             focused,
@@ -298,6 +310,40 @@ pub fn build_key_down_handler_for_test(
     value: Signal<String>,
 ) -> crate::event::ElementKeyHandler {
     handlers::build_key_down_handler(value)
+}
+
+/// Expose the production mouse handlers (down/move/up) so headless tests can
+/// drive the real click-count machine + word/line-select branch through
+/// `AppState::dispatch_mouse_*`, rather than re-implementing the closures.
+/// Test-only.
+#[cfg(feature = "test-hooks")]
+pub fn build_mouse_handlers_for_test() -> MouseHandlers {
+    MouseHandlers {
+        on_mouse_down: Some(mouse::build_mouse_down_handler()),
+        on_mouse_move: Some(mouse::build_mouse_move_handler()),
+        on_mouse_up: Some(mouse::build_mouse_up_handler()),
+    }
+}
+
+/// Expose the production `on_text_input` handler (typed-character insertion) so
+/// end-to-end tests can dispatch text input through the real closure. Test-only.
+#[cfg(feature = "test-hooks")]
+pub fn build_text_input_handler_for_test(
+    value: Signal<String>,
+) -> crate::event::ElementTextInputHandler {
+    handlers::build_text_input_handler(value)
+}
+
+/// Expose the production IME handlers (preedit + commit) so end-to-end tests can
+/// drive composition through the real closures. Test-only.
+#[cfg(feature = "test-hooks")]
+pub fn build_ime_handlers_for_test(value: Signal<String>) -> ImeHandlers {
+    ImeHandlers {
+        on_ime_preedit: Some(handlers::build_ime_preedit_handler()),
+        on_ime_commit: Some(handlers::build_ime_commit_handler(value)),
+        on_ime_enabled: None,
+        on_ime_disabled: None,
+    }
 }
 
 /// A degenerate single-empty-line layout used when font load or shaping fails,

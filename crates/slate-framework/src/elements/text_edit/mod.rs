@@ -18,3 +18,4 @@ pub(crate) mod clipboard;
 pub(crate) mod grapheme;
 pub(crate) mod ops;
 pub(crate) mod shortcuts;
+pub(crate) mod word;

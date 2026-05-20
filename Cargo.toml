@@ -13,6 +13,7 @@ members = [
     "examples/primitive-gallery",
     "examples/reactive-counter",
     "examples/recovery-gallery",
+    "examples/textarea",
     "examples/win-dcomp-spike",
 ]
 resolver = "2"

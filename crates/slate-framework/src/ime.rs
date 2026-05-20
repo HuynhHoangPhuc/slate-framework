@@ -120,6 +120,11 @@ pub struct ImeState {
     /// subtract this from the window-relative event position to get a
     /// line-relative x for `byte_at_pixel_x`. Updated during paint.
     pub paint_origin_x: f32,
+    /// Logical-px y-origin of the element's painted bounds. Multi-line
+    /// (`TextArea`) mouse handlers subtract this from the event position to get
+    /// a line-relative y for the visual-line hit-test. Unused on the single-line
+    /// path. Updated during paint.
+    pub paint_origin_y: f32,
     /// True while a primary-button drag is in progress on this element. Set on
     /// `on_mouse_down`, cleared on `on_mouse_up`. Drives the "anchor on first
     /// drag move" rule in `on_mouse_move`.
@@ -151,6 +156,17 @@ pub struct ImeState {
     /// can map bytes↔(line, x) without re-shaping. `None` on the single-line
     /// path (TextField uses `last_shaped` instead).
     pub last_layout: Option<Rc<slate_text::MultilineLayout>>,
+    /// Timestamp of the previous mouse-down, used to detect multi-click runs
+    /// (double / triple click). `None` until the first click. Reset to the new
+    /// click time on every mouse-down.
+    pub last_click_time: Option<Instant>,
+    /// Window-relative position of the previous mouse-down. A new click only
+    /// extends the run when it lands within `DOUBLE_CLICK_DISTANCE` of this.
+    pub last_click_pos: (f32, f32),
+    /// Length of the current click run: 1 = single (caret), 2 = double (word),
+    /// 3 = triple (line). Wraps back to 1 after a triple click so a fourth click
+    /// starts a fresh run. Reset to 0 when a drag ends on a different element.
+    pub click_count: u8,
 }
 
 impl ImeState {
@@ -275,6 +291,10 @@ impl ImeRegistry {
         for state_rc in self.states.values() {
             if let Ok(mut state) = state_rc.try_borrow_mut() {
                 state.dragging = false;
+                // Drop any in-flight multi-click run: capture was lost between
+                // the clicks, so a later click must not be counted as a
+                // continuation (it could be seconds and a window away).
+                state.click_count = 0;
             }
         }
     }
