@@ -11,6 +11,7 @@
 pub mod div;
 pub mod image;
 pub mod text;
+pub mod text_edit;
 pub mod text_field;
 
 pub use div::Div;

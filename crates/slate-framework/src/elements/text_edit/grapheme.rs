@@ -1,4 +1,4 @@
-//! Grapheme-aware caret motion helpers for TextField.
+//! Grapheme-aware caret motion helpers for editable text.
 //!
 //! All functions operate on UTF-8 byte offsets. Caret positions are always
 //! at grapheme cluster boundaries — mutating via these helpers guarantees
@@ -9,7 +9,7 @@ use unicode_segmentation::GraphemeCursor;
 /// Return the byte offset of the grapheme boundary immediately before `caret`.
 ///
 /// Clamps to 0 when already at the start of `text`.
-pub(super) fn prev_grapheme_boundary(text: &str, caret: usize) -> usize {
+pub(crate) fn prev_grapheme_boundary(text: &str, caret: usize) -> usize {
     let mut cursor = GraphemeCursor::new(caret, text.len(), true);
     cursor.prev_boundary(text, 0).ok().flatten().unwrap_or(0)
 }
@@ -17,7 +17,7 @@ pub(super) fn prev_grapheme_boundary(text: &str, caret: usize) -> usize {
 /// Return the byte offset of the grapheme boundary immediately after `caret`.
 ///
 /// Clamps to `text.len()` when already at the end.
-pub(super) fn next_grapheme_boundary(text: &str, caret: usize) -> usize {
+pub(crate) fn next_grapheme_boundary(text: &str, caret: usize) -> usize {
     let mut cursor = GraphemeCursor::new(caret, text.len(), true);
     cursor
         .next_boundary(text, 0)
@@ -27,7 +27,7 @@ pub(super) fn next_grapheme_boundary(text: &str, caret: usize) -> usize {
 }
 
 /// Insert `ins` at `caret` in `text` and return the new caret byte offset.
-pub(super) fn insert_text_at(text: &mut String, caret: usize, ins: &str) -> usize {
+pub(crate) fn insert_text_at(text: &mut String, caret: usize, ins: &str) -> usize {
     text.insert_str(caret, ins);
     caret + ins.len()
 }
@@ -37,7 +37,7 @@ pub(super) fn insert_text_at(text: &mut String, caret: usize, ins: &str) -> usiz
 /// Returns the new caret position (= start of the deleted grapheme). No-op
 /// when `caret == 0`.
 #[allow(dead_code)] // Used in tests; the Backspace handler inlines the pattern.
-pub(super) fn delete_grapheme_before(text: &mut String, caret: usize) -> usize {
+pub(crate) fn delete_grapheme_before(text: &mut String, caret: usize) -> usize {
     let prev = prev_grapheme_boundary(text, caret);
     if prev < caret {
         text.replace_range(prev..caret, "");

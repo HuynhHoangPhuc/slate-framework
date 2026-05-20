@@ -27,7 +27,7 @@ use std::time::Instant;
 
 use slate_platform::{PhysicalRect, WindowId};
 
-use crate::elements::text_field::undo::UndoStack;
+use crate::elements::text_edit::undo::UndoStack;
 use crate::types::ElementId;
 
 // ---------------------------------------------------------------------------
@@ -440,7 +440,7 @@ mod tests {
 
     #[test]
     fn undo_history_survives_re_registration() {
-        use crate::elements::text_field::undo::{EditOp, EditSnapshot};
+        use crate::elements::text_edit::undo::{EditOp, EditSnapshot};
         let mut r = ImeRegistry::new();
         let s1 = r.register(id(1));
         {
@@ -467,7 +467,7 @@ mod tests {
 
     #[test]
     fn seed_undo_baseline_is_one_time() {
-        use crate::elements::text_field::undo::{EditOp, EditSnapshot};
+        use crate::elements::text_edit::undo::{EditOp, EditSnapshot};
         let mut state = ImeState {
             text: "init".to_string(),
             caret: 4,

@@ -21,14 +21,9 @@
 //! - Rich text / styled spans.
 //! - Bidi visual↔logical reorder.
 
-mod grapheme;
 mod handlers;
-pub mod undo;
 
-use std::time::{Duration, Instant};
-
-/// Caret blink half-period. Matches macOS `NSTextInsertionPointBlinkPeriod`.
-const CARET_BLINK_PERIOD: Duration = Duration::from_millis(530);
+use std::time::Instant;
 
 use slate_reactive::Signal;
 use slate_renderer::Lpx;
@@ -488,28 +483,14 @@ impl Element for TextField {
         if let Some(state_rc) = cx.ime_registry.borrow().get(element_id)
             && let Ok(mut state) = state_rc.try_borrow_mut()
         {
-            if paint_state.focused {
-                let now = Instant::now();
-                match state.blink.next {
-                    None => {
-                        state.blink.visible = true;
-                        state.blink.next = Some(now + CARET_BLINK_PERIOD);
-                    }
-                    Some(t) if now >= t => {
-                        state.blink.visible = !state.blink.visible;
-                        state.blink.next = Some(now + CARET_BLINK_PERIOD);
-                    }
-                    Some(_) => {}
-                }
-                caret_visible = state.blink.visible;
-                if let Some(deadline) = state.blink.next {
-                    cx.schedule_redraw_at(deadline);
-                }
-            } else {
-                // Unfocused: drop any in-flight blink so the next focus gain
-                // starts a fresh cycle from visible=true.
-                state.blink.visible = true;
-                state.blink.next = None;
+            let (visible, next_deadline) = crate::elements::text_edit::blink::advance_blink(
+                &mut state.blink,
+                paint_state.focused,
+                Instant::now(),
+            );
+            caret_visible = visible;
+            if let Some(deadline) = next_deadline {
+                cx.schedule_redraw_at(deadline);
             }
         }
         if paint_state.focused && caret_visible {
