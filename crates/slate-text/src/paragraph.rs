@@ -35,17 +35,24 @@ pub struct ShapedWord {
     /// ranges (which `wrap_shaped_words` alone cannot, since it works on the
     /// pre-shaped glyph runs with no source pointer).
     pub source_byte_range: std::ops::Range<usize>,
+    /// `true` when this item is a run of ASCII spaces (U+0020) rather than a
+    /// text word. A space run carries one glyph per space byte (each advancing
+    /// `space_width`) so every space is independently caret-addressable. The
+    /// wrap fit treats it as a soft-break candidate whose trailing copy is
+    /// absorbed at a soft wrap but kept (visible) at a hard line end.
+    pub is_space_run: bool,
 }
 
 /// Shape every whitespace-delimited word in `text` exactly once.
 ///
-/// Returns the per-word shaping results plus the shared inter-word space
-/// advance (the space is shaped once). Pair with [`wrap_shaped_words`] to fit
-/// the words to any width with zero further shaping calls — so re-wrap on a
-/// resize is pure arithmetic.
+/// Returns the ordered items (text words interleaved with ASCII-space runs)
+/// plus the shared single-space advance (shaped once, for callers that still
+/// want it). Pair with [`wrap_shaped_words`] to fit the items to any width with
+/// zero further shaping calls — so re-wrap on a resize is pure arithmetic.
 ///
-/// Consecutive whitespace and newlines collapse (`split_whitespace`); empty or
-/// whitespace-only input yields an empty word list.
+/// Every ASCII space (U+0020) is preserved as its own glyph (see
+/// [`shape_words_in`]); empty input yields an empty list, but a whitespace-only
+/// string yields a single space-run item.
 pub fn shape_words<B: TextBackend>(
     backend: &B,
     font: &B::Font,
@@ -61,13 +68,20 @@ pub fn shape_words<B: TextBackend>(
     Ok((words, space_width))
 }
 
-/// Shape the whitespace-delimited words in `segment`, recording each word's
-/// byte span as an absolute offset into the larger document (`segment_start` is
-/// the byte offset of `segment` within that document; pass 0 when `segment` is
-/// the whole text).
+/// Shape `segment` into an ordered run of items, recording each item's byte
+/// span as an absolute offset into the larger document (`segment_start` is the
+/// byte offset of `segment` within that document; pass 0 when `segment` is the
+/// whole text).
+///
+/// Unlike a `split_whitespace` collapse, this scans byte-by-byte and emits a
+/// separate [`ShapedWord`] for every maximal run of ASCII spaces (U+0020),
+/// interleaved with the text words in source order. Each space run carries one
+/// glyph per space byte so every space is preserved and caret-addressable; the
+/// shared inter-word gap is no longer implicit. Non-space whitespace (`\t`,
+/// NBSP, …) stays inside the surrounding text word and shapes as part of it.
 ///
 /// Shared by [`shape_words`] (single segment, offset 0) and the multi-line
-/// paragraph shaper, which calls it once per `\n`-delimited paragraph so word
+/// paragraph shaper, which calls it once per `\n`-delimited paragraph so item
 /// ranges stay absolute across the document.
 pub(crate) fn shape_words_in<B: TextBackend>(
     backend: &B,
@@ -75,102 +89,125 @@ pub(crate) fn shape_words_in<B: TextBackend>(
     segment: &str,
     segment_start: usize,
 ) -> Result<Vec<ShapedWord>, TextError> {
-    let base = segment.as_ptr() as usize;
-    let mut words = Vec::new();
-    for word in segment.split_whitespace() {
-        let shaped = backend.shape_line(font, word)?;
-        // `word` is a subslice of `segment`; its pointer offset is the local
-        // byte position, which we lift to an absolute document offset.
-        let local = word.as_ptr() as usize - base;
-        let start = segment_start + local;
-        words.push(ShapedWord {
+    let bytes = segment.as_bytes();
+    let mut items = Vec::new();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let start = i;
+        let is_space = bytes[i] == b' ';
+        // Extend the run while its space-ness matches.
+        while i < bytes.len() && (bytes[i] == b' ') == is_space {
+            i += 1;
+        }
+        let slice = &segment[start..i];
+        let shaped = backend.shape_line(font, slice)?;
+        items.push(ShapedWord {
             glyphs: shaped.glyphs,
             advance_width_lpx: shaped.width_lpx,
             ascent_lpx: shaped.ascent_lpx,
             descent_lpx: shaped.descent_lpx,
-            source_byte_range: start..start + word.len(),
+            source_byte_range: segment_start + start..segment_start + i,
+            is_space_run: is_space,
         });
     }
-    Ok(words)
+    Ok(items)
 }
 
-/// Fit pre-shaped words into lines by greedy first-fit — pure width arithmetic,
+/// Fit pre-shaped items into lines by greedy first-fit — pure width arithmetic,
 /// no shaping calls.
 ///
-/// Glyphs are concatenated with a per-word pen offset (the same join logic as
-/// [`greedy_wrap`]); cross-word kerning across the space boundary is
-/// intentionally dropped (see module docs). The first word on a line is always
-/// accepted even if it overflows `max_width_lpx`. `line_height` is written into
-/// each line's `y_offset_lpx` as the vertical advance between lines.
+/// Items (text words + ASCII-space runs from [`shape_words`]) are concatenated
+/// at a running pen with no implicit inter-word gap — the gap is now an
+/// explicit space-run item carrying one glyph per space byte. A space run is a
+/// soft-break candidate: when a following word overflows the line, the pending
+/// run is *absorbed* (dropped, contributing no visible width) and the word
+/// starts the next line; a run that reaches the end of the text is kept
+/// (visible) so trailing/standalone spaces stay addressable. The first text
+/// word on a line is always accepted even if it overflows `max_width_lpx`.
+/// `space_width` is accepted for API stability but no longer drives the join.
+/// `line_height` is written into each line's `y_offset_lpx`.
+///
+/// Unlike the multi-line fit, this single-line path has no over-wide-word
+/// break, so a leading space run before an over-wide first word stays visible
+/// here (the multi-line fit absorbs it). Harmless: this path feeds non-editable
+/// `Text` rendering only and does no caret/byte math on these glyphs.
 pub fn wrap_shaped_words(
-    words: &[ShapedWord],
+    items: &[ShapedWord],
     space_width: f32,
     line_height: f32,
     max_width_lpx: f32,
 ) -> Vec<ShapedLine> {
+    let _ = space_width; // spaces are explicit items now; kept for API stability
     let mut lines: Vec<ShapedLine> = Vec::new();
-    let mut current_glyphs: Vec<ShapedGlyph> = Vec::new();
-    let mut current_width = 0.0f32;
-    // Metrics from the first word on the current line (ascent/descent).
-    let mut current_ascent = 0.0f32;
-    let mut current_descent = 0.0f32;
+    let mut cur: Vec<ShapedGlyph> = Vec::new();
+    let mut cur_width = 0.0f32;
+    let mut cur_ascent = 0.0f32;
+    let mut cur_descent = 0.0f32;
     let mut y_offset = 0.0f32;
+    // A trailing space run not yet committed to the line's visible width.
+    let mut pending: Option<&ShapedWord> = None;
 
-    for word in words {
-        // Check if adding this word would exceed max_width.
-        let width_with_word = if current_glyphs.is_empty() {
-            word.advance_width_lpx
+    // Append `word`'s glyphs at the current pen and grow the line width.
+    let commit = |word: &ShapedWord,
+                  cur: &mut Vec<ShapedGlyph>,
+                  cur_width: &mut f32,
+                  cur_ascent: &mut f32,
+                  cur_descent: &mut f32| {
+        if cur.is_empty() {
+            *cur_ascent = word.ascent_lpx;
+            *cur_descent = word.descent_lpx;
+        }
+        let pen_x = *cur_width;
+        for g in &word.glyphs {
+            let mut adjusted = *g;
+            adjusted.position_lpx[0] += pen_x;
+            cur.push(adjusted);
+        }
+        *cur_width += word.advance_width_lpx;
+    };
+
+    for item in items {
+        if item.is_space_run {
+            // Hold the run: it is either committed before a following word or
+            // absorbed at a wrap. (Scanner never emits two runs in a row.)
+            pending = Some(item);
+            continue;
+        }
+
+        let pending_w = pending.map(|s| s.advance_width_lpx).unwrap_or(0.0);
+        let candidate = if cur.is_empty() {
+            item.advance_width_lpx
         } else {
-            current_width + space_width + word.advance_width_lpx
+            cur_width + pending_w + item.advance_width_lpx
         };
 
-        if width_with_word > max_width_lpx && !current_glyphs.is_empty() {
-            // Wrap: finalize current line from accumulated glyphs.
+        if candidate > max_width_lpx && !cur.is_empty() {
+            // Wrap before this word; absorb the pending space run.
             lines.push(build_line_from_glyphs(
-                std::mem::take(&mut current_glyphs),
-                current_width,
-                current_ascent,
-                current_descent,
+                std::mem::take(&mut cur),
+                cur_width,
+                cur_ascent,
+                cur_descent,
                 y_offset,
             ));
             y_offset += line_height;
-            current_width = 0.0;
+            cur_width = 0.0;
+            pending = None;
+        } else if let Some(sp) = pending.take() {
+            // Word fits with the run: make the spaces visible, then the word.
+            commit(sp, &mut cur, &mut cur_width, &mut cur_ascent, &mut cur_descent);
         }
 
-        let pen_x = if current_glyphs.is_empty() {
-            0.0
-        } else {
-            current_width + space_width
-        };
-
-        // First word on a fresh line: capture its metrics for ascent/descent.
-        if pen_x == 0.0 {
-            current_ascent = word.ascent_lpx;
-            current_descent = word.descent_lpx;
-        }
-
-        for g in &word.glyphs {
-            let mut adjusted = *g;
-            // Word glyphs start at pen 0; shift into the line by the running pen.
-            adjusted.position_lpx[0] += pen_x;
-            current_glyphs.push(adjusted);
-        }
-
-        if pen_x == 0.0 {
-            current_width = word.advance_width_lpx;
-        } else {
-            current_width += space_width + word.advance_width_lpx;
-        }
+        commit(item, &mut cur, &mut cur_width, &mut cur_ascent, &mut cur_descent);
     }
 
-    // Finalize last line if not empty.
-    if !current_glyphs.is_empty() {
+    // Trailing/standalone spaces at the end of the text stay visible.
+    if let Some(sp) = pending.take() {
+        commit(sp, &mut cur, &mut cur_width, &mut cur_ascent, &mut cur_descent);
+    }
+    if !cur.is_empty() {
         lines.push(build_line_from_glyphs(
-            current_glyphs,
-            current_width,
-            current_ascent,
-            current_descent,
-            y_offset,
+            cur, cur_width, cur_ascent, cur_descent, y_offset,
         ));
     }
 
@@ -187,7 +224,8 @@ pub fn wrap_shaped_words(
 ///
 /// - Words longer than `max_width_lpx` are placed on their own line without
 ///   character-level breaking (may overflow visually).
-/// - Consecutive spaces and newlines are collapsed (`split_whitespace`).
+/// - Every ASCII space is preserved (one glyph per space byte); a run is
+///   absorbed at a soft wrap but kept visible at the end of the text.
 /// - Empty input returns an empty `Vec`.
 ///
 /// # Performance

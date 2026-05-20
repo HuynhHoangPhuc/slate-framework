@@ -337,6 +337,58 @@ fn right_alignment_computes_correct_offset() {
 }
 
 #[test]
+fn shape_words_emits_items_in_order() {
+    let mut backend = MockBackend;
+    let font = backend.load_font("mock", 16.0, 1.0).unwrap();
+
+    // "a     b": word "a", a 5-space run, word "b" — every space byte preserved.
+    let (items, _space_width) = shape_words(&backend, &font, "a     b").unwrap();
+    assert_eq!(items.len(), 3, "word, space-run, word");
+    assert!(!items[0].is_space_run);
+    assert_eq!(items[0].source_byte_range, 0..1);
+    assert!(items[1].is_space_run);
+    assert_eq!(items[1].source_byte_range, 1..6);
+    assert_eq!(items[1].glyphs.len(), 5, "one glyph per preserved space byte");
+    assert!(!items[2].is_space_run);
+    assert_eq!(items[2].source_byte_range, 6..7);
+
+    // Leading-only whitespace: zero words + one space run, still addressable.
+    let (items, _) = shape_words(&backend, &font, "   abc").unwrap();
+    assert!(items[0].is_space_run);
+    assert_eq!(items[0].source_byte_range, 0..3);
+    assert!(!items[1].is_space_run);
+    assert_eq!(items[1].source_byte_range, 3..6);
+
+    // Trailing-only whitespace.
+    let (items, _) = shape_words(&backend, &font, "abc   ").unwrap();
+    assert!(!items[0].is_space_run);
+    assert_eq!(items[0].source_byte_range, 0..3);
+    assert!(items[1].is_space_run);
+    assert_eq!(items[1].source_byte_range, 3..6);
+
+    // Pure whitespace: a single space run, nothing else.
+    let (items, _) = shape_words(&backend, &font, "     ").unwrap();
+    assert_eq!(items.len(), 1);
+    assert!(items[0].is_space_run);
+    assert_eq!(items[0].source_byte_range, 0..5);
+
+    // Empty string: no items.
+    let (items, _) = shape_words(&backend, &font, "").unwrap();
+    assert!(items.is_empty());
+}
+
+#[test]
+fn single_space_prose_layout_unchanged() {
+    // Regression guard: preserving spaces must not shift single-space widths.
+    // "Hello world test" each char 10, space 5 → identical to the pre-fix join.
+    let mut backend = MockBackend;
+    let font = backend.load_font("mock", 16.0, 1.0).unwrap();
+    let lines = greedy_wrap(&backend, &font, "Hello world test", 80.0).unwrap();
+    assert_eq!(lines.len(), 3, "single-space wrap unchanged");
+    assert!((lines[0].width_lpx - 50.0).abs() < 0.01);
+}
+
+#[test]
 fn empty_text_returns_empty_vec() {
     let mut backend = MockBackend;
     let font = backend.load_font("mock", 16.0, 1.0).unwrap();

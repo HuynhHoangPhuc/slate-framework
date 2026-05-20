@@ -91,3 +91,63 @@ fn three_line_document_wraps_to_three_lines_with_caret_on_line_zero() {
         2.0 * layout.line_height_lpx
     );
 }
+
+// ---------------------------------------------------------------------------
+// Multi-space: the word-wrap path (TextArea) preserves every ASCII space, so
+// caret-x advances once per space byte instead of collapsing the run.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn multi_space_run_preserves_every_space_byte() {
+    let mut text_system = TextSystem::new().expect("create TextSystem");
+    let font = text_system
+        .load_font_from_bytes(slate_text::TEST_FONT, 14.0, 1.0)
+        .expect("load bundled font");
+
+    // Single space vs five spaces between the same two words: the 5-space run
+    // must be ~4 extra space-advances wider (not collapsed to one).
+    let one = text_system.shape_document(&font, "a b").expect("shape one");
+    let five = text_system.shape_document(&font, "a     b").expect("shape five");
+    let one_w = slate_text::wrap_document(&one, 1000.0).lines[0].line.width_lpx;
+    let five_w = slate_text::wrap_document(&five, 1000.0).lines[0].line.width_lpx;
+    assert!(
+        five_w > one_w + 1.0,
+        "5-space run must be wider than 1-space ({five_w} vs {one_w})"
+    );
+
+    // Caret-x is strictly increasing across each space byte of "a     b"
+    // (bytes 1..=6 are the run interior + the following 'b').
+    let layout = slate_text::wrap_document(&five, 1000.0);
+    let mut prev_x = layout.caret_position(1).1; // just after 'a'
+    for byte in 2..=6 {
+        let x = layout.caret_position(byte).1;
+        assert!(
+            x > prev_x,
+            "caret-x must advance at space byte {byte}: {x} !> {prev_x}"
+        );
+        prev_x = x;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Regression guard for the TextField path: TextField shapes its whole display
+// string via `shape_line` (not the word-wrap path), which already preserves
+// spaces. Lock that in so the TextArea fix never tempts a shared regression.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn text_field_shape_line_preserves_spaces() {
+    let mut text_system = TextSystem::new().expect("create TextSystem");
+    let font = text_system
+        .load_font_from_bytes(slate_text::TEST_FONT, 14.0, 1.0)
+        .expect("load bundled font");
+
+    let one = text_system.shape_line(&font, "a b").expect("shape one");
+    let five = text_system.shape_line(&font, "a     b").expect("shape five");
+    assert!(
+        five.width_lpx > one.width_lpx + 1.0,
+        "shape_line must keep all 5 spaces ({} vs {})",
+        five.width_lpx,
+        one.width_lpx
+    );
+}

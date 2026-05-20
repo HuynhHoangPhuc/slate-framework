@@ -191,11 +191,36 @@ fn fit_paragraph(
     let mut cur: Vec<ShapedGlyph> = Vec::new();
     let mut cur_width = 0.0f32;
     let mut cur_start = 0usize;
+    // A trailing space run held back: committed (visible) before a following
+    // word that fits, or absorbed at a soft wrap / before an over-wide word.
+    let mut pending: Option<&ShapedWord> = None;
+
+    // Append an item's glyphs at the running pen, rewriting word-local clusters
+    // to document-absolute byte offsets so caret/hit-test math is byte-keyed
+    // end to end (applies to space-run glyphs identically).
+    fn place(word: &ShapedWord, cur: &mut Vec<ShapedGlyph>, cur_width: &mut f32) {
+        let pen_x = *cur_width;
+        for g in &word.glyphs {
+            let mut adjusted = *g;
+            adjusted.position_lpx[0] += pen_x;
+            adjusted.cluster = (word.source_byte_range.start + g.cluster as usize) as u32;
+            cur.push(adjusted);
+        }
+        *cur_width += word.advance_width_lpx;
+    }
 
     for word in words {
+        if word.is_space_run {
+            // Hold the run; the scanner never emits two runs back to back.
+            pending = Some(word);
+            continue;
+        }
+
         // A word that cannot fit even on its own line is broken at grapheme
-        // boundaries. Flush the in-progress line first, then emit the pieces.
+        // boundaries. The pending run is a soft break → absorb it, flush the
+        // in-progress line, then emit the pieces.
         if word.advance_width_lpx > max_width {
+            pending = None;
             if !cur.is_empty() {
                 out.push((build_shaped_line(doc, std::mem::take(&mut cur), cur_width), cur_start));
                 cur_width = 0.0;
@@ -206,37 +231,43 @@ fn fit_paragraph(
             continue;
         }
 
+        let pending_w = pending.map(|s| s.advance_width_lpx).unwrap_or(0.0);
         let width_with = if cur.is_empty() {
             word.advance_width_lpx
         } else {
-            cur_width + doc.space_width + word.advance_width_lpx
+            cur_width + pending_w + word.advance_width_lpx
         };
         if width_with > max_width && !cur.is_empty() {
+            // Wrap before this word; absorb the pending run (no visible width
+            // on either line) and start the next line with the word.
             out.push((build_shaped_line(doc, std::mem::take(&mut cur), cur_width), cur_start));
             cur_width = 0.0;
-        }
-
-        let pen_x = if cur.is_empty() {
+            pending = None;
             cur_start = word.source_byte_range.start;
-            0.0
+            place(word, &mut cur, &mut cur_width);
         } else {
-            cur_width + doc.space_width
-        };
-        for g in &word.glyphs {
-            let mut adjusted = *g;
-            adjusted.position_lpx[0] += pen_x;
-            // Rewrite the word-local cluster to a document-absolute byte offset
-            // so caret/hit-test math over the line is byte-keyed end to end.
-            adjusted.cluster = (word.source_byte_range.start + g.cluster as usize) as u32;
-            cur.push(adjusted);
+            if cur.is_empty() {
+                // Line begins at the pending run's start (leading spaces stay
+                // visible) or at the word if there is no pending run.
+                cur_start = pending
+                    .map(|s| s.source_byte_range.start)
+                    .unwrap_or(word.source_byte_range.start);
+            }
+            if let Some(sp) = pending.take() {
+                place(sp, &mut cur, &mut cur_width);
+            }
+            place(word, &mut cur, &mut cur_width);
         }
-        cur_width = if pen_x == 0.0 {
-            word.advance_width_lpx
-        } else {
-            cur_width + doc.space_width + word.advance_width_lpx
-        };
     }
 
+    // Trailing/standalone spaces at the paragraph (hard line) end stay visible
+    // and caret-addressable.
+    if let Some(sp) = pending.take() {
+        if cur.is_empty() {
+            cur_start = sp.source_byte_range.start;
+        }
+        place(sp, &mut cur, &mut cur_width);
+    }
     if !cur.is_empty() {
         out.push((build_shaped_line(doc, cur, cur_width), cur_start));
     }

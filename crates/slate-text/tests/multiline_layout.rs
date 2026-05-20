@@ -176,21 +176,26 @@ fn shape_words_records_source_byte_ranges() {
     let mut backend = MockBackend;
     let font = backend.load_font("mock", 16.0, 1.0).unwrap();
 
-    // ASCII
-    let (words, _) = shape_words(&backend, &font, "ab cd").unwrap();
-    assert_eq!(words.len(), 2);
-    assert_eq!(words[0].source_byte_range, 0..2);
-    assert_eq!(words[1].source_byte_range, 3..5);
+    // ASCII: the inter-word space is now its own preserved item (word,
+    // space-run, word) rather than a collapsed implicit gap.
+    let (items, _) = shape_words(&backend, &font, "ab cd").unwrap();
+    assert_eq!(items.len(), 3);
+    assert_eq!(items[0].source_byte_range, 0..2);
+    assert!(!items[0].is_space_run);
+    assert!(items[1].is_space_run);
+    assert_eq!(items[1].source_byte_range, 2..3);
+    assert_eq!(items[2].source_byte_range, 3..5);
+    assert!(!items[2].is_space_run);
 
-    // CJK (3 bytes each)
-    let (words, _) = shape_words(&backend, &font, "你 好").unwrap();
-    assert_eq!(words[0].source_byte_range, 0..3);
-    assert_eq!(words[1].source_byte_range, 4..7);
+    // CJK (3 bytes each): text words flank a space run.
+    let (items, _) = shape_words(&backend, &font, "你 好").unwrap();
+    assert_eq!(items[0].source_byte_range, 0..3);
+    assert_eq!(items[2].source_byte_range, 4..7);
 
-    // Emoji (4 bytes)
-    let (words, _) = shape_words(&backend, &font, "😀 x").unwrap();
-    assert_eq!(words[0].source_byte_range, 0..4);
-    assert_eq!(words[1].source_byte_range, 5..6);
+    // Emoji (4 bytes).
+    let (items, _) = shape_words(&backend, &font, "😀 x").unwrap();
+    assert_eq!(items[0].source_byte_range, 0..4);
+    assert_eq!(items[2].source_byte_range, 5..6);
 }
 
 // ── Test 2: byte-aware wrap → contiguous ranges covering 0..len ───────────────
@@ -300,6 +305,97 @@ fn rewrap_at_new_width_does_no_reshaping() {
     );
 
     assert!(lines_b.lines.len() >= lines_a.lines.len());
+}
+
+// ── Multi-space shaping (ASCII space preserved) ───────────────────────────────
+
+#[test]
+fn multi_space_run_contributes_to_line_width() {
+    let backend = MockBackend;
+    let font = MockBackend::font();
+    // "a     b": a=10, 5 spaces=25, b=10 → 45 lpx all on one wide line.
+    let doc = shape_document(&backend, &font, "a     b").unwrap();
+    let layout = wrap_document(&doc, 1000.0);
+    assert_eq!(layout.lines.len(), 1);
+    assert!(
+        (layout.lines[0].line.width_lpx - 45.0).abs() < 0.01,
+        "width should include all 5 spaces: {}",
+        layout.lines[0].line.width_lpx
+    );
+}
+
+#[test]
+fn multi_space_wraps_at_run_boundary_and_absorbs_trailing() {
+    let backend = MockBackend;
+    let font = MockBackend::font();
+    // "aaaa     bbbb": aaaa=40, 5 spaces=25, bbbb=40. width 60 fits aaaa but
+    // not aaaa+run+bbbb → wrap at the run; trailing spaces absorbed (line0
+    // stays 40 wide, bbbb starts at x0 on line1).
+    let text = "aaaa     bbbb";
+    let doc = shape_document(&backend, &font, text).unwrap();
+    let layout = wrap_document(&doc, 60.0);
+    assert_eq!(layout.lines.len(), 2);
+    assert!(
+        (layout.lines[0].line.width_lpx - 40.0).abs() < 0.01,
+        "line0 must not count absorbed trailing spaces: {}",
+        layout.lines[0].line.width_lpx
+    );
+    assert!(
+        (layout.lines[1].line.width_lpx - 40.0).abs() < 0.01,
+        "line1 (bbbb) must start at x0, no leading spaces: {}",
+        layout.lines[1].line.width_lpx
+    );
+    // Coverage stays contiguous and total; absorbed spaces fold into line0.
+    assert_eq!(layout.lines[0].byte_start, 0);
+    assert_eq!(layout.lines[0].byte_end, layout.lines[1].byte_start);
+    assert_eq!(layout.lines.last().unwrap().byte_end, text.len());
+}
+
+#[test]
+fn caret_advances_by_space_width_through_run() {
+    let backend = MockBackend;
+    let font = MockBackend::font();
+    // "a     b": byte 0=a, bytes 1..6 = spaces, byte 6 = b. Space = 5 lpx.
+    let doc = shape_document(&backend, &font, "a     b").unwrap();
+    let layout = wrap_document(&doc, 1000.0);
+    // After 'a' (byte 1): x = 10.
+    assert_eq!(layout.caret_position(1), (0, 10.0, 0.0));
+    // Each space byte advances by 5.
+    assert_eq!(layout.caret_position(2), (0, 15.0, 0.0));
+    assert_eq!(layout.caret_position(3), (0, 20.0, 0.0));
+    assert_eq!(layout.caret_position(4), (0, 25.0, 0.0));
+    assert_eq!(layout.caret_position(5), (0, 30.0, 0.0));
+    assert_eq!(layout.caret_position(6), (0, 35.0, 0.0));
+    // After 'b': x = 45.
+    assert_eq!(layout.caret_position(7), (0, 45.0, 0.0));
+}
+
+#[test]
+fn byte_at_line_x_inside_space_run() {
+    let backend = MockBackend;
+    let font = MockBackend::font();
+    let text = "a     b";
+    let doc = shape_document(&backend, &font, text).unwrap();
+    let layout = wrap_document(&doc, 1000.0);
+    // x in the middle of the 2nd space (pen 15..20, mid 17.5) → byte 3.
+    assert_eq!(layout.byte_at_line_x(text, 0, 18.0), 3);
+    // x just past 'a' leading edge of first space → byte 1.
+    assert_eq!(layout.byte_at_line_x(text, 0, 11.0), 1);
+}
+
+#[test]
+fn pure_leading_whitespace_is_addressable() {
+    let backend = MockBackend;
+    let font = MockBackend::font();
+    let text = "     "; // 5 spaces, no words.
+    let doc = shape_document(&backend, &font, text).unwrap();
+    let layout = wrap_document(&doc, 1000.0);
+    assert_eq!(layout.lines.len(), 1);
+    assert!((layout.lines[0].line.width_lpx - 25.0).abs() < 0.01);
+    // Every space byte is caret-addressable.
+    assert_eq!(layout.caret_position(0), (0, 0.0, 0.0));
+    assert_eq!(layout.caret_position(3), (0, 15.0, 0.0));
+    assert_eq!(layout.caret_position(5), (0, 25.0, 0.0));
 }
 
 // ── Test 6: over-width word breaks at grapheme boundaries ─────────────────────
