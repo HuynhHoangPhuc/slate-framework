@@ -54,6 +54,11 @@ pub struct TextAreaStyle {
     /// Selection highlight color (translucent accent; ~30% alpha). Unused until
     /// selection lands in a later phase; kept here so the style is stable.
     pub selection_color: [f32; 4],
+    /// Color of the 1px underline drawn beneath the active IME composition.
+    pub preedit_underline_color: [f32; 4],
+    /// Highlight color for the IME target-converted sub-range, drawn behind the
+    /// composed glyphs (translucent accent; ~30% alpha).
+    pub preedit_selection_color: [f32; 4],
     /// Fixed content width in logical pixels — text wraps to this width.
     pub width: f32,
     /// Minimum height in whole text rows. The element never shrinks below this
@@ -69,6 +74,8 @@ impl Default for TextAreaStyle {
             background: None,
             caret_color: [1.0, 1.0, 1.0, 1.0],
             selection_color: [0.4, 0.6, 1.0, 0.3],
+            preedit_underline_color: [1.0, 1.0, 1.0, 1.0],
+            preedit_selection_color: [0.4, 0.6, 1.0, 0.3],
             width: 300.0,
             min_lines: 1,
         }

@@ -45,6 +45,8 @@ impl View for TextAreaDemo {
             background: Some([0.15, 0.15, 0.18, 1.0]),
             caret_color: Color::WHITE.into(),
             selection_color: [0.4, 0.6, 1.0, 0.3],
+            preedit_underline_color: Color::WHITE.into(),
+            preedit_selection_color: [0.4, 0.6, 1.0, 0.3],
             width: 520.0,
             min_lines: 6,
         };

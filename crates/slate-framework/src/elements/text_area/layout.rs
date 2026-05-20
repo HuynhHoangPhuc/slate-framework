@@ -146,6 +146,74 @@ pub(crate) fn selection_rects(
     rects
 }
 
+/// Build the IME display string by splicing the active composition into the
+/// committed text at the caret: `committed[..caret] + preedit + committed[caret..]`.
+///
+/// `caret` is clamped to `committed.len()` and floored to the nearest char
+/// boundary at or below it, so a caret that momentarily indexes mid-codepoint
+/// (or past the end) never panics the splice. An empty `preedit` short-circuits
+/// to a clone of `committed` — paint uses the pre-shaped layout in that case.
+pub(crate) fn compose_display(committed: &str, caret: usize, preedit: &str) -> String {
+    if preedit.is_empty() {
+        return committed.to_string();
+    }
+    let mut at = caret.min(committed.len());
+    while at > 0 && !committed.is_char_boundary(at) {
+        at -= 1;
+    }
+    let mut out = String::with_capacity(committed.len() + preedit.len());
+    out.push_str(&committed[..at]);
+    out.push_str(preedit);
+    out.push_str(&committed[at..]);
+    out
+}
+
+/// One preedit run on a single visual line: the line it sits on plus the
+/// element-relative x and width of the composed bytes covered on that line.
+/// Paint resolves the y (underline below baseline, highlight at line top) from
+/// the line's own metrics, so this carries only the horizontal geometry.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct PreeditRun {
+    /// Index into `layout.lines`.
+    pub line_idx: usize,
+    /// Left edge of the run, relative to the element's painted x-origin.
+    pub x_lpx: f32,
+    /// Run width in logical pixels (hugs the composed glyphs, never extends to
+    /// the content edge the way a wrapped *selection* rect does).
+    pub width_lpx: f32,
+}
+
+/// Split the composed byte range `[start, hi)` of a preedit run into one
+/// per-visual-line run, hugging the glyphs actually on each line.
+///
+/// Unlike [`selection_rects`], a fully-covered interior line is **not** widened
+/// to `content_width`: an IME underline / target highlight tracks the composed
+/// text, not the wrap fill. Empty ranges and zero-width runs produce nothing.
+pub(crate) fn preedit_runs(layout: &MultilineLayout, start: usize, end: usize) -> Vec<PreeditRun> {
+    let mut runs = Vec::new();
+    if start >= end {
+        return runs;
+    }
+    for (idx, vline) in layout.lines.iter().enumerate() {
+        if vline.byte_end <= start || vline.byte_start >= end {
+            continue;
+        }
+        let lo = start.max(vline.byte_start);
+        let hi = end.min(vline.byte_end);
+        let x_start = line_x_at_byte(&vline.line, lo);
+        let x_end = line_x_at_byte(&vline.line, hi);
+        let width = (x_end - x_start).max(0.0);
+        if width > 0.0 {
+            runs.push(PreeditRun {
+                line_idx: idx,
+                x_lpx: x_start,
+                width_lpx: width,
+            });
+        }
+    }
+    runs
+}
+
 /// Pen-x of the leading edge of the cluster at absolute `byte` on `line`:
 /// the summed advance of every glyph whose (document-absolute) cluster is
 /// strictly before `byte`. Returns the line width for a byte past the last
@@ -301,6 +369,55 @@ mod tests {
         let l = layout_3lines();
         assert!(selection_rects(&l, 4, 4, 100.0).is_empty());
         assert!(selection_rects(&l, 5, 2, 100.0).is_empty());
+    }
+
+    #[test]
+    fn compose_display_inserts_at_caret() {
+        assert_eq!(compose_display("ab", 0, "XY"), "XYab");
+        assert_eq!(compose_display("ab", 1, "XY"), "aXYb");
+        assert_eq!(compose_display("ab", 2, "XY"), "abXY");
+    }
+
+    #[test]
+    fn compose_display_empty_preedit_is_clone() {
+        assert_eq!(compose_display("hello", 3, ""), "hello");
+        assert_eq!(compose_display("", 0, ""), "");
+    }
+
+    #[test]
+    fn compose_display_clamps_and_floors_caret() {
+        // Caret past end clamps to len.
+        assert_eq!(compose_display("ab", 99, "X"), "abX");
+        // Caret mid-codepoint floors to the char boundary below it ("é" = 2 bytes).
+        assert_eq!(compose_display("é", 1, "X"), "Xé");
+    }
+
+    #[test]
+    fn compose_display_multibyte_preedit_and_text() {
+        // Caret 2 == after "ab"; insert CJK composition.
+        assert_eq!(compose_display("ab", 2, "你好"), "ab你好");
+        assert_eq!(compose_display("ab", 0, "你好"), "你好ab");
+    }
+
+    #[test]
+    fn preedit_runs_hug_glyphs_not_content_width() {
+        // Select bytes 1..9 across all three lines (same layout selection uses).
+        let l = layout_3lines();
+        let runs = preedit_runs(&l, 1, 9);
+        assert_eq!(runs.len(), 3, "one run per spanned line");
+        // line0: byte1 (x=10) .. min(9, byte_end=4) → byte4 maps to width 30.
+        assert_eq!(runs[0], PreeditRun { line_idx: 0, x_lpx: 10.0, width_lpx: 20.0 });
+        // line1 fully covered: hugs glyphs (x=0 .. width 20), NOT content_width(100).
+        assert_eq!(runs[1], PreeditRun { line_idx: 1, x_lpx: 0.0, width_lpx: 20.0 });
+        // line2: x=0 .. byte9 (x=20).
+        assert_eq!(runs[2], PreeditRun { line_idx: 2, x_lpx: 0.0, width_lpx: 20.0 });
+    }
+
+    #[test]
+    fn preedit_runs_empty_range_is_none() {
+        let l = layout_3lines();
+        assert!(preedit_runs(&l, 4, 4).is_empty());
+        assert!(preedit_runs(&l, 9, 2).is_empty());
     }
 
     #[test]
