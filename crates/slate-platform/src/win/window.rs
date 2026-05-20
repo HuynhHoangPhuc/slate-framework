@@ -79,6 +79,7 @@ impl WinWindow {
             pending_monitor_change: Cell::new(false),
             pending_high_surrogate: Cell::new(None),
             redraw_timer_armed: Cell::new(false),
+            releasing_capture: Cell::new(false),
         });
 
         let inner_ptr = Arc::as_ptr(&inner);

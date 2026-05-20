@@ -144,6 +144,12 @@ pub struct WinWindowInner {
     /// before re-arming so a fast caller replaces an in-flight timer
     /// without double-fire, and to clean up on `WM_DESTROY`.
     pub(crate) redraw_timer_armed: Cell<bool>,
+    /// Set immediately before our own `ReleaseCapture()` call so the
+    /// following `WM_CAPTURECHANGED` is recognized as a voluntary release,
+    /// not theft by another window. The wndproc consumes (and clears) it.
+    /// Without this gate, every mouse-up would dispatch `CaptureLost`,
+    /// zeroing the multi-click run between consecutive clicks.
+    pub(crate) releasing_capture: Cell<bool>,
 }
 
 impl WinWindowInner {
@@ -514,13 +520,20 @@ impl WinWindowInner {
                 LRESULT(0)
             }
             WM_CAPTURECHANGED => {
-                // If capture was stolen by another window, clear our state
-                if lparam.0 != hwnd.0 as isize {
+                // Win32 fires WM_CAPTURECHANGED for both voluntary release
+                // (our own ReleaseCapture call in handle_button_up) and theft
+                // by another window. The flag is set before our ReleaseCapture
+                // so consume-and-clear here suppresses the spurious CaptureLost.
+                if self.releasing_capture.replace(false) {
+                    LRESULT(0)
+                } else if lparam.0 != hwnd.0 as isize {
                     self.captured_buttons.set(0);
                     self.is_tracking_hover.set(false);
                     dispatch_event(Event::CaptureLost { window: self.id });
+                    LRESULT(0)
+                } else {
+                    LRESULT(0)
                 }
-                LRESULT(0)
             }
             // -----------------------------------------------------------------
             // Keyboard events (Phase 9a)
@@ -762,6 +775,9 @@ impl WinWindowInner {
         let new = old & !bit;
         self.captured_buttons.set(new);
         if new == 0 && old != 0 {
+            // Mark the upcoming WM_CAPTURECHANGED as voluntary BEFORE the call —
+            // Win32 may dispatch it synchronously from inside ReleaseCapture.
+            self.releasing_capture.set(true);
             let _ = unsafe { ReleaseCapture() };
         }
 

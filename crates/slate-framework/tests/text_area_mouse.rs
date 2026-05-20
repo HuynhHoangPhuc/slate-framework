@@ -163,6 +163,40 @@ fn fourth_click_wraps_back_to_caret() {
 }
 
 #[test]
+fn multi_click_run_survives_capture_release() {
+    // Production sequence on Win32: down → up → down. Before the platform fix,
+    // our own `ReleaseCapture()` triggered WM_CAPTURECHANGED → Event::CaptureLost
+    // → clear_drag_flags, zeroing click_count between the two downs so a real
+    // double-click was always counted as two singles. The platform now suppresses
+    // the spurious dispatch; this test locks the post-fix invariant: a mouse-up
+    // between two same-position clicks must not break the multi-click run.
+    let (state, ime_rc) = setup();
+    click(&state, 12.0, 4.0);
+    state.dispatch_mouse_up_for_test((12.0, 4.0), MouseButton::Left, Modifiers::default());
+    click(&state, 12.0, 4.0);
+    let s = ime_rc.borrow();
+    assert_eq!(s.click_count, 2, "down→up→down preserves the multi-click counter");
+    assert_eq!(s.selection_anchor, Some(0), "word anchor at 'alpha' start");
+    assert_eq!(s.caret, 5, "word caret at 'alpha' end");
+}
+
+#[test]
+fn real_capture_loss_still_resets_multi_click_run() {
+    // Counterpart to multi_click_run_survives_capture_release: when capture is
+    // genuinely lost (alt-tab, modal popup, sibling SetCapture), the framework
+    // must still drop the multi-click counter so a click seconds later on the
+    // restored window is a fresh single, not a continuation.
+    let (state, ime_rc) = setup();
+    click(&state, 12.0, 4.0);
+    state.dispatch_mouse_up_for_test((12.0, 4.0), MouseButton::Left, Modifiers::default());
+    let _ = state.dispatch_capture_lost_for_test();
+    click(&state, 12.0, 4.0);
+    let s = ime_rc.borrow();
+    assert_eq!(s.click_count, 1, "real CaptureLost resets the multi-click counter");
+    assert_eq!(Some(s.caret), s.selection_anchor, "single click is collapsed");
+}
+
+#[test]
 fn double_click_on_second_line_selects_that_word() {
     let (state, ime_rc) = setup();
     // y in line1's band ("beta", bytes 6..10). line_height is uniform; line1's
