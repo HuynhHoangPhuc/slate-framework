@@ -11,12 +11,41 @@
 //! click-count detector promotes them to a double / triple click without any
 //! platform `clickCount`.
 //!
-//! Windows + `test-hooks`-gated for the same reason as the other dispatch tests:
-//! the live platform text backend + `DefaultPlatform::new()` off the main thread.
-
-#![cfg(all(target_os = "windows", feature = "test-hooks"))]
+//! Runs cross-platform as a `harness = false` `[[test]]` (its `fn main` executes
+//! on the process main thread, so the real platform + a 1×1 window construct on
+//! macOS); `required-features = ["test-hooks"]` gates the build.
 
 use std::rc::Rc;
+
+/// `assert_eq!` analogue for the `harness = false` runner: returns `Err` with
+/// both operands on mismatch instead of panicking.
+macro_rules! ensure_eq {
+    ($left:expr, $right:expr, $($arg:tt)*) => {{
+        let left = $left;
+        let right = $right;
+        if left != right {
+            return Err(format!(
+                "{} (left: {:?}, right: {:?})",
+                format!($($arg)*),
+                left,
+                right
+            ));
+        }
+    }};
+}
+
+/// `assert!` analogue: returns `Err` when the condition is false.
+macro_rules! ensure {
+    ($cond:expr, $($arg:tt)*) => {
+        match $cond {
+            true => {}
+            false => return Err(format!($($arg)*)),
+        }
+    };
+}
+
+/// One named runner case: a label and the check fn that returns `Err` on failure.
+type Case = (&'static str, fn() -> Result<(), String>);
 
 use slate_framework::app_state::AppState;
 use slate_framework::element::AnyElement;
@@ -111,33 +140,32 @@ fn click(state: &Rc<AppState<NoopView>>, x: f32, y: f32) {
     state.dispatch_mouse_down_for_test((x, y), MouseButton::Left, Modifiers::default());
 }
 
-#[test]
-fn single_click_places_collapsed_caret() {
+fn check_single_click_places_collapsed_caret() -> Result<(), String> {
     let (state, ime_rc) = setup();
     // A point inside line0 "alpha": small x, y in the first line's band.
     click(&state, 12.0, 4.0);
     let s = ime_rc.borrow();
     // One click → caret == anchor (collapsed); both inside the word, not snapped.
-    assert_eq!(s.click_count, 1);
-    assert_eq!(Some(s.caret), s.selection_anchor, "single click is collapsed");
-    assert!(s.caret < 5, "caret lands inside 'alpha' (bytes 0..5)");
+    ensure_eq!(s.click_count, 1, "single click count");
+    ensure_eq!(Some(s.caret), s.selection_anchor, "single click is collapsed");
+    ensure!(s.caret < 5, "caret lands inside 'alpha' (bytes 0..5)");
+    Ok(())
 }
 
-#[test]
-fn double_click_selects_the_word() {
+fn check_double_click_selects_the_word() -> Result<(), String> {
     let (state, ime_rc) = setup();
     // Two clicks at the same point → the second promotes to a double click and
     // snaps the selection to the Unicode word "alpha" (bytes 0..5).
     click(&state, 12.0, 4.0);
     click(&state, 12.0, 4.0);
     let s = ime_rc.borrow();
-    assert_eq!(s.click_count, 2, "second click is a double");
-    assert_eq!(s.selection_anchor, Some(0), "word anchor at 'alpha' start");
-    assert_eq!(s.caret, 5, "word caret at 'alpha' end");
+    ensure_eq!(s.click_count, 2, "second click is a double");
+    ensure_eq!(s.selection_anchor, Some(0), "word anchor at 'alpha' start");
+    ensure_eq!(s.caret, 5, "word caret at 'alpha' end");
+    Ok(())
 }
 
-#[test]
-fn triple_click_selects_the_visual_line() {
+fn check_triple_click_selects_the_visual_line() -> Result<(), String> {
     let (state, ime_rc) = setup();
     // Three clicks → line select: line0 "alpha" spans bytes 0..6 (the '\n' is
     // folded into byte_end, so the terminator is selected too).
@@ -145,25 +173,25 @@ fn triple_click_selects_the_visual_line() {
     click(&state, 12.0, 4.0);
     click(&state, 12.0, 4.0);
     let s = ime_rc.borrow();
-    assert_eq!(s.click_count, 3, "third click is a triple");
-    assert_eq!(s.selection_anchor, Some(0), "line anchor at line0 start");
-    assert_eq!(s.caret, 6, "line caret at line0 end (past the '\\n')");
+    ensure_eq!(s.click_count, 3, "third click is a triple");
+    ensure_eq!(s.selection_anchor, Some(0), "line anchor at line0 start");
+    ensure_eq!(s.caret, 6, "line caret at line0 end (past the '\\n')");
+    Ok(())
 }
 
-#[test]
-fn fourth_click_wraps_back_to_caret() {
+fn check_fourth_click_wraps_back_to_caret() -> Result<(), String> {
     let (state, ime_rc) = setup();
     for _ in 0..4 {
         click(&state, 12.0, 4.0);
     }
     let s = ime_rc.borrow();
     // 1→2→3→1: the fourth click re-places a collapsed caret rather than selecting.
-    assert_eq!(s.click_count, 1, "fourth click wraps to single");
-    assert_eq!(Some(s.caret), s.selection_anchor, "wrapped click is collapsed");
+    ensure_eq!(s.click_count, 1, "fourth click wraps to single");
+    ensure_eq!(Some(s.caret), s.selection_anchor, "wrapped click is collapsed");
+    Ok(())
 }
 
-#[test]
-fn multi_click_run_survives_capture_release() {
+fn check_multi_click_run_survives_capture_release() -> Result<(), String> {
     // Production sequence on Win32: down → up → down. Before the platform fix,
     // our own `ReleaseCapture()` triggered WM_CAPTURECHANGED → Event::CaptureLost
     // → clear_drag_flags, zeroing click_count between the two downs so a real
@@ -175,13 +203,13 @@ fn multi_click_run_survives_capture_release() {
     state.dispatch_mouse_up_for_test((12.0, 4.0), MouseButton::Left, Modifiers::default());
     click(&state, 12.0, 4.0);
     let s = ime_rc.borrow();
-    assert_eq!(s.click_count, 2, "down→up→down preserves the multi-click counter");
-    assert_eq!(s.selection_anchor, Some(0), "word anchor at 'alpha' start");
-    assert_eq!(s.caret, 5, "word caret at 'alpha' end");
+    ensure_eq!(s.click_count, 2, "down→up→down preserves the multi-click counter");
+    ensure_eq!(s.selection_anchor, Some(0), "word anchor at 'alpha' start");
+    ensure_eq!(s.caret, 5, "word caret at 'alpha' end");
+    Ok(())
 }
 
-#[test]
-fn real_capture_loss_still_resets_multi_click_run() {
+fn check_real_capture_loss_still_resets_multi_click_run() -> Result<(), String> {
     // Counterpart to multi_click_run_survives_capture_release: when capture is
     // genuinely lost (alt-tab, modal popup, sibling SetCapture), the framework
     // must still drop the multi-click counter so a click seconds later on the
@@ -192,12 +220,12 @@ fn real_capture_loss_still_resets_multi_click_run() {
     let _ = state.dispatch_capture_lost_for_test();
     click(&state, 12.0, 4.0);
     let s = ime_rc.borrow();
-    assert_eq!(s.click_count, 1, "real CaptureLost resets the multi-click counter");
-    assert_eq!(Some(s.caret), s.selection_anchor, "single click is collapsed");
+    ensure_eq!(s.click_count, 1, "real CaptureLost resets the multi-click counter");
+    ensure_eq!(Some(s.caret), s.selection_anchor, "single click is collapsed");
+    Ok(())
 }
 
-#[test]
-fn double_click_on_second_line_selects_that_word() {
+fn check_double_click_on_second_line_selects_that_word() -> Result<(), String> {
     let (state, ime_rc) = setup();
     // y in line1's band ("beta", bytes 6..10). line_height is uniform; line1's
     // band starts at total_height/3. Click low enough to land on line1.
@@ -205,7 +233,51 @@ fn double_click_on_second_line_selects_that_word() {
     click(&state, 8.0, y);
     click(&state, 8.0, y);
     let s = ime_rc.borrow();
-    assert_eq!(s.click_count, 2);
-    assert_eq!(s.selection_anchor, Some(6), "word anchor at 'beta' start");
-    assert_eq!(s.caret, 10, "word caret at 'beta' end");
+    ensure_eq!(s.click_count, 2, "double click count on line1");
+    ensure_eq!(s.selection_anchor, Some(6), "word anchor at 'beta' start");
+    ensure_eq!(s.caret, 10, "word caret at 'beta' end");
+    Ok(())
+}
+
+fn main() {
+    let cases: &[Case] = &[
+        (
+            "single_click_places_collapsed_caret",
+            check_single_click_places_collapsed_caret,
+        ),
+        ("double_click_selects_the_word", check_double_click_selects_the_word),
+        (
+            "triple_click_selects_the_visual_line",
+            check_triple_click_selects_the_visual_line,
+        ),
+        ("fourth_click_wraps_back_to_caret", check_fourth_click_wraps_back_to_caret),
+        (
+            "multi_click_run_survives_capture_release",
+            check_multi_click_run_survives_capture_release,
+        ),
+        (
+            "real_capture_loss_still_resets_multi_click_run",
+            check_real_capture_loss_still_resets_multi_click_run,
+        ),
+        (
+            "double_click_on_second_line_selects_that_word",
+            check_double_click_on_second_line_selects_that_word,
+        ),
+    ];
+
+    let mut failed = 0;
+    for (name, f) in cases {
+        match f() {
+            Ok(()) => println!("ok   - {name}"),
+            Err(e) => {
+                eprintln!("FAIL - {name}: {e}");
+                failed += 1;
+            }
+        }
+    }
+    if failed > 0 {
+        eprintln!("\n{failed} case(s) failed");
+        std::process::exit(1);
+    }
+    println!("\nall {} case(s) passed", cases.len());
 }

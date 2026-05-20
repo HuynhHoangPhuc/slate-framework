@@ -11,13 +11,43 @@
 //! `paint` refreshes each frame) is stale after an edit. The flows here use only
 //! layout-independent handlers (typing, Enter, grapheme motion, clipboard, undo,
 //! IME); the one navigation assertion re-seeds the layout exactly as `paint`
-//! would, then drives the real Home/End handler. Windows + `test-hooks`-gated
-//! for the same reason as the other dispatch suites.
-
-#![cfg(all(target_os = "windows", feature = "test-hooks"))]
+//! would, then drives the real Home/End handler.
+//!
+//! Runs cross-platform as a `harness = false` `[[test]]` (its `fn main` executes
+//! on the process main thread, so the real platform + a 1×1 window construct on
+//! macOS); `required-features = ["test-hooks"]` gates the build.
 
 use std::cell::RefCell;
 use std::rc::Rc;
+
+/// `assert!` analogue for the `harness = false` runner: returns `Err` instead of
+/// panicking so the `fn main` runner can report it as a failed case.
+macro_rules! ensure {
+    ($cond:expr, $($arg:tt)*) => {
+        if !$cond {
+            return Err(format!($($arg)*));
+        }
+    };
+}
+
+/// `assert_eq!` analogue: returns `Err` with both operands on mismatch.
+macro_rules! ensure_eq {
+    ($left:expr, $right:expr, $($arg:tt)*) => {{
+        let left = $left;
+        let right = $right;
+        if left != right {
+            return Err(format!(
+                "{} (left: {:?}, right: {:?})",
+                format!($($arg)*),
+                left,
+                right
+            ));
+        }
+    }};
+}
+
+/// One named runner case: a label and the check fn that returns `Err` on failure.
+type Case = (&'static str, fn() -> Result<(), String>);
 
 use slate_framework::app_state::AppState;
 use slate_framework::element::AnyElement;
@@ -136,16 +166,22 @@ impl Harness {
             Modifiers::default(),
         );
     }
-    /// Ctrl-modified letter shortcut (Windows command modifier).
-    fn ctrl(&self, code: KeyCode, ch: &str) {
-        self.key(
-            code,
-            Key::Character(ch.into()),
+    /// Command-modified letter shortcut. The command modifier is Cmd (`meta`)
+    /// on macOS and Ctrl elsewhere, matching `is_command_modifier`, so clipboard
+    /// and undo shortcuts fire on the platform the test actually runs on.
+    fn command(&self, code: KeyCode, ch: &str) {
+        let mods = if cfg!(target_os = "macos") {
+            Modifiers {
+                meta: true,
+                ..Default::default()
+            }
+        } else {
             Modifiers {
                 ctrl: true,
                 ..Default::default()
-            },
-        );
+            }
+        };
+        self.key(code, Key::Character(ch.into()), mods);
     }
     fn text(&self) -> String {
         self.value.get_untracked()
@@ -168,65 +204,64 @@ fn reseed_layout(h: &Harness, text: &str) {
     h.ime.borrow_mut().last_layout = Some(Rc::new(layout));
 }
 
-#[test]
-fn type_two_lines_select_replace_then_undo() {
+fn check_type_two_lines_select_replace_then_undo() -> Result<(), String> {
     let h = harness();
     h.typ("a");
     h.typ("b");
     h.enter();
     h.typ("c");
     h.typ("d");
-    assert_eq!(h.text(), "ab\ncd", "Enter inserts a newline between the runs");
-    assert_eq!(h.caret(), 5);
+    ensure_eq!(h.text(), "ab\ncd", "Enter inserts a newline between the runs");
+    ensure_eq!(h.caret(), 5, "caret after typing 'ab\\ncd'");
 
     // Select "cd" with two Shift+Left, then type over it.
     h.shift_left();
     h.shift_left();
-    assert_eq!(h.ime.borrow().selection_anchor, Some(5));
-    assert_eq!(h.caret(), 3, "selection spans bytes 3..5 ('cd')");
+    ensure_eq!(h.ime.borrow().selection_anchor, Some(5), "selection anchor at byte 5");
+    ensure_eq!(h.caret(), 3, "selection spans bytes 3..5 ('cd')");
 
     h.typ("X");
-    assert_eq!(h.text(), "ab\nX", "typing replaces the selection");
-    assert_eq!(h.caret(), 4);
+    ensure_eq!(h.text(), "ab\nX", "typing replaces the selection");
+    ensure_eq!(h.caret(), 4, "caret after replacing selection with 'X'");
 
     // Undo restores the replaced text.
-    h.ctrl(KeyCode::KeyZ, "z");
-    assert_eq!(h.text(), "ab\ncd", "undo reverts the replace");
+    h.command(KeyCode::KeyZ, "z");
+    ensure_eq!(h.text(), "ab\ncd", "undo reverts the replace");
+    Ok(())
 }
 
-#[test]
-fn copy_multiline_selection_and_paste_preserves_newlines() {
+fn check_copy_multiline_selection_and_paste_preserves_newlines() -> Result<(), String> {
     let h = harness();
     h.typ("a");
     h.typ("b");
     h.enter();
     h.typ("c");
     h.typ("d");
-    assert_eq!(h.text(), "ab\ncd");
+    ensure_eq!(h.text(), "ab\ncd", "seeded buffer");
 
     // Select the whole document (5 Shift+Left from byte 5 → caret 0, anchor 5).
     for _ in 0..5 {
         h.shift_left();
     }
-    assert_eq!(h.caret(), 0);
-    assert_eq!(h.ime.borrow().selection_anchor, Some(5));
+    ensure_eq!(h.caret(), 0, "caret at document start after selecting all");
+    ensure_eq!(h.ime.borrow().selection_anchor, Some(5), "anchor at document end");
 
     // Copy, collapse to the right edge, then paste at the end.
-    h.ctrl(KeyCode::KeyC, "c");
+    h.command(KeyCode::KeyC, "c");
     h.arrow_right(); // collapses selection to byte 5 (caret end)
-    assert_eq!(h.caret(), 5);
-    assert_eq!(h.ime.borrow().selection_anchor, None);
+    ensure_eq!(h.caret(), 5, "ArrowRight collapses to byte 5");
+    ensure_eq!(h.ime.borrow().selection_anchor, None, "selection cleared on collapse");
 
-    h.ctrl(KeyCode::KeyV, "v");
-    assert_eq!(
+    h.command(KeyCode::KeyV, "v");
+    ensure_eq!(
         h.text(),
         "ab\ncdab\ncd",
         "multi-line paste keeps the '\\n' (multiline = true)"
     );
+    Ok(())
 }
 
-#[test]
-fn ime_commit_inserts_at_caret_mid_document() {
+fn check_ime_commit_inserts_at_caret_mid_document() -> Result<(), String> {
     let h = harness();
     // Seed "ad" with the caret between 'a' and 'd'.
     {
@@ -241,39 +276,42 @@ fn ime_commit_inserts_at_caret_mid_document() {
     // commit inserts at the caret.
     h.state
         .dispatch_ime_preedit_for_test(h.window, "b".into(), 1, None);
-    assert_eq!(h.ime.borrow().text, "ad", "preedit leaves the buffer untouched");
-    assert!(h.ime.borrow().preedit.is_some());
+    {
+        let s = h.ime.borrow();
+        ensure_eq!(s.text.as_str(), "ad", "preedit leaves the buffer untouched");
+        ensure!(s.preedit.is_some(), "preedit is recorded during composition");
+    }
 
     h.state.dispatch_ime_commit_for_test(h.window, "b".into());
-    assert_eq!(h.text(), "abd", "commit inserts at the caret mid-document");
-    assert_eq!(h.caret(), 2);
-    assert!(h.ime.borrow().preedit.is_none(), "commit clears the preedit");
+    ensure_eq!(h.text(), "abd", "commit inserts at the caret mid-document");
+    ensure_eq!(h.caret(), 2, "caret advances past the committed text");
+    ensure!(h.ime.borrow().preedit.is_none(), "commit clears the preedit");
+    Ok(())
 }
 
-#[test]
-fn enter_inserts_exactly_one_newline() {
+fn check_enter_inserts_exactly_one_newline() -> Result<(), String> {
     // Win32 dispatches both KeyDown(Enter) and a subsequent TextInput("\n") for
     // the same physical keystroke. The text-input handler must drop the
     // bare-newline payload so only the KeyDown path's "\n" insertion lands.
     let h = harness();
     h.enter();
     h.typ("\n");
-    assert_eq!(h.text(), "\n", "one Enter press yields exactly one newline");
-    assert_eq!(h.caret(), 1);
+    ensure_eq!(h.text(), "\n", "one Enter press yields exactly one newline");
+    ensure_eq!(h.caret(), 1, "caret after the single newline");
+    Ok(())
 }
 
-#[test]
-fn enter_inserts_exactly_one_newline_carriage_return() {
+fn check_enter_inserts_exactly_one_newline_carriage_return() -> Result<(), String> {
     // Some platforms normalize Enter to "\r" before delivering as text input.
     let h = harness();
     h.enter();
     h.typ("\r");
-    assert_eq!(h.text(), "\n", "bare \\r from text input is also filtered");
-    assert_eq!(h.caret(), 1);
+    ensure_eq!(h.text(), "\n", "bare \\r from text input is also filtered");
+    ensure_eq!(h.caret(), 1, "caret after the single newline");
+    Ok(())
 }
 
-#[test]
-fn end_key_after_typing_is_visual_line_relative() {
+fn check_end_key_after_typing_is_visual_line_relative() -> Result<(), String> {
     let h = harness();
     h.typ("a");
     h.typ("b");
@@ -289,5 +327,51 @@ fn end_key_after_typing_is_visual_line_relative() {
     // place the caret on line0 directly and assert End is line-relative.
     h.ime.borrow_mut().caret = 0;
     h.key(KeyCode::End, Key::Named(NamedKey::End), Modifiers::default());
-    assert_eq!(h.caret(), 2, "End lands at line0 end ('ab'), not document end");
+    ensure_eq!(h.caret(), 2, "End lands at line0 end ('ab'), not document end");
+    Ok(())
+}
+
+fn main() {
+    let cases: &[Case] = &[
+        (
+            "type_two_lines_select_replace_then_undo",
+            check_type_two_lines_select_replace_then_undo,
+        ),
+        (
+            "copy_multiline_selection_and_paste_preserves_newlines",
+            check_copy_multiline_selection_and_paste_preserves_newlines,
+        ),
+        (
+            "ime_commit_inserts_at_caret_mid_document",
+            check_ime_commit_inserts_at_caret_mid_document,
+        ),
+        (
+            "enter_inserts_exactly_one_newline",
+            check_enter_inserts_exactly_one_newline,
+        ),
+        (
+            "enter_inserts_exactly_one_newline_carriage_return",
+            check_enter_inserts_exactly_one_newline_carriage_return,
+        ),
+        (
+            "end_key_after_typing_is_visual_line_relative",
+            check_end_key_after_typing_is_visual_line_relative,
+        ),
+    ];
+
+    let mut failed = 0;
+    for (name, f) in cases {
+        match f() {
+            Ok(()) => println!("ok   - {name}"),
+            Err(e) => {
+                eprintln!("FAIL - {name}: {e}");
+                failed += 1;
+            }
+        }
+    }
+    if failed > 0 {
+        eprintln!("\n{failed} case(s) failed");
+        std::process::exit(1);
+    }
+    println!("\nall {} case(s) passed", cases.len());
 }

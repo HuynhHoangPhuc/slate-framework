@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Testing — macOS TextArea validation + cross-platform dispatch harness
+- Converted the four TextArea dispatch suites (`text_area_editing`, `text_area_layout`, `text_area_nav`, `text_area_mouse`) to `harness = false` `[[test]]` targets whose `fn main` runs on the process main thread, so the real platform + a 1×1 window + `AppState` construct on macOS (AppKit `MainThreadMarker`). Dropped the `cfg(target_os = "windows")` gate; kept `required-features = ["test-hooks"]`.
+- These suites now run cross-platform and exercise the real CoreText layout, NSPasteboard clipboard (multi-line round-trip, CRLF→LF), and IME commit paths on macOS — closing the prior Windows-only validation gap for shared TextArea logic.
+- Fixed a Windows-centric test helper that hardcoded the Ctrl modifier; it now sends the platform command modifier (Cmd on macOS, Ctrl elsewhere) so clipboard/undo shortcuts fire on the host OS. Production shortcut routing (`is_command_modifier`) was already correct.
+
 ### Added — Phase 9c: IME composition + TextField element
 - `slate-platform` `Event::ImePreedit`, `ImeCommit`, `ImeEnabled`, `ImeDisabled` for cross-platform composition events.
 - `WindowImeDelegate` trait (4 query methods: `ime_caret_rect`, `ime_text`, `ime_selected_range`, `ime_marked_range`) — cache-only reads per ADR-001 amendment.

@@ -46,3 +46,27 @@ env_logger.workspace = true
 default = []
 tokio = ["dep:tokio", "dep:async-compat"]
 test-hooks = ["slate-renderer/test-hooks", "slate-platform/test-hooks"]
+
+# Dispatch suites for the multi-line TextArea run their `fn main` on the process
+# main thread (`harness = false`) so the real platform + a 1×1 window construct
+# on macOS, where AppKit mandates the main thread. They build only with
+# `test-hooks`, which exposes the `*_for_test` hooks the cases drive.
+[[test]]
+name = "text_area_nav"
+harness = false
+required-features = ["test-hooks"]
+
+[[test]]
+name = "text_area_editing"
+harness = false
+required-features = ["test-hooks"]
+
+[[test]]
+name = "text_area_layout"
+harness = false
+required-features = ["test-hooks"]
+
+[[test]]
+name = "text_area_mouse"
+harness = false
+required-features = ["test-hooks"]
