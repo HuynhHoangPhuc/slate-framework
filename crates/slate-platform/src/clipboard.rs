@@ -69,11 +69,11 @@ mod imp {
     use std::thread::sleep;
     use std::time::Duration;
 
-    use windows::Win32::Foundation::{HANDLE, HWND};
+    use windows::Win32::Foundation::{GlobalFree, HANDLE, HWND};
     use windows::Win32::System::DataExchange::{
         CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, SetClipboardData,
     };
-    use windows::Win32::System::Memory::{GHND, GlobalAlloc, GlobalFree, GlobalLock, GlobalUnlock};
+    use windows::Win32::System::Memory::{GHND, GlobalAlloc, GlobalLock, GlobalUnlock};
     use windows::Win32::System::Ole::CF_UNICODETEXT;
 
     const RETRY_ATTEMPTS: usize = 5;
