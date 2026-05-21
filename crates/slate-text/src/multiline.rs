@@ -410,6 +410,19 @@ impl MultilineLayout {
     /// is the line's top. Uses [`Self::line_for_byte`] for the affinity rule.
     /// Returns `(0, 0.0, 0.0)` for an empty layout.
     pub fn caret_position(&self, byte: usize) -> (usize, f32, f32) {
+        self.caret_position_with_affinity(byte, crate::types::Affinity::Downstream)
+    }
+
+    /// Like [`Self::caret_position`] but resolves a direction-boundary byte to
+    /// the visual edge that `affinity` selects (the trailing edge of the run
+    /// ending at the byte, or the leading edge of the run starting there). The
+    /// soft-wrap line-resolution rule in [`Self::line_for_byte`] is unaffected:
+    /// affinity here picks only the within-line visual x on a mixed line.
+    pub fn caret_position_with_affinity(
+        &self,
+        byte: usize,
+        affinity: crate::types::Affinity,
+    ) -> (usize, f32, f32) {
         if self.lines.is_empty() {
             return (0, 0.0, 0.0);
         }
@@ -418,7 +431,7 @@ impl MultilineLayout {
         // Run-bearing line (mixed / RTL): defer to the run-aware caret math so
         // the caret tracks the correct visual edge of a logical byte.
         if !vline.line.runs.is_empty() {
-            let x = crate::glyph_geometry::run_caret_x_at(&vline.line, byte);
+            let x = crate::glyph_geometry::run_caret_x_at_affinity(&vline.line, byte, affinity);
             return (idx, x, vline.line.y_offset_lpx);
         }
         // Pen-x = sum of advances of glyphs strictly before the caret byte

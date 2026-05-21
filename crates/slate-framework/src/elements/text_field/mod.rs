@@ -325,18 +325,25 @@ impl Element for TextField {
         // `shape_line` (which is fallible and may log) and before the
         // `try_borrow_mut` at the end of paint() that updates
         // `caret_screen_rect` — keeping the registry borrow scope narrow.
-        let (committed_text, caret_byte, preedit_snapshot, selection_anchor) = {
+        let (committed_text, caret_byte, caret_affinity, preedit_snapshot, selection_anchor) = {
             match cx.ime_registry.borrow().get(element_id) {
                 Some(rc) => {
                     let s = rc.borrow();
                     (
                         s.text.clone(),
                         s.caret,
+                        s.caret_affinity,
                         s.preedit.clone(),
                         s.selection_anchor,
                     )
                 }
-                None => (self.value.get_untracked(), 0, None, None),
+                None => (
+                    self.value.get_untracked(),
+                    0,
+                    slate_text::Affinity::Downstream,
+                    None,
+                    None,
+                ),
             }
         };
 
@@ -373,7 +380,20 @@ impl Element for TextField {
         // ligatures, Indic clusters, and emoji ZWJ sequences all behave.
         let pixel_x =
             |byte: usize| -> f32 { slate_text::pixel_x_at_byte(&shaped, &display_string, byte) };
-        let caret_pixel_x = pixel_x(display_caret);
+        // The caret itself binds to a direction-boundary edge via its stored
+        // affinity; selection/preedit edges use the default-downstream `pixel_x`.
+        // During composition the stored affinity belongs to the committed caret,
+        // not the preedit-shifted `display_caret`, so fall back to downstream.
+        let effective_affinity = if preedit_snapshot.is_some() {
+            slate_text::Affinity::Downstream
+        } else {
+            caret_affinity
+        };
+        let caret_pixel_x = if shaped.runs.is_empty() {
+            pixel_x(display_caret)
+        } else {
+            slate_text::run_caret_x_at_affinity(&shaped, display_caret, effective_affinity)
+        };
 
         // 1. User selection rect (gated). Rendered behind glyphs so glyphs
         //    sit on top. Suppressed while a composition is active —
@@ -396,13 +416,21 @@ impl Element for TextField {
                 (caret_safe, anchor_safe)
             };
             if lo < hi {
-                let lo_px = pixel_x(lo);
-                let hi_px = pixel_x(hi);
-                let w = (hi_px - lo_px).max(0.0);
-                if w > 0.0 {
+                // Collect (x_start, width) spans: one per level-run on a mixed /
+                // RTL line (the logical range is not a single contiguous x-span
+                // there), or a single span on the pure-LTR / CJK fast path.
+                let spans: Vec<(f32, f32)> = if !shaped.runs.is_empty() {
+                    slate_text::run_selection_rects(&shaped, lo, hi)
+                } else {
+                    let lo_px = pixel_x(lo);
+                    let hi_px = pixel_x(hi);
+                    let w = (hi_px - lo_px).max(0.0);
+                    if w > 0.0 { vec![(lo_px, w)] } else { Vec::new() }
+                };
+                for (x_start, w) in spans {
                     cx.scene.push_rect(RectInstance {
                         rect: [
-                            Lpx(bounds.origin.x + lo_px),
+                            Lpx(bounds.origin.x + x_start),
                             Lpx(bounds.origin.y),
                             Lpx(w),
                             Lpx(line_height),

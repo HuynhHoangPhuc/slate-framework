@@ -22,7 +22,8 @@ use crate::elements::text_edit::grapheme::{
     insert_text_at, next_grapheme_boundary, prev_grapheme_boundary,
 };
 use crate::elements::text_edit::ops::{
-    MotionDir, apply_motion, delete_selection, record_edit, reset_blink,
+    MotionDir, apply_motion, apply_visual_edge, apply_visual_motion, delete_selection, record_edit,
+    reset_blink,
 };
 use crate::elements::text_edit::shortcuts;
 use crate::elements::text_edit::undo::EditOp;
@@ -67,6 +68,7 @@ pub(super) fn build_key_down_handler(value: Signal<String>) -> ElementKeyHandler
                     state.text.is_char_boundary(state.caret),
                     "TextField caret not on char boundary"
                 );
+                state.caret_affinity = slate_text::Affinity::Downstream;
                 if state.selection_anchor.is_some_and(|a| a != state.caret) {
                     delete_selection(&mut state);
                     record_edit(&mut state, EditOp::Discrete);
@@ -89,46 +91,58 @@ pub(super) fn build_key_down_handler(value: Signal<String>) -> ElementKeyHandler
                     }
                 }
             }
-            Key::Named(NamedKey::ArrowLeft) => {
+            Key::Named(NamedKey::ArrowLeft) | Key::Named(NamedKey::ArrowRight) => {
+                let move_right = matches!(ev.key, Key::Named(NamedKey::ArrowRight));
+                // Clone the cached single-line shaping (cheap Rc bump) so the
+                // run-bearing branch can read it while `state` is borrowed mut.
+                let shaped = state_rc.borrow().last_shaped.clone();
                 {
                     let mut state = state_rc.borrow_mut();
-                    apply_motion(&mut state, MotionDir::Left, shift, |s| {
-                        s.caret = prev_grapheme_boundary(&s.text, s.caret);
-                    });
+                    // A run-bearing line is owned by visual motion: step within
+                    // the line, else clamp at the visual edge (single line — no
+                    // adjacent line to cross to). Pure-LTR (empty runs) keeps
+                    // logical grapheme motion, byte-identical to before.
+                    let run_bearing = shaped.as_ref().is_some_and(|s| !s.runs.is_empty());
+                    if run_bearing {
+                        // Edge → `false`: caret stays put (clamp).
+                        apply_visual_motion(&mut state, shaped.as_ref().unwrap(), move_right, shift);
+                    } else {
+                        state.caret_affinity = slate_text::Affinity::Downstream;
+                        let dir = if move_right { MotionDir::Right } else { MotionDir::Left };
+                        apply_motion(&mut state, dir, shift, |s| {
+                            s.caret = if move_right {
+                                next_grapheme_boundary(&s.text, s.caret)
+                            } else {
+                                prev_grapheme_boundary(&s.text, s.caret)
+                            };
+                        });
+                    }
                     reset_blink(&mut state);
                     state.undo.mark_motion();
                 }
                 cx.stop_propagation();
                 None
             }
-            Key::Named(NamedKey::ArrowRight) => {
+            Key::Named(NamedKey::Home) | Key::Named(NamedKey::End) => {
+                let to_end = matches!(ev.key, Key::Named(NamedKey::End));
+                let shaped = state_rc.borrow().last_shaped.clone();
                 {
                     let mut state = state_rc.borrow_mut();
-                    apply_motion(&mut state, MotionDir::Right, shift, |s| {
-                        s.caret = next_grapheme_boundary(&s.text, s.caret);
-                    });
-                    reset_blink(&mut state);
-                    state.undo.mark_motion();
-                }
-                cx.stop_propagation();
-                None
-            }
-            Key::Named(NamedKey::Home) => {
-                {
-                    let mut state = state_rc.borrow_mut();
-                    apply_motion(&mut state, MotionDir::Left, shift, |s| s.caret = 0);
-                    reset_blink(&mut state);
-                    state.undo.mark_motion();
-                }
-                cx.stop_propagation();
-                None
-            }
-            Key::Named(NamedKey::End) => {
-                {
-                    let mut state = state_rc.borrow_mut();
-                    apply_motion(&mut state, MotionDir::Right, shift, |s| {
-                        s.caret = s.text.len()
-                    });
+                    let handled = match &shaped {
+                        Some(s) if !s.runs.is_empty() => {
+                            apply_visual_edge(&mut state, s, to_end, shift)
+                        }
+                        _ => false,
+                    };
+                    if !handled {
+                        state.caret_affinity = slate_text::Affinity::Downstream;
+                        let (dir, target) = if to_end {
+                            (MotionDir::Right, state.text.len())
+                        } else {
+                            (MotionDir::Left, 0)
+                        };
+                        apply_motion(&mut state, dir, shift, |s| s.caret = target);
+                    }
                     reset_blink(&mut state);
                     state.undo.mark_motion();
                 }
@@ -174,6 +188,7 @@ pub(super) fn build_text_input_handler(value: Signal<String>) -> ElementTextInpu
                 state.text.is_char_boundary(state.caret),
                 "TextField caret not on char boundary before text insert"
             );
+            state.caret_affinity = slate_text::Affinity::Downstream;
             // Typing into a selection is a discrete undo step — the
             // selection-delete itself is irreversible without one. Plain
             // typing into the caret coalesces under EditOp::Insert.
@@ -234,6 +249,7 @@ pub(super) fn build_mouse_down_handler() -> MouseHandler {
                 "byte_at_pixel_x must return a char boundary"
             );
             state.caret = byte;
+            state.caret_affinity = slate_text::Affinity::Downstream;
             state.selection_anchor = Some(byte);
             state.dragging = true;
             reset_blink(&mut state);
@@ -274,6 +290,7 @@ pub(super) fn build_mouse_move_handler() -> MouseHandler {
             "byte_at_pixel_x must return a char boundary"
         );
         state.caret = byte;
+        state.caret_affinity = slate_text::Affinity::Downstream;
         reset_blink(&mut state);
         drop(state);
         cx.stop_propagation();
@@ -368,6 +385,7 @@ pub(super) fn build_ime_commit_handler(value: Signal<String>) -> ElementImeCommi
                     "TextField caret not on char boundary before ime commit"
                 );
                 // Composition starts: selection collapses (policy R2).
+                state.caret_affinity = slate_text::Affinity::Downstream;
                 delete_selection(&mut state);
                 let old_caret = state.caret;
                 let new_caret = insert_text_at(&mut state.text, old_caret, &ev.text);

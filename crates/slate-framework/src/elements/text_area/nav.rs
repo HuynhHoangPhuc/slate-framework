@@ -14,7 +14,7 @@ use slate_text::MultilineLayout;
 
 use crate::elements::text_edit::grapheme::insert_text_at;
 use crate::elements::text_edit::ops::{
-    apply_motion_to, delete_selection, record_edit, reset_blink,
+    apply_motion_to, apply_visual_edge, delete_selection, record_edit, reset_blink,
 };
 use crate::elements::text_edit::undo::EditOp;
 use crate::ime::ImeState;
@@ -39,10 +39,14 @@ pub(crate) fn move_vertical(
     if layout.lines.is_empty() {
         return;
     }
-    let (line_idx, x, _) = layout.caret_position(state.caret);
-    // Seed the sticky column once; reuse it on every subsequent vertical press.
+    // Seed the sticky column from the caret's *visual* x (affinity-aware so a
+    // boundary caret seeds the column on the side it currently renders).
+    let (line_idx, x, _) = layout.caret_position_with_affinity(state.caret, state.caret_affinity);
     let sticky = state.desired_x.unwrap_or(x);
     state.desired_x = Some(sticky);
+    // Vertical motion lands on a fresh line; the boundary affinity does not
+    // carry across lines, so reset to the default.
+    state.caret_affinity = slate_text::Affinity::Downstream;
 
     let last = layout.lines.len() - 1;
     let target_line = if down {
@@ -81,14 +85,74 @@ pub(crate) fn move_line_edge(
         return;
     }
     let line_idx = layout.line_for_byte(state.caret);
-    let target = if to_end {
-        layout.line_caret_end(&state.text, line_idx)
-    } else {
-        layout.lines[line_idx].byte_start
+    // Run-bearing line: Home/End go to the visual (screen) line edges, which on
+    // a mixed/RTL line differ from the logical start/end byte.
+    let handled = match layout.lines.get(line_idx) {
+        Some(vline) if !vline.line.runs.is_empty() => {
+            apply_visual_edge(state, &vline.line, to_end, shift)
+        }
+        _ => false,
     };
-    apply_motion_to(state, shift, target);
+    if !handled {
+        let target = if to_end {
+            layout.line_caret_end(&state.text, line_idx)
+        } else {
+            layout.lines[line_idx].byte_start
+        };
+        apply_motion_to(state, shift, target);
+        state.caret_affinity = slate_text::Affinity::Downstream;
+    }
     state.desired_x = None;
     finish_motion(state);
+}
+
+/// Cross from a run-bearing line's *visual* edge to the adjacent line when a
+/// visual ←/→ step had nowhere left to go on the current line. Logical grapheme
+/// motion can't be used here: on a mixed line the logical neighbour of the
+/// visual-edge byte sits back *inside* the line, so a plain fallback would step
+/// the caret the wrong way instead of advancing to the next line.
+///
+/// Entry edge mirrors the press direction: moving right enters the next line at
+/// its visual-left edge; moving left enters the previous line at its
+/// visual-right edge. Clamps (no move) at the document edges. `shift` extends
+/// the selection from the anchor `apply_visual_motion` already set.
+pub(crate) fn visual_cross_line(
+    state: &mut ImeState,
+    layout: &MultilineLayout,
+    move_right: bool,
+    shift: bool,
+) {
+    let idx = layout.line_for_byte(state.caret);
+    let target_idx = if move_right {
+        if idx + 1 >= layout.lines.len() {
+            return; // last line: clamp at the current visual edge.
+        }
+        idx + 1
+    } else {
+        if idx == 0 {
+            return; // first line: clamp.
+        }
+        idx - 1
+    };
+    let Some(vline) = layout.lines.get(target_idx) else {
+        return;
+    };
+    // Right → enter the next line from its left (Home edge); left → enter the
+    // previous line from its right (End edge).
+    let enter_to_end = !move_right;
+    let (target, affinity) = if !vline.line.runs.is_empty() {
+        slate_text::visual_line_edge(&vline.line, enter_to_end)
+            .unwrap_or((vline.byte_start, slate_text::Affinity::Downstream))
+    } else if enter_to_end {
+        (
+            layout.line_caret_end(&state.text, target_idx),
+            slate_text::Affinity::Downstream,
+        )
+    } else {
+        (vline.byte_start, slate_text::Affinity::Downstream)
+    };
+    apply_motion_to(state, shift, target);
+    state.caret_affinity = affinity;
 }
 
 /// Insert a `\n` at the caret, replacing any selection. Records a discrete undo
@@ -101,6 +165,7 @@ pub(crate) fn insert_newline(state: &mut ImeState) -> String {
     record_edit(state, EditOp::Discrete);
     reset_blink(state);
     state.desired_x = None;
+    state.caret_affinity = slate_text::Affinity::Downstream;
     state.text.clone()
 }
 
@@ -108,9 +173,13 @@ pub(crate) fn insert_newline(state: &mut ImeState) -> String {
 mod tests {
     use super::*;
     use slate_text::{MultilineLayout, VisualLine};
-    use slate_text::{Direction, FontId, ShapedGlyph, ShapedLine};
+    use slate_text::{Affinity, Direction, FontId, RunSpan, ShapedGlyph, ShapedLine};
 
     fn glyph(cluster: u32, adv: f32) -> ShapedGlyph {
+        dglyph(cluster, adv, Direction::Ltr)
+    }
+
+    fn dglyph(cluster: u32, adv: f32, dir: Direction) -> ShapedGlyph {
         ShapedGlyph {
             glyph_id: 1,
             font_id: FontId::PRIMARY,
@@ -118,7 +187,15 @@ mod tests {
             x_advance_lpx: adv,
             position_lpx: [0.0, 0.0],
             cluster,
-            direction: Direction::Ltr,
+            direction: dir,
+        }
+    }
+
+    fn run(range: std::ops::Range<usize>, dir: Direction) -> RunSpan {
+        RunSpan {
+            level: if dir == Direction::Rtl { 1 } else { 0 },
+            byte_range: range,
+            direction: dir,
         }
     }
 
@@ -157,6 +234,34 @@ mod tests {
             text: text.to_string(),
             caret,
             ..Default::default()
+        }
+    }
+
+    /// "abאב\ncd": line0 mixed ("ab" LTR 0..2, "אב" RTL 2..6; visual stops L→R:
+    /// 0,1,6,4,2), line1 "cd" LTR (bytes 7..9). Line0 spans 0..7 (incl. '\n').
+    fn layout_mixed_then_ltr() -> MultilineLayout {
+        let mixed = VisualLine {
+            line: ShapedLine {
+                glyphs: vec![
+                    dglyph(0, 5.0, Direction::Ltr),
+                    dglyph(1, 6.0, Direction::Ltr),
+                    dglyph(4, 7.0, Direction::Rtl),
+                    dglyph(2, 8.0, Direction::Rtl),
+                ],
+                width_lpx: 26.0,
+                ascent_lpx: 10.0,
+                descent_lpx: -2.0,
+                y_offset_lpx: 0.0,
+                base_direction: Direction::Rtl,
+                runs: vec![run(0..2, Direction::Ltr), run(2..6, Direction::Rtl)],
+            },
+            byte_start: 0,
+            byte_end: 7,
+        };
+        MultilineLayout {
+            lines: vec![mixed, vline(vec![glyph(7, 5.0), glyph(8, 6.0)], 7, 9, 12.0)],
+            total_height_lpx: 24.0,
+            line_height_lpx: 12.0,
         }
     }
 
@@ -243,5 +348,54 @@ mod tests {
         assert_eq!(text, "a\nd");
         assert_eq!(s.caret, 2);
         assert_eq!(s.selection_anchor, None);
+    }
+
+    #[test]
+    fn visual_cross_line_right_enters_next_line_visual_left() {
+        // Caret at line0's visual-right edge (byte 2, the RTL logical start).
+        // Right → next line's visual-left edge = its byte_start (7), not a
+        // logical grapheme step that would land mid-line.
+        let layout = layout_mixed_then_ltr();
+        let mut s = state_with("abאב\ncd", 2);
+        s.caret_affinity = Affinity::Downstream;
+        visual_cross_line(&mut s, &layout, true, false);
+        assert_eq!(s.caret, 7);
+        assert_eq!(s.caret_affinity, Affinity::Downstream);
+        assert_eq!(s.selection_anchor, None);
+    }
+
+    #[test]
+    fn visual_cross_line_left_enters_prev_line_visual_right() {
+        // From line1 start, Left → previous (mixed) line's visual-right edge,
+        // which is its logical RTL start, byte 2 (not the logical line end 6).
+        let layout = layout_mixed_then_ltr();
+        let mut s = state_with("abאב\ncd", 7);
+        visual_cross_line(&mut s, &layout, false, false);
+        assert_eq!(s.caret, 2, "enters mixed line at its visual-right edge");
+    }
+
+    #[test]
+    fn visual_cross_line_clamps_at_document_edges() {
+        let layout = layout_mixed_then_ltr();
+        // Right on the last line → clamp (no move).
+        let mut s = state_with("abאב\ncd", 9);
+        visual_cross_line(&mut s, &layout, true, false);
+        assert_eq!(s.caret, 9);
+        // Left on the first line → clamp.
+        let mut s = state_with("abאב\ncd", 2);
+        visual_cross_line(&mut s, &layout, false, false);
+        assert_eq!(s.caret, 2);
+    }
+
+    #[test]
+    fn visual_cross_line_shift_extends_from_existing_anchor() {
+        // Mirrors the handler: `apply_visual_motion` sets the anchor before
+        // reporting the visual edge, so the cross-line move must extend it.
+        let layout = layout_mixed_then_ltr();
+        let mut s = state_with("abאב\ncd", 2);
+        s.selection_anchor = Some(2); // anchor set by apply_visual_motion
+        visual_cross_line(&mut s, &layout, true, true);
+        assert_eq!(s.selection_anchor, Some(2), "anchor preserved");
+        assert_eq!(s.caret, 7);
     }
 }

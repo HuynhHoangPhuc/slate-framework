@@ -25,7 +25,7 @@ use crate::elements::text_edit::grapheme::{
     insert_text_at, next_grapheme_boundary, prev_grapheme_boundary,
 };
 use crate::elements::text_edit::ops::{
-    MotionDir, apply_motion, delete_selection, record_edit, reset_blink,
+    MotionDir, apply_motion, apply_visual_motion, delete_selection, record_edit, reset_blink,
 };
 use crate::elements::text_edit::shortcuts;
 use crate::elements::text_edit::undo::EditOp;
@@ -77,6 +77,7 @@ pub(super) fn build_key_down_handler(value: Signal<String>) -> ElementKeyHandler
                     "TextArea caret not on char boundary"
                 );
                 state.desired_x = None;
+                state.caret_affinity = slate_text::Affinity::Downstream;
                 if state.selection_anchor.is_some_and(|a| a != state.caret) {
                     delete_selection(&mut state);
                     record_edit(&mut state, EditOp::Discrete);
@@ -99,26 +100,41 @@ pub(super) fn build_key_down_handler(value: Signal<String>) -> ElementKeyHandler
                     }
                 }
             }
-            Key::Named(NamedKey::ArrowLeft) => {
+            Key::Named(NamedKey::ArrowLeft) | Key::Named(NamedKey::ArrowRight) => {
+                let move_right = matches!(ev.key, Key::Named(NamedKey::ArrowRight));
+                // Clone the cached layout (cheap Rc bump) so the run-bearing
+                // branch can read the caret's visual line while `state` is mut.
+                let layout = state_rc.borrow().last_layout.clone();
                 {
                     let mut state = state_rc.borrow_mut();
                     state.desired_x = None;
-                    apply_motion(&mut state, MotionDir::Left, shift, |s| {
-                        s.caret = prev_grapheme_boundary(&s.text, s.caret);
+                    // A run-bearing current line is fully owned by visual motion:
+                    // step within the line, else cross to the adjacent line at its
+                    // near visual edge. Pure-LTR lines (empty runs) keep logical
+                    // grapheme motion, which is byte-identical and crosses breaks.
+                    let run_bearing = layout.as_ref().is_some_and(|l| {
+                        let idx = l.line_for_byte(state.caret);
+                        l.lines.get(idx).is_some_and(|v| !v.line.runs.is_empty())
                     });
-                    reset_blink(&mut state);
-                    state.undo.mark_motion();
-                }
-                cx.stop_propagation();
-                None
-            }
-            Key::Named(NamedKey::ArrowRight) => {
-                {
-                    let mut state = state_rc.borrow_mut();
-                    state.desired_x = None;
-                    apply_motion(&mut state, MotionDir::Right, shift, |s| {
-                        s.caret = next_grapheme_boundary(&s.text, s.caret);
-                    });
+                    if run_bearing {
+                        let layout = layout.as_ref().unwrap();
+                        let idx = layout.line_for_byte(state.caret);
+                        let stepped =
+                            apply_visual_motion(&mut state, &layout.lines[idx].line, move_right, shift);
+                        if !stepped {
+                            nav::visual_cross_line(&mut state, layout, move_right, shift);
+                        }
+                    } else {
+                        state.caret_affinity = slate_text::Affinity::Downstream;
+                        let dir = if move_right { MotionDir::Right } else { MotionDir::Left };
+                        apply_motion(&mut state, dir, shift, |s| {
+                            s.caret = if move_right {
+                                next_grapheme_boundary(&s.text, s.caret)
+                            } else {
+                                prev_grapheme_boundary(&s.text, s.caret)
+                            };
+                        });
+                    }
                     reset_blink(&mut state);
                     state.undo.mark_motion();
                 }
@@ -193,6 +209,7 @@ pub(super) fn build_text_input_handler(value: Signal<String>) -> ElementTextInpu
                 "TextArea caret not on char boundary before text insert"
             );
             state.desired_x = None;
+            state.caret_affinity = slate_text::Affinity::Downstream;
             let had_selection = state.selection_anchor.is_some_and(|a| a != state.caret);
             delete_selection(&mut state);
             let old_caret = state.caret;
@@ -266,6 +283,7 @@ pub(super) fn build_ime_commit_handler(value: Signal<String>) -> ElementImeCommi
                     "TextArea caret not on char boundary before ime commit"
                 );
                 state.desired_x = None;
+                state.caret_affinity = slate_text::Affinity::Downstream;
                 delete_selection(&mut state);
                 let old_caret = state.caret;
                 state.caret = insert_text_at(&mut state.text, old_caret, &ev.text);

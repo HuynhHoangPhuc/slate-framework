@@ -138,6 +138,75 @@ pub(crate) fn apply_motion_to(state: &mut ImeState, shift: bool, target: usize) 
     state.caret = target;
 }
 
+/// Apply a screen-direction horizontal arrow on a run-bearing (mixed/RTL)
+/// visual `line`. `move_right` is the on-screen direction (left arrow always
+/// moves leftward on screen, even inside an RTL run where that *decreases* the
+/// logical byte). The line's glyph clusters must be in the same byte space as
+/// `state.caret` (document-absolute for TextArea, line-relative-from-zero for
+/// the single-line TextField).
+///
+/// Returns `true` when the motion was handled in visual space. Returns `false`
+/// when the caret is at the line's visual edge — the caller resets affinity to
+/// `Downstream` and falls back to logical grapheme motion so the caret crosses
+/// the line boundary (TextArea) or clamps (TextField).
+///
+/// Selection semantics mirror [`apply_motion`]: Shift extends from the pre-move
+/// caret; a plain arrow over a non-empty selection collapses to the logical
+/// lo/hi edge (matching the LTR path) without stepping further.
+pub(crate) fn apply_visual_motion(
+    state: &mut ImeState,
+    line: &slate_text::ShapedLine,
+    move_right: bool,
+    shift: bool,
+) -> bool {
+    if shift {
+        if state.selection_anchor.is_none() {
+            state.selection_anchor = Some(state.caret);
+        }
+    } else if let Some(anchor) = state.selection_anchor {
+        let lo = state.caret.min(anchor);
+        let hi = state.caret.max(anchor);
+        state.selection_anchor = None;
+        if lo < hi {
+            // Non-empty selection: collapse to the lo/hi edge, do not step.
+            state.caret = if move_right { hi } else { lo };
+            state.caret_affinity = slate_text::Affinity::Downstream;
+            return true;
+        }
+    }
+    match slate_text::visual_caret_step(line, state.caret, state.caret_affinity, move_right) {
+        Some((byte, affinity)) => {
+            state.caret = byte;
+            state.caret_affinity = affinity;
+            true
+        }
+        // At the line's visual edge: caller falls back to logical motion. The
+        // Shift anchor (set above) is preserved so the fallback extends it.
+        None => false,
+    }
+}
+
+/// Move the caret to the visual line edge (`to_end`: rightmost stop = End,
+/// leftmost stop = Home) of a run-bearing `line`, with selection semantics.
+/// Returns `true` when handled; `false` for a line with no runs (caller uses
+/// the logical line edges). On a fully-RTL line the visual edges are swapped
+/// relative to the logical start/end — that is the intended visual behavior.
+pub(crate) fn apply_visual_edge(
+    state: &mut ImeState,
+    line: &slate_text::ShapedLine,
+    to_end: bool,
+    shift: bool,
+) -> bool {
+    match slate_text::visual_line_edge(line, to_end) {
+        Some((byte, affinity)) => {
+            apply_motion_to(state, shift, byte);
+            state.caret_affinity = affinity;
+            true
+        }
+        None => false,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Unit tests — selection model
 // ---------------------------------------------------------------------------
@@ -309,5 +378,145 @@ mod selection_tests {
         });
         assert_eq!(s.caret, 3, "collapse must land on a grapheme boundary");
         assert!(s.text.is_char_boundary(s.caret));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests — visual (BiDi) caret motion + affinity threading
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod visual_motion_tests {
+    use super::*;
+    use slate_text::{Affinity, Direction, FontHandle, FontId, RunSpan, ShapedGlyph, ShapedLine};
+
+    fn dglyph(cluster: u32, adv: f32, dir: Direction) -> ShapedGlyph {
+        ShapedGlyph {
+            glyph_id: 1,
+            font_id: FontId::PRIMARY,
+            font_handle: FontHandle::default(),
+            x_advance_lpx: adv,
+            position_lpx: [0.0, 0.0],
+            cluster,
+            direction: dir,
+        }
+    }
+
+    fn run(range: std::ops::Range<usize>, dir: Direction) -> RunSpan {
+        RunSpan {
+            level: if dir == Direction::Rtl { 1 } else { 0 },
+            byte_range: range,
+            direction: dir,
+        }
+    }
+
+    /// "abאב": "ab" LTR (bytes 0..2), "אב" RTL (bytes 2..6). Visual stops
+    /// left→right: byte0(D) byte1(D) byte6(Up) byte4(D) byte2(D).
+    fn mixed_line() -> ShapedLine {
+        ShapedLine {
+            glyphs: vec![
+                dglyph(0, 5.0, Direction::Ltr),
+                dglyph(1, 6.0, Direction::Ltr),
+                dglyph(4, 7.0, Direction::Rtl),
+                dglyph(2, 8.0, Direction::Rtl),
+            ],
+            width_lpx: 26.0,
+            ascent_lpx: 10.0,
+            descent_lpx: -2.0,
+            y_offset_lpx: 0.0,
+            base_direction: Direction::Rtl,
+            runs: vec![run(0..2, Direction::Ltr), run(2..6, Direction::Rtl)],
+        }
+    }
+
+    fn state_at(caret: usize, affinity: Affinity) -> ImeState {
+        ImeState {
+            text: "abאב".to_string(),
+            caret,
+            caret_affinity: affinity,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn visual_right_crosses_seam_and_threads_affinity() {
+        let line = mixed_line();
+        // From byte 1, a rightward press steps onto the RTL run's leftmost stop
+        // (logical end byte 6, Upstream), then deeper into the run.
+        let mut s = state_at(1, Affinity::Downstream);
+        assert!(apply_visual_motion(&mut s, &line, true, false));
+        assert_eq!((s.caret, s.caret_affinity), (6, Affinity::Upstream));
+        assert!(apply_visual_motion(&mut s, &line, true, false));
+        assert_eq!((s.caret, s.caret_affinity), (4, Affinity::Downstream));
+        assert!(apply_visual_motion(&mut s, &line, true, false));
+        assert_eq!((s.caret, s.caret_affinity), (2, Affinity::Downstream));
+    }
+
+    #[test]
+    fn visual_motion_returns_false_at_visual_edge() {
+        let line = mixed_line();
+        // Rightmost stop is byte 2 (RTL start). One more right → edge → false.
+        let mut s = state_at(2, Affinity::Downstream);
+        assert!(!apply_visual_motion(&mut s, &line, true, false));
+        assert_eq!(s.caret, 2, "caret unchanged when caller must fall back");
+        // Leftmost stop is byte 0. One more left → edge → false.
+        let mut s = state_at(0, Affinity::Downstream);
+        assert!(!apply_visual_motion(&mut s, &line, false, false));
+        assert_eq!(s.caret, 0);
+    }
+
+    #[test]
+    fn shift_visual_motion_anchors_then_extends() {
+        let line = mixed_line();
+        let mut s = state_at(1, Affinity::Downstream);
+        apply_visual_motion(&mut s, &line, true, true);
+        assert_eq!(s.selection_anchor, Some(1), "anchor at pre-move caret");
+        assert_eq!(s.caret, 6);
+        // Second shift keeps the same anchor.
+        apply_visual_motion(&mut s, &line, true, true);
+        assert_eq!(s.selection_anchor, Some(1));
+        assert_eq!(s.caret, 4);
+    }
+
+    #[test]
+    fn plain_visual_motion_over_selection_collapses_to_edge() {
+        let line = mixed_line();
+        // Selection [1,4): plain right collapses to hi (4), no further step.
+        let mut s = state_at(4, Affinity::Downstream);
+        s.selection_anchor = Some(1);
+        assert!(apply_visual_motion(&mut s, &line, true, false));
+        assert_eq!(s.caret, 4);
+        assert_eq!(s.selection_anchor, None);
+        assert_eq!(s.caret_affinity, Affinity::Downstream);
+    }
+
+    #[test]
+    fn visual_edge_home_end_hit_screen_extremes() {
+        let line = mixed_line();
+        let mut s = state_at(4, Affinity::Downstream);
+        // Home → visual-leftmost = byte 0.
+        assert!(apply_visual_edge(&mut s, &line, false, false));
+        assert_eq!((s.caret, s.caret_affinity), (0, Affinity::Downstream));
+        // End → visual-rightmost = byte 2 (logical RTL start).
+        assert!(apply_visual_edge(&mut s, &line, true, false));
+        assert_eq!((s.caret, s.caret_affinity), (2, Affinity::Downstream));
+    }
+
+    #[test]
+    fn visual_ops_decline_on_runless_line() {
+        // No runs (pure-LTR fast path): both ops return false so the caller uses
+        // logical motion / logical line edges.
+        let line = ShapedLine {
+            glyphs: vec![dglyph(0, 5.0, Direction::Ltr)],
+            width_lpx: 5.0,
+            ascent_lpx: 10.0,
+            descent_lpx: -2.0,
+            y_offset_lpx: 0.0,
+            base_direction: Direction::Ltr,
+            runs: Vec::new(),
+        };
+        let mut s = state_at(0, Affinity::Downstream);
+        assert!(!apply_visual_motion(&mut s, &line, true, false));
+        assert!(!apply_visual_edge(&mut s, &line, true, false));
     }
 }

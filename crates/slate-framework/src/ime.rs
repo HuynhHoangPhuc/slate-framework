@@ -93,6 +93,11 @@ pub struct ImeState {
     pub text: String,
     /// Byte offset into `text` of the caret.
     pub caret: usize,
+    /// Which side of a direction boundary the caret binds to when one logical
+    /// byte maps to two visual x-positions on a mixed-direction line. Inert
+    /// (`Downstream`) on pure-LTR / CJK text. Set by visual ←/→ motion as it
+    /// crosses an LTR↔RTL seam; consumed by the caret-x paint path.
+    pub caret_affinity: slate_text::Affinity,
     /// Anchor end of a non-empty selection, as a byte offset into `text`. The
     /// selected range is `min(caret, anchor) .. max(caret, anchor)`; `None`
     /// means caret-only (no selection).

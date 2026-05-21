@@ -11,12 +11,12 @@
 //! switch to the run-aware path: visual x is laid out left-to-right over the
 //! level-runs in visual order, and within each run advances are summed forward
 //! (LTR) or in reverse (RTL) so the caret tracks the correct visual edge of a
-//! logical byte. A boundary byte (`runA.end == runB.start`) belongs to the run
-//! that *starts* there (downstream default); explicit affinity is layered on
-//! later.
+//! logical byte. A boundary byte (`runA.end == runB.start`) maps to two visual
+//! x-positions; [`Affinity`] selects which — the run that *starts* there
+//! (downstream, the default) or the run that *ends* there (upstream).
 
 use crate::ShapedLine;
-use crate::types::{Direction, RunSpan};
+use crate::types::{Affinity, Direction, RunSpan};
 use unicode_segmentation::UnicodeSegmentation;
 
 /// Pen-x position (line-relative, lpx) of the leading edge of the cluster
@@ -183,13 +183,30 @@ fn within_run_caret_x(line: &ShapedLine, run: &RunSpan, byte: usize) -> f32 {
         .sum()
 }
 
-/// Visual index of the run owning logical `byte`. The run that *starts* at a
-/// boundary byte wins (`start <= byte < end`); the text-end byte (no run starts
-/// there) is owned by the run whose range *ends* there.
+/// Visual index of the run owning logical `byte` under [`Affinity::Downstream`]:
+/// the run that *starts* at a boundary byte wins (`start <= byte < end`); the
+/// text-end byte (no run starts there) is owned by the run whose range *ends*
+/// there.
 fn owning_run(runs: &[RunSpan], byte: usize) -> Option<usize> {
     runs.iter()
         .position(|r| r.byte_range.start <= byte && byte < r.byte_range.end)
         .or_else(|| runs.iter().position(|r| r.byte_range.end == byte))
+}
+
+/// Visual index of the run owning logical `byte` under `affinity`.
+///
+/// At a direction boundary (`byte` is both `runA.end` and `runB.start`) the two
+/// affinities pick different runs: `Downstream` the run starting at `byte`,
+/// `Upstream` the run ending there. For an interior byte (only one run contains
+/// it) and for the text-end byte both affinities resolve to the same run.
+fn owning_run_with_affinity(runs: &[RunSpan], byte: usize, affinity: Affinity) -> Option<usize> {
+    match affinity {
+        Affinity::Downstream => owning_run(runs, byte),
+        Affinity::Upstream => runs
+            .iter()
+            .position(|r| r.byte_range.end == byte)
+            .or_else(|| owning_run(runs, byte)),
+    }
 }
 
 /// Run-aware caret x for a run-bearing line. `byte` is snapped to a grapheme
@@ -207,7 +224,18 @@ pub fn run_caret_x(line: &ShapedLine, text: &str, byte: usize) -> f32 {
 /// not carry the source text — like [`crate::multiline::MultilineLayout`] — can
 /// reuse the run math.
 pub fn run_caret_x_at(line: &ShapedLine, byte: usize) -> f32 {
-    match owning_run(&line.runs, byte) {
+    run_caret_x_at_affinity(line, byte, Affinity::Downstream)
+}
+
+/// Run-aware caret x for an already-grapheme-aligned `byte`, resolving a
+/// direction-boundary byte to the visual edge that `affinity` selects.
+///
+/// At an LTR↔RTL boundary the same logical byte has two visual x-positions; this
+/// returns the trailing edge of the run that *ends* at `byte` ([`Affinity::Upstream`])
+/// or the leading edge of the run that *starts* there ([`Affinity::Downstream`]).
+/// On a line with no direction boundary the result is independent of `affinity`.
+pub fn run_caret_x_at_affinity(line: &ShapedLine, byte: usize, affinity: Affinity) -> f32 {
+    match owning_run_with_affinity(&line.runs, byte, affinity) {
         Some(vi) => run_x_start(line, vi) + within_run_caret_x(line, &line.runs[vi], byte),
         None => 0.0,
     }
@@ -282,6 +310,162 @@ pub fn run_byte_at_x(line: &ShapedLine, x_lpx: f32) -> usize {
         }
     }
     cands.last().map(|&(_, b)| b).unwrap_or(0)
+}
+
+/// Visual selection rectangles for the logical byte range `[lo, hi)` on a
+/// run-bearing line: one `(x_start_lpx, width_lpx)` per level-run the range
+/// intersects.
+///
+/// A single logical range maps to one contiguous x-span *per run* but not across
+/// runs (an RTL run reverses byte→x order, and visual run order need not follow
+/// logical order), so a mixed-direction selection paints as several rectangles.
+/// x is line-relative; callers offset by the line/element origin. Returns empty
+/// for `lo >= hi` or a line with no runs (callers keep their own LTR fast path).
+pub fn run_selection_rects(line: &ShapedLine, lo: usize, hi: usize) -> Vec<(f32, f32)> {
+    let mut rects = Vec::new();
+    if lo >= hi || line.runs.is_empty() {
+        return rects;
+    }
+    for (vi, run) in line.runs.iter().enumerate() {
+        let a = lo.max(run.byte_range.start);
+        let b = hi.min(run.byte_range.end);
+        if a >= b {
+            continue;
+        }
+        let base = run_x_start(line, vi);
+        let xa = base + within_run_caret_x(line, run, a);
+        let xb = base + within_run_caret_x(line, run, b);
+        // RTL reverses byte→x order, so the lower x can come from either end.
+        let (x_start, x_end) = if xa <= xb { (xa, xb) } else { (xb, xa) };
+        let width = x_end - x_start;
+        if width > 0.0 {
+            rects.push((x_start, width));
+        }
+    }
+    rects
+}
+
+/// Distinct cluster-start bytes within `range`, ascending. Multi-glyph clusters
+/// collapse to one entry; these are the grapheme-aligned caret stops of a run.
+fn run_cluster_starts(line: &ShapedLine, range: &std::ops::Range<usize>) -> Vec<usize> {
+    let mut starts: Vec<usize> = line
+        .glyphs
+        .iter()
+        .map(|g| g.cluster as usize)
+        .filter(|c| range.contains(c))
+        .collect();
+    starts.sort_unstable();
+    starts.dedup();
+    starts
+}
+
+/// Ordered visual caret stops of a run-bearing line: `(byte, affinity, x_lpx)`
+/// left-to-right by screen x.
+///
+/// Each run contributes a stop at every grapheme-aligned cluster start plus its
+/// end byte; within an LTR run the bytes ascend with x, within an RTL run they
+/// descend. A stop carries the [`Affinity`] that makes [`run_caret_x_at_affinity`]
+/// render it at this same x (the run's *trailing* byte is `Upstream`, every other
+/// stop is `Downstream`).
+///
+/// Equal-x stops at a direction seam are collapsed (Mac-style): the earlier of
+/// the pair is dropped, keeping the next run's stop, so the caret always advances
+/// visibly. Only a redundant rendering of an already-reachable byte is lost — no
+/// logical byte becomes arrow-unreachable.
+fn visual_caret_stops(line: &ShapedLine) -> Vec<(usize, Affinity, f32)> {
+    let mut stops: Vec<(usize, Affinity, f32)> = Vec::new();
+    for (vi, run) in line.runs.iter().enumerate() {
+        let base = run_x_start(line, vi);
+        let mut bytes = run_cluster_starts(line, &run.byte_range);
+        bytes.push(run.byte_range.end);
+        bytes.dedup();
+        // LTR: ascending byte = ascending x. RTL: ascending byte = descending x,
+        // so reverse to emit left-to-right.
+        if run.direction == Direction::Rtl {
+            bytes.reverse();
+        }
+        for b in bytes {
+            let affinity = if b == run.byte_range.end {
+                Affinity::Upstream
+            } else {
+                Affinity::Downstream
+            };
+            stops.push((b, affinity, base + within_run_caret_x(line, run, b)));
+        }
+    }
+    // Runs are laid out left-to-right, so `stops` is already x-ascending. Collapse
+    // adjacent equal-x pairs by dropping the earlier (keep the next run's stop).
+    // The two seam stops are summed by different paths (`run_x_start` over run
+    // widths vs `within_run_caret_x` over glyph advances), so they can differ by
+    // accumulated float rounding — compare with a sub-pixel tolerance, not the
+    // near-1.0 `f32::EPSILON`, which never fires at realistic x magnitudes.
+    let mut collapsed: Vec<(usize, Affinity, f32)> = Vec::with_capacity(stops.len());
+    for s in stops {
+        if let Some(last) = collapsed.last()
+            && (last.2 - s.2).abs() < SEAM_COLLAPSE_TOLERANCE_LPX
+        {
+            collapsed.pop();
+        }
+        collapsed.push(s);
+    }
+    collapsed
+}
+
+/// Sub-pixel tolerance for treating two caret stops as the same seam point.
+/// Far below one logical pixel (so genuinely distinct stops, which differ by a
+/// whole glyph advance, never merge) yet far above accumulated float rounding.
+const SEAM_COLLAPSE_TOLERANCE_LPX: f32 = 0.05;
+
+/// Visual (screen-direction) caret motion for a run-bearing line: step one caret
+/// stop to the left (`move_right == false`) or right on screen, crossing run
+/// boundaries. Returns the new `(byte, affinity)`, or `None` when the step would
+/// move past the line's visual edge (the caller crosses to an adjacent line or
+/// clamps).
+///
+/// `move_right == true` always moves rightward on screen regardless of the run's
+/// direction — inside an RTL run that *decreases* the logical byte. On a line
+/// with no direction boundary this reduces to logical grapheme motion.
+pub fn visual_caret_step(
+    line: &ShapedLine,
+    byte: usize,
+    affinity: Affinity,
+    move_right: bool,
+) -> Option<(usize, Affinity)> {
+    let stops = visual_caret_stops(line);
+    if stops.is_empty() {
+        return None;
+    }
+    // Locate the current stop: prefer an exact (byte, affinity) match, else fall
+    // back to the first stop with this byte (e.g. a click-placed caret whose
+    // affinity defaulted, or a collapsed seam duplicate).
+    let cur = stops
+        .iter()
+        .position(|&(b, a, _)| b == byte && a == affinity)
+        .or_else(|| stops.iter().position(|&(b, _, _)| b == byte))?;
+    let next = if move_right {
+        cur.checked_add(1).filter(|&i| i < stops.len())
+    } else {
+        cur.checked_sub(1)
+    }?;
+    let (b, a, _) = stops[next];
+    Some((b, a))
+}
+
+/// Visual line-edge caret stop for a run-bearing line: the leftmost stop
+/// (`to_end == false`, Home) or the rightmost stop (`to_end == true`, End) on
+/// screen, with its affinity. Returns `None` for a line with no runs — the
+/// caller falls back to the logical line edges (`byte_start` / `line_caret_end`).
+///
+/// "Edge" is screen-relative, not logical: on a fully-RTL line the rightmost
+/// stop is the logical line *start*. This matches the visual ←/→ model where
+/// Home/End land where the caret would after pressing the arrow until it stops.
+pub fn visual_line_edge(line: &ShapedLine, to_end: bool) -> Option<(usize, Affinity)> {
+    let stops = visual_caret_stops(line);
+    if to_end {
+        stops.last().map(|&(b, a, _)| (b, a))
+    } else {
+        stops.first().map(|&(b, a, _)| (b, a))
+    }
 }
 
 #[cfg(test)]
@@ -516,6 +700,157 @@ mod tests {
         assert_eq!(pixel_x_at_byte(&l, text, 4), 18.0);
         // byte 6 = RTL end = left edge of RTL run = 11.
         assert_eq!(pixel_x_at_byte(&l, text, 6), 11.0);
+    }
+
+    #[test]
+    fn visual_motion_pure_ltr_matches_logical() {
+        // A single LTR run: visual right == logical next cluster, left == prev.
+        let glyphs = vec![
+            dglyph(0, 5.0, Direction::Ltr),
+            dglyph(1, 6.0, Direction::Ltr),
+            dglyph(2, 7.0, Direction::Ltr),
+        ];
+        let l = run_line(glyphs, vec![run(0..3, Direction::Ltr)]);
+        assert_eq!(visual_caret_step(&l, 0, Affinity::Downstream, true), Some((1, Affinity::Downstream)));
+        assert_eq!(visual_caret_step(&l, 1, Affinity::Downstream, true), Some((2, Affinity::Downstream)));
+        assert_eq!(visual_caret_step(&l, 2, Affinity::Downstream, true), Some((3, Affinity::Upstream)));
+        // Past the right edge → None (caller crosses line / clamps).
+        assert_eq!(visual_caret_step(&l, 3, Affinity::Upstream, true), None);
+        // Leftward.
+        assert_eq!(visual_caret_step(&l, 3, Affinity::Upstream, false), Some((2, Affinity::Downstream)));
+        assert_eq!(visual_caret_step(&l, 0, Affinity::Downstream, false), None);
+    }
+
+    #[test]
+    fn visual_motion_pure_rtl_reverses_logical() {
+        // Pure-RTL run "日本語" (bytes 0/3/6, end 9). Visual stops left→right are
+        // logical-descending: 9, 6, 3, 0. Moving right on screen decreases byte.
+        let glyphs = vec![
+            dglyph(6, 7.0, Direction::Rtl),
+            dglyph(3, 8.0, Direction::Rtl),
+            dglyph(0, 9.0, Direction::Rtl),
+        ];
+        let l = run_line(glyphs, vec![run(0..9, Direction::Rtl)]);
+        // Leftmost stop is byte 9 (logical end). Right → 6 → 3 → 0.
+        assert_eq!(visual_caret_step(&l, 9, Affinity::Upstream, true), Some((6, Affinity::Downstream)));
+        assert_eq!(visual_caret_step(&l, 6, Affinity::Downstream, true), Some((3, Affinity::Downstream)));
+        assert_eq!(visual_caret_step(&l, 3, Affinity::Downstream, true), Some((0, Affinity::Downstream)));
+        assert_eq!(visual_caret_step(&l, 0, Affinity::Downstream, true), None);
+        // Leftward mirrors.
+        assert_eq!(visual_caret_step(&l, 0, Affinity::Downstream, false), Some((3, Affinity::Downstream)));
+        assert_eq!(visual_caret_step(&l, 9, Affinity::Upstream, false), None);
+    }
+
+    #[test]
+    fn visual_motion_collapses_seam_mac_style() {
+        // "ab" LTR (x 0..11) then "אב" RTL (x 11..26). Collapsed visual stops
+        // left→right: (0,D,0) (1,D,5) (6,Up,11) (4,D,18) (2,D,26). The duplicate
+        // (2,Up,11) is dropped — byte 2 stays reachable at x=26.
+        let glyphs = vec![
+            dglyph(0, 5.0, Direction::Ltr),
+            dglyph(1, 6.0, Direction::Ltr),
+            dglyph(4, 7.0, Direction::Rtl),
+            dglyph(2, 8.0, Direction::Rtl),
+        ];
+        let l = run_line(
+            glyphs,
+            vec![run(0..2, Direction::Ltr), run(2..6, Direction::Rtl)],
+        );
+        // Rightward across the seam: 1 → 6 (RTL end, leftmost) → 4 → 2 (RTL start).
+        assert_eq!(visual_caret_step(&l, 1, Affinity::Downstream, true), Some((6, Affinity::Upstream)));
+        assert_eq!(visual_caret_step(&l, 6, Affinity::Upstream, true), Some((4, Affinity::Downstream)));
+        assert_eq!(visual_caret_step(&l, 4, Affinity::Downstream, true), Some((2, Affinity::Downstream)));
+        assert_eq!(visual_caret_step(&l, 2, Affinity::Downstream, true), None);
+        // Leftward: 2 → 4 → 6 → 1 → 0.
+        assert_eq!(visual_caret_step(&l, 2, Affinity::Downstream, false), Some((4, Affinity::Downstream)));
+        assert_eq!(visual_caret_step(&l, 6, Affinity::Upstream, false), Some((1, Affinity::Downstream)));
+        // The dropped duplicate (2, Upstream) still resolves by byte fallback.
+        assert_eq!(visual_caret_step(&l, 2, Affinity::Upstream, false), Some((4, Affinity::Downstream)));
+    }
+
+    #[test]
+    fn selection_rects_split_at_direction_boundary() {
+        // "ab" LTR (x 0..11) then "אב" RTL (x 11..26). Selecting bytes [1,4)
+        // covers "b" (LTR, x 5..11) and the first logical RTL char (bytes 2..4),
+        // which renders at the RTL run's right portion (x 18..26). Two rects.
+        let glyphs = vec![
+            dglyph(0, 5.0, Direction::Ltr),
+            dglyph(1, 6.0, Direction::Ltr),
+            dglyph(4, 7.0, Direction::Rtl),
+            dglyph(2, 8.0, Direction::Rtl),
+        ];
+        let l = run_line(
+            glyphs,
+            vec![run(0..2, Direction::Ltr), run(2..6, Direction::Rtl)],
+        );
+        let rects = run_selection_rects(&l, 1, 4);
+        assert_eq!(rects.len(), 2);
+        // LTR part: x 5..11 → (5, 6).
+        assert_eq!(rects[0], (5.0, 6.0));
+        // RTL part bytes [2,4): within_rtl(2)=15 (x26), within_rtl(4)=7 (x18) →
+        // rect (18, 8).
+        assert_eq!(rects[1], (18.0, 8.0));
+        // Empty / inverted range → no rects.
+        assert!(run_selection_rects(&l, 3, 3).is_empty());
+    }
+
+    #[test]
+    fn boundary_byte_resolves_per_affinity() {
+        // "ab" LTR (x 0..11) then "אב" RTL (x 11..26). Byte 2 is the LTR↔RTL
+        // boundary: it ends the LTR run and starts the RTL run.
+        let glyphs = vec![
+            dglyph(0, 5.0, Direction::Ltr),
+            dglyph(1, 6.0, Direction::Ltr),
+            dglyph(4, 7.0, Direction::Rtl),
+            dglyph(2, 8.0, Direction::Rtl),
+        ];
+        let l = run_line(
+            glyphs,
+            vec![run(0..2, Direction::Ltr), run(2..6, Direction::Rtl)],
+        );
+        // Upstream → trailing edge of the LTR run that ends at byte 2 (x=11).
+        assert_eq!(run_caret_x_at_affinity(&l, 2, Affinity::Upstream), 11.0);
+        // Downstream → leading edge of the RTL run that starts at byte 2 = its
+        // visual right edge (x=26). Matches the default `run_caret_x_at`.
+        assert_eq!(run_caret_x_at_affinity(&l, 2, Affinity::Downstream), 26.0);
+        assert_eq!(run_caret_x_at(&l, 2), 26.0);
+        // An interior byte (4, inside the RTL run) is affinity-independent.
+        assert_eq!(
+            run_caret_x_at_affinity(&l, 4, Affinity::Upstream),
+            run_caret_x_at_affinity(&l, 4, Affinity::Downstream),
+        );
+    }
+
+    #[test]
+    fn visual_line_edges_are_screen_leftmost_and_rightmost() {
+        // "ab" LTR (x 0..11) then "אב" RTL (x 11..26). Collapsed stops left→right:
+        // (0,D,0) (1,D,5) (6,Up,11) (4,D,18) (2,D,26). Home = leftmost = (0,D),
+        // End = rightmost = (2,D) — note byte 2 is the *logical* RTL start.
+        let glyphs = vec![
+            dglyph(0, 5.0, Direction::Ltr),
+            dglyph(1, 6.0, Direction::Ltr),
+            dglyph(4, 7.0, Direction::Rtl),
+            dglyph(2, 8.0, Direction::Rtl),
+        ];
+        let l = run_line(
+            glyphs,
+            vec![run(0..2, Direction::Ltr), run(2..6, Direction::Rtl)],
+        );
+        assert_eq!(visual_line_edge(&l, false), Some((0, Affinity::Downstream)));
+        assert_eq!(visual_line_edge(&l, true), Some((2, Affinity::Downstream)));
+        // Pure-RTL line: leftmost is the logical end (byte 9), rightmost byte 0.
+        let rtl = run_line(
+            vec![
+                dglyph(6, 7.0, Direction::Rtl),
+                dglyph(3, 8.0, Direction::Rtl),
+                dglyph(0, 9.0, Direction::Rtl),
+            ],
+            vec![run(0..9, Direction::Rtl)],
+        );
+        assert_eq!(visual_line_edge(&rtl, false), Some((9, Affinity::Upstream)));
+        assert_eq!(visual_line_edge(&rtl, true), Some((0, Affinity::Downstream)));
+        // A line with no runs has no visual stops.
+        assert_eq!(visual_line_edge(&line(vec![glyph(0, 5.0)]), false), None);
     }
 
     #[test]

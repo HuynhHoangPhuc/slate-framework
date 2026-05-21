@@ -121,6 +121,23 @@ pub(crate) fn selection_rects(
             continue;
         }
 
+        // Mixed / RTL line: the logical selection range maps to one contiguous
+        // x-span per level-run, so emit a rect per run intersection. (The full-
+        // width wrap signal below is an LTR-only nicety; run-aware lines paint
+        // the precise glyph coverage instead.)
+        if !vline.line.runs.is_empty() {
+            let line_lo = lo.max(vline.byte_start);
+            let line_hi = hi.min(vline.byte_end);
+            for (x_start, width) in slate_text::run_selection_rects(&vline.line, line_lo, line_hi) {
+                rects.push(SelectionRect {
+                    x_lpx: x_start,
+                    y_lpx: vline.line.y_offset_lpx,
+                    width_lpx: width,
+                });
+            }
+            continue;
+        }
+
         let line_lo = lo.max(vline.byte_start);
         let x_start = line_x_at_byte(&vline.line, line_lo);
 

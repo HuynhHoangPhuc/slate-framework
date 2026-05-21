@@ -43,15 +43,22 @@ pub(super) fn paint(
     // re-shaping (which needs `cx.text`) or the later cache write-back. The
     // caret falls back to the document end when no ImeState exists yet
     // (pre-prepaint or unmounted).
-    let (committed_text, caret_byte, selection_anchor, preedit) =
+    let (committed_text, caret_byte, caret_affinity, selection_anchor, preedit) =
         match cx.ime_registry.borrow().get(element_id) {
             Some(rc) => {
                 let s = rc.borrow();
-                (s.text.clone(), s.caret, s.selection_anchor, s.preedit.clone())
+                (
+                    s.text.clone(),
+                    s.caret,
+                    s.caret_affinity,
+                    s.selection_anchor,
+                    s.preedit.clone(),
+                )
             }
             None => (
                 String::new(),
                 layout.lines.last().map(|l| l.byte_end).unwrap_or(0),
+                slate_text::Affinity::Downstream,
                 None,
                 None,
             ),
@@ -198,7 +205,15 @@ pub(super) fn paint(
 
     // 3. Caret — resolve the byte to its line + pixel-x, then advance blink.
     //    Uses `display_caret` so the caret sits inside the composed text.
-    let (_, caret_x, caret_y) = layout.caret_position(display_caret);
+    // During composition the stored affinity belongs to the committed caret,
+    // not the preedit-shifted `display_caret`, so fall back to downstream.
+    let effective_affinity = if has_preedit {
+        slate_text::Affinity::Downstream
+    } else {
+        caret_affinity
+    };
+    let (_, caret_x, caret_y) =
+        layout.caret_position_with_affinity(display_caret, effective_affinity);
 
     let mut caret_visible = false;
     if let Some(state_rc) = cx.ime_registry.borrow().get(element_id)

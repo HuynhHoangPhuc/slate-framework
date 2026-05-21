@@ -45,6 +45,7 @@ pub use font_handle::FontHandle;
 pub use glyph_cache::GlyphCache;
 pub use glyph_geometry::{
     byte_at_pixel_x, pixel_x_at_byte, run_byte_at_x, run_caret_x, run_caret_x_at,
+    run_caret_x_at_affinity, run_selection_rects, visual_caret_step, visual_line_edge,
 };
 pub use line_layout_cache::{LineLayoutCache, hash_text};
 pub use multiline::{
@@ -56,7 +57,7 @@ pub use paragraph::{
 };
 pub use run_builder::TextRunBuilder;
 pub use types::{
-    CachedGlyph, Direction, FontDescriptor, FontId, FontMetrics, FontStyle, GlyphBitmap,
+    Affinity, CachedGlyph, Direction, FontDescriptor, FontId, FontMetrics, FontStyle, GlyphBitmap,
     GlyphBounds, GlyphMetrics, RunSpan, ShapedGlyph, ShapedLine, TextAlignment,
 };
 

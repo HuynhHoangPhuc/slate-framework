@@ -19,6 +19,27 @@ pub enum Direction {
     Rtl,
 }
 
+/// Which side of a direction boundary a caret binds to.
+///
+/// One logical byte that sits between two opposite-direction level-runs on the
+/// same line maps to two visual x-positions: the trailing edge of the run that
+/// *ends* there and the leading edge of the run that *starts* there.
+/// [`Downstream`](Affinity::Downstream) (the default) binds the caret to the run
+/// that *starts* at the byte; [`Upstream`](Affinity::Upstream) binds it to the
+/// run that *ends* there. On a line with no direction boundary (pure-LTR / CJK)
+/// both resolve identically, so the field is inert on the fast path.
+///
+/// This is orthogonal to the soft-wrap line-resolution rule in
+/// `MultilineLayout::line_for_byte`, which is unaffected by this value.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Affinity {
+    /// Bind to the run that starts at the byte (forward / leading edge).
+    #[default]
+    Downstream,
+    /// Bind to the run that ends at the byte (trailing edge).
+    Upstream,
+}
+
 /// A contiguous same-direction span within a shaped line (UAX #9 level-run).
 ///
 /// Stored on [`ShapedLine`] in **visual** order for line assembly; `byte_range`

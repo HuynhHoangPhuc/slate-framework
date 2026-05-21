@@ -122,6 +122,7 @@ pub(super) fn build_mouse_down_handler() -> MouseHandler {
             };
 
             state.caret = caret;
+            state.caret_affinity = slate_text::Affinity::Downstream;
             state.selection_anchor = Some(anchor);
             state.dragging = true;
             state.desired_x = None;
@@ -162,6 +163,7 @@ pub(super) fn build_mouse_move_handler() -> MouseHandler {
             "byte_at_point must return a char boundary"
         );
         state.caret = byte;
+        state.caret_affinity = slate_text::Affinity::Downstream;
         reset_blink(&mut state);
         drop(state);
         cx.stop_propagation();
