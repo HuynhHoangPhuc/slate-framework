@@ -63,6 +63,21 @@ impl GlyphCache {
         self.cache.get(&(font, glyph_id, variant))
     }
 
+    /// True when `key` is cached AND its atlas slot is still live.
+    ///
+    /// Gates on the monotonic `token`, not the `AllocId`: the atlas evicts
+    /// off-screen slots under pressure and etagere recycles the numeric
+    /// `AllocId` to another glyph, so a stale entry's id can read "present"
+    /// while pointing at someone else's pixels. A token mismatch means our slot
+    /// was evicted → caller re-materializes (overwriting the stale CPU entry).
+    /// We never deallocate the evicted id here: it may already belong to a live
+    /// glyph, and freeing it would remove that glyph's slot.
+    fn live_hit(&self, key: &(FontHandle, u32, u8), atlas: &Atlas) -> bool {
+        self.cache
+            .get(key)
+            .is_some_and(|cg| atlas.is_live(cg.alloc.alloc_id, cg.alloc.token))
+    }
+
     /// Rasterizes and uploads a single glyph variant to the atlas.
     ///
     /// Makes the glyph available in cache for subsequent `get()` calls.
@@ -79,7 +94,7 @@ impl GlyphCache {
     ) -> Result<bool, TextError> {
         let key = (font.handle(), glyph_id, variant);
 
-        if self.cache.contains_key(&key) {
+        if self.live_hit(&key, atlas) {
             return Ok(false);
         }
 
@@ -139,7 +154,7 @@ impl GlyphCache {
         };
         let key = (handle, glyph_id, variant);
 
-        if self.cache.contains_key(&key) {
+        if self.live_hit(&key, atlas) {
             return Ok(false);
         }
 
