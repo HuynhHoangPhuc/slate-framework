@@ -76,8 +76,9 @@ pub enum TextAlignment {
 pub struct ShapedGlyph {
     /// Glyph index in the font.
     pub glyph_id: u32,
-    /// Logical font identifier (used by `FontFallbackSystem` only — not the
-    /// cache key). Per-glyph rasterization keys on `font_handle`.
+    /// Logical font identifier carried for paint-cache bookkeeping — not the
+    /// rasterization cache key. Per-glyph rasterization and fallback dispatch
+    /// key on `font_handle` (the face the native shaper actually used).
     pub font_id: FontId,
     /// Cache key + backend registry key for the face the platform shaper
     /// actually used for this glyph. May differ from the primary font when the
@@ -183,7 +184,9 @@ pub struct GlyphBounds {
     pub height: u32,
 }
 
-/// Unique identifier for a font in a fallback chain.
+/// Logical font identifier carried on shaped glyphs for paint-cache
+/// bookkeeping. `PRIMARY` (0) is the element's own face; non-zero values are
+/// reserved for callers that track multiple logical faces.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct FontId(pub u32);
 
