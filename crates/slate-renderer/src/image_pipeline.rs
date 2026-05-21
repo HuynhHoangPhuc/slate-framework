@@ -44,7 +44,7 @@ use wgpu::{
     VertexStepMode,
 };
 
-use crate::atlas::{AllocId, Atlas, AtlasAllocation, AtlasError, Format, PAGE_SIZE};
+use crate::atlas::{Atlas, AtlasAllocation, AtlasError, Format, PAGE_SIZE};
 use crate::pipeline_shared::{atlas_bind_group, atlas_bind_group_layout, atlas_linear_sampler};
 use crate::scene::ImageInstance;
 
@@ -332,12 +332,13 @@ impl ImagePipeline {
 /// exactly 1 texel per side, so linear sampling at a non-integer scale never
 /// pulls texels from a neighbouring image. Caller uploads the padded buffer
 /// from [`pad_rgba_with_gutter`] (the gutter is zero-filled → samples read
-/// transparent). Returns `(alloc_id, inset_uv_rect)`.
+/// transparent). Returns the [`AtlasAllocation`] with its `uv_rect` already
+/// inset (and the atlas's `alloc_id` + liveness `token` carried through).
 pub fn allocate_image(
     atlas: &mut Atlas,
     width: u32,
     height: u32,
-) -> Result<(AllocId, [f32; 4]), AtlasError> {
+) -> Result<AtlasAllocation, AtlasError> {
     debug_assert!(
         width > 0 && height > 0,
         "image dimensions must be non-zero (got {width}×{height})",
@@ -350,17 +351,19 @@ pub fn allocate_image(
         requested: (width, height),
         max: PAGE_SIZE,
     })?;
-    let AtlasAllocation { uv_rect, alloc_id } = atlas.allocate(padded_w, padded_h)?;
+    let alloc = atlas.allocate(padded_w, padded_h)?;
     // 1-texel inset in normalized coords; query the atlas so multi-page atlases
     // with differing page sizes stay correct.
     let texel = atlas.texel_size_uv();
-    let inset = [
-        uv_rect[0] + texel,
-        uv_rect[1] + texel,
-        uv_rect[2] - texel,
-        uv_rect[3] - texel,
-    ];
-    Ok((alloc_id, inset))
+    Ok(AtlasAllocation {
+        uv_rect: [
+            alloc.uv_rect[0] + texel,
+            alloc.uv_rect[1] + texel,
+            alloc.uv_rect[2] - texel,
+            alloc.uv_rect[3] - texel,
+        ],
+        ..alloc
+    })
 }
 
 /// Pad a `w × h` straight-RGBA image with a 1-pixel zero-fill (transparent)

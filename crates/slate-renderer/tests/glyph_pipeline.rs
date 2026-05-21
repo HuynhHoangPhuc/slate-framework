@@ -63,7 +63,7 @@ fn upload_mask(
     height: u32,
     pixels: &[u8],
 ) -> [f32; 4] {
-    let (alloc_id, inset_uv) = allocate_glyph(atlas, width, height).expect("allocate_glyph failed");
+    let alloc = allocate_glyph(atlas, width, height).expect("allocate_glyph failed");
     // The atlas allocation is (width+2)×(height+2); upload zeros for the
     // gutter and the caller-supplied mask in the inner 1..=width region.
     let aw = width + 2;
@@ -75,8 +75,8 @@ fn upload_mask(
         padded[dst_off..dst_off + width as usize]
             .copy_from_slice(&pixels[src_off..src_off + width as usize]);
     }
-    atlas.upload(queue, alloc_id, &padded);
-    inset_uv
+    atlas.upload(queue, alloc.alloc_id, &padded);
+    alloc.uv_rect
 }
 
 fn run_glyph_test(
@@ -213,7 +213,7 @@ fn allocate_glyph_reserves_gutter_and_insets_uv() {
     let mut atlas = Atlas::new(&device, Format::R8Unorm);
 
     // First glyph: nominal 16×16. Atlas reserves 18×18; uv_rect inset by 1/PAGE.
-    let (_id_a, uv_a) = allocate_glyph(&mut atlas, 16, 16).expect("allocate glyph A");
+    let uv_a = allocate_glyph(&mut atlas, 16, 16).expect("allocate glyph A").uv_rect;
     let texel = 1.0 / PAGE_SIZE as f32;
     // Width & height of the inset uv_rect should equal 16 texels exactly.
     assert!(
@@ -236,7 +236,7 @@ fn allocate_glyph_reserves_gutter_and_insets_uv() {
     // Second glyph: lands adjacent on the same shelf. Its uv must not overlap
     // glyph A's uv_rect (gutter ensures separation in atlas, inset preserves
     // separation in normalized uv).
-    let (_id_b, uv_b) = allocate_glyph(&mut atlas, 16, 16).expect("allocate glyph B");
+    let uv_b = allocate_glyph(&mut atlas, 16, 16).expect("allocate glyph B").uv_rect;
     let a_disjoint_b = uv_a[2] <= uv_b[0] + 1e-6
         || uv_b[2] <= uv_a[0] + 1e-6
         || uv_a[3] <= uv_b[1] + 1e-6

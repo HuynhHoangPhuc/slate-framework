@@ -234,6 +234,44 @@ fn premul_half_alpha_red_patch_matches_smoke() {
 }
 
 #[test]
+fn rgba_channel_order_survives_atlas_and_surface_no_bgra_swap() {
+    // Byte-order contract lock: an RGBA image uploaded into the Rgba8UnormSrgb
+    // image atlas must reach the surface with channels in the SAME order — R
+    // stays R, B stays B. A regression that uploads or samples as BGRA would
+    // swap R↔B and read this patch mirrored. All four channels are distinct
+    // (R≫B) so a swap fails loudly rather than aliasing.
+    let Some((device, queue)) = common::make_headless_device() else {
+        eprintln!("image_pipeline: no GPU adapter — skipping");
+        return;
+    };
+
+    let format = TextureFormat::Bgra8UnormSrgb;
+    let (w, h) = (32u32, 32u32);
+    let bgl = viewport_bind_group_layout(&device);
+    let mut atlas = Atlas::new(&device, Format::Rgba8UnormSrgb);
+
+    // Straight, opaque sRGB bytes with strongly asymmetric channels.
+    let (sr, sg, sb) = (200u8, 120u8, 40u8);
+    let pixels: Vec<u8> = (0..16).flat_map(|_| [sr, sg, sb, 255]).collect();
+    let uv_rect = upload_patch(&mut atlas, &queue, 4, 4, &pixels);
+
+    let mut pipeline = ImagePipeline::new(&device, format, &bgl, &atlas);
+    let instances = vec![ImageInstance {
+        rect: [Lpx(0.0), Lpx(0.0), Lpx(w as f32), Lpx(h as f32)],
+        uv_rect,
+        tint: [1.0, 1.0, 1.0, 1.0],
+    }];
+
+    let buf = run_image_test(w, h, &instances, &device, &queue, &mut pipeline, "image-byte-order");
+    drop(atlas);
+
+    // Opaque + white tint: sRGB→linear on sample, premul by α=1, then
+    // linear→sRGB on store round-trips back to the input sRGB bytes (±2 for
+    // driver LSB rounding, matching the other roundtrip tests here).
+    common::assert_pixel(&buf, w, w / 2, h / 2, [sr, sg, sb, 255], 2);
+}
+
+#[test]
 fn capacity_grows_monotonically() {
     let Some((device, queue)) = common::make_headless_device() else {
         return;
@@ -450,7 +488,7 @@ fn allocate_image_reserves_gutter_and_insets_uv() {
     let mut atlas = Atlas::new(&device, Format::Rgba8UnormSrgb);
 
     // Nominal 16×16 image. Atlas reserves 18×18; uv_rect inset by 1/PAGE.
-    let (_id_a, uv_a) = allocate_image(&mut atlas, 16, 16).expect("allocate image A");
+    let uv_a = allocate_image(&mut atlas, 16, 16).expect("allocate image A").uv_rect;
     let texel = 1.0 / PAGE_SIZE as f32;
     assert!(
         (uv_a[2] - uv_a[0] - 16.0 * texel).abs() < 1e-6,
@@ -469,7 +507,7 @@ fn allocate_image_reserves_gutter_and_insets_uv() {
     assert!(uv_a[1] >= texel - 1e-6);
 
     // Adjacent image on the same shelf: its inset uv must stay disjoint from A.
-    let (_id_b, uv_b) = allocate_image(&mut atlas, 16, 16).expect("allocate image B");
+    let uv_b = allocate_image(&mut atlas, 16, 16).expect("allocate image B").uv_rect;
     let a_disjoint_b = uv_a[2] <= uv_b[0] + 1e-6
         || uv_b[2] <= uv_a[0] + 1e-6
         || uv_a[3] <= uv_b[1] + 1e-6

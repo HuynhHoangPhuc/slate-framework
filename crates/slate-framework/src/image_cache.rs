@@ -63,22 +63,30 @@ impl ImageCache {
 
         // Check for existing entry
         if let Some(entry) = self.entries.get_mut(&key) {
-            // Cache hit with valid allocation
-            if let Some(alloc) = entry.alloc {
+            // Cache hit with a still-live allocation. Gate on the monotonic
+            // token, not the AllocId: the atlas evicts off-screen slots and
+            // etagere recycles the numeric AllocId, so a stale entry's id can
+            // be reused by another image — sampling its pixels (wrong texture)
+            // on scroll-back. A mismatched token means our slot was evicted;
+            // fall through and re-upload.
+            if let Some(alloc) = entry.alloc
+                && atlas.is_live(alloc.alloc_id, alloc.token)
+            {
                 atlas.touch(alloc.alloc_id);
                 return Some(alloc);
             }
+            // Either never allocated (post-device-lost) or evicted — drop the
+            // stale handle and re-upload from the preserved pixels.
+            entry.alloc = None;
 
-            // Cache hit but allocation cleared (post-device-lost) — re-upload
             debug_assert!(
                 entry.pixels.len() == (width as usize) * (height as usize) * 4,
                 "ImageCacheEntry pixel buffer size mismatch during re-upload"
             );
             match allocate_image(atlas, width, height) {
-                Ok((alloc_id, uv_rect)) => {
+                Ok(alloc) => {
                     let padded = pad_rgba_with_gutter(&entry.pixels, width, height);
-                    atlas.upload(queue, alloc_id, &padded);
-                    let alloc = AtlasAllocation { uv_rect, alloc_id };
+                    atlas.upload(queue, alloc.alloc_id, &padded);
                     entry.alloc = Some(alloc);
                     return Some(alloc);
                 }
@@ -95,10 +103,9 @@ impl ImageCache {
         // Cache miss — allocate (with a 1-texel transparent gutter so linear
         // sampling never bleeds from a packed neighbour), upload, insert.
         match allocate_image(atlas, width, height) {
-            Ok((alloc_id, uv_rect)) => {
+            Ok(alloc) => {
                 let padded = pad_rgba_with_gutter(pixels, width, height);
-                atlas.upload(queue, alloc_id, &padded);
-                let alloc = AtlasAllocation { uv_rect, alloc_id };
+                atlas.upload(queue, alloc.alloc_id, &padded);
                 self.entries.insert(
                     key,
                     ImageCacheEntry {
@@ -169,6 +176,125 @@ impl RendererObserver for ImageSystemObserver {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use slate_renderer::atlas::Format;
+    use wgpu::{
+        Backends, DeviceDescriptor, Features, Instance, InstanceDescriptor, Limits, MemoryHints,
+        RequestAdapterOptions,
+    };
+
+    /// Headless device for the eviction test; returns `None` on CI runners with
+    /// no adapter so the test skips cleanly (mirrors the renderer harness).
+    fn headless() -> Option<(wgpu::Device, Queue)> {
+        let instance = Instance::new(InstanceDescriptor {
+            backends: Backends::PRIMARY,
+            // (descriptor fields spelled out to match the renderer harness)
+            flags: wgpu::InstanceFlags::default(),
+            memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+            backend_options: Default::default(),
+            display: None,
+        });
+        let adapter = pollster::block_on(instance.request_adapter(&RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }))
+        .ok()?;
+        pollster::block_on(adapter.request_device(&DeviceDescriptor {
+            label: Some("image-cache-test-device"),
+            required_features: Features::empty(),
+            required_limits: Limits::downlevel_defaults(),
+            memory_hints: MemoryHints::Performance,
+            trace: wgpu::Trace::Off,
+            experimental_features: wgpu::ExperimentalFeatures::disabled(),
+        }))
+        .ok()
+    }
+
+    /// A solid-color 256×256 RGBA image with the given red channel as a marker.
+    fn solid_image(r: u8) -> Vec<u8> {
+        let mut px = vec![0u8; 256 * 256 * 4];
+        for chunk in px.chunks_exact_mut(4) {
+            chunk[0] = r;
+            chunk[3] = 255;
+        }
+        px
+    }
+
+    #[test]
+    fn scroll_back_after_eviction_returns_a_live_reupload_not_stale_uv() {
+        let Some((device, queue)) = headless() else {
+            eprintln!("image_cache: no GPU adapter — skipping");
+            return;
+        };
+        let mut atlas = Atlas::new(&device, Format::Rgba8UnormSrgb);
+        let mut cache = ImageCache::new();
+
+        // Frame 1: upload image X and remember its allocation.
+        atlas.begin_frame();
+        let x_pixels = solid_image(10);
+        let x0 = cache
+            .upload_if_needed(0xA11CE, &x_pixels, 256, 256, &mut atlas, &queue)
+            .expect("initial X upload");
+
+        // Frame 2: X is now evictable (untouched this frame). Pack the page with
+        // distinct images until eviction reclaims X's slot — a 258²-padded tile
+        // packs 7×7=49 per page, so 60 distinct uploads guarantees eviction.
+        atlas.begin_frame();
+        for i in 0..60u64 {
+            let _ = cache.upload_if_needed(
+                0x1000 + i,
+                &solid_image((i as u8).wrapping_add(20)),
+                256,
+                256,
+                &mut atlas,
+                &queue,
+            );
+        }
+        assert!(
+            !atlas.is_live(x0.alloc_id, x0.token),
+            "test precondition: X's slot must have been evicted"
+        );
+
+        // Frame 3: scroll X back into view. The cache entry still holds the
+        // stale Some(x0); the token gate must detect the eviction and re-upload.
+        atlas.begin_frame();
+        let x1 = cache
+            .upload_if_needed(0xA11CE, &x_pixels, 256, 256, &mut atlas, &queue)
+            .expect("scroll-back X re-upload");
+
+        // Without the gate, the hit path would return the stale x0 unchanged.
+        assert_ne!(
+            x0.token, x1.token,
+            "scroll-back must re-allocate (fresh token), not return the stale handle"
+        );
+        // The returned handle points at a genuinely live slot (its uv_rect is
+        // the freshly re-uploaded slot, not a slot another image now owns).
+        assert!(
+            atlas.is_live(x1.alloc_id, x1.token),
+            "re-uploaded X must be live"
+        );
+    }
+
+    #[test]
+    fn on_screen_image_hits_cache_without_reallocate() {
+        let Some((device, queue)) = headless() else {
+            return;
+        };
+        let mut atlas = Atlas::new(&device, Format::Rgba8UnormSrgb);
+        let mut cache = ImageCache::new();
+        atlas.begin_frame();
+        let px = solid_image(7);
+        let a = cache
+            .upload_if_needed(0xBEEF, &px, 256, 256, &mut atlas, &queue)
+            .expect("first upload");
+        // Same frame, re-request: must be a pure cache hit — same token, no
+        // re-allocation.
+        let b = cache
+            .upload_if_needed(0xBEEF, &px, 256, 256, &mut atlas, &queue)
+            .expect("cache hit");
+        assert_eq!(a.token, b.token, "on-screen re-request must not re-allocate");
+        assert_eq!(a.uv_rect, b.uv_rect);
+    }
 
     #[test]
     fn new_cache_is_empty() {

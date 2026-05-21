@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use slate_renderer::atlas::{Atlas, AtlasAllocation};
+use slate_renderer::atlas::Atlas;
 use slate_renderer::glyph_pipeline::allocate_glyph;
 
 use crate::backend::{Font, TextBackend};
@@ -100,17 +100,17 @@ impl GlyphCache {
             return Ok(false);
         }
 
-        let (alloc_id, uv_rect) = allocate_glyph(atlas, bitmap.width, bitmap.height)
+        let alloc = allocate_glyph(atlas, bitmap.width, bitmap.height)
             .map_err(|e| TextError::RasterizationFailed(format!("atlas alloc: {e:?}")))?;
 
         let padded = pad_with_gutter(&bitmap.alpha, bitmap.width, bitmap.height);
-        atlas.upload(queue, alloc_id, &padded);
+        atlas.upload(queue, alloc.alloc_id, &padded);
 
         let metrics = GlyphMetrics::from_bitmap(&bitmap);
         self.cache.insert(
             key,
             CachedGlyph {
-                alloc: AtlasAllocation { uv_rect, alloc_id },
+                alloc,
                 metrics,
             },
         );
@@ -158,17 +158,17 @@ impl GlyphCache {
             return Ok(false);
         }
 
-        let (alloc_id, uv_rect) = allocate_glyph(atlas, bitmap.width, bitmap.height)
+        let alloc = allocate_glyph(atlas, bitmap.width, bitmap.height)
             .map_err(|e| TextError::RasterizationFailed(format!("atlas alloc: {e:?}")))?;
 
         let padded = pad_with_gutter(&bitmap.alpha, bitmap.width, bitmap.height);
-        atlas.upload(queue, alloc_id, &padded);
+        atlas.upload(queue, alloc.alloc_id, &padded);
 
         let metrics = GlyphMetrics::from_bitmap(&bitmap);
         self.cache.insert(
             key,
             CachedGlyph {
-                alloc: AtlasAllocation { uv_rect, alloc_id },
+                alloc,
                 metrics,
             },
         );

@@ -54,7 +54,7 @@ use wgpu::{
     VertexStepMode,
 };
 
-use crate::atlas::{AllocId, Atlas, AtlasAllocation, AtlasError, Format, PAGE_SIZE};
+use crate::atlas::{Atlas, AtlasAllocation, AtlasError, Format, PAGE_SIZE};
 use crate::pipeline_shared::{atlas_bind_group, atlas_bind_group_layout, atlas_linear_sampler};
 use crate::scene::GlyphInstance;
 
@@ -348,13 +348,14 @@ impl GlyphPipeline {
 /// glyph.
 ///
 /// Caller is responsible for uploading the gutter pixels (zero-fill is fine
-/// — the pipeline never samples outside `uv_rect`). Returns `(alloc_id,
-/// inset_uv_rect)`.
+/// — the pipeline never samples outside `uv_rect`). Returns the
+/// [`AtlasAllocation`] with its `uv_rect` already inset (and the atlas's
+/// `alloc_id` + liveness `token` carried through).
 pub fn allocate_glyph(
     atlas: &mut Atlas,
     width: u32,
     height: u32,
-) -> Result<(AllocId, [f32; 4]), AtlasError> {
+) -> Result<AtlasAllocation, AtlasError> {
     // Zero-sized glyph would yield a 2×2 alloc with a fully-collapsed inset
     // uv_rect (sampler reads only gutter texels). Catch in debug; producers
     // are expected to filter zero-metric glyphs upstream.
@@ -371,15 +372,17 @@ pub fn allocate_glyph(
         requested: (width, height),
         max: PAGE_SIZE,
     })?;
-    let AtlasAllocation { uv_rect, alloc_id } = atlas.allocate(padded_w, padded_h)?;
+    let alloc = atlas.allocate(padded_w, padded_h)?;
     // 1-texel inset in normalized coords. Query the atlas so Phase 2
     // multi-page atlases (potentially different page sizes) stay correct.
     let texel = atlas.texel_size_uv();
-    let inset = [
-        uv_rect[0] + texel,
-        uv_rect[1] + texel,
-        uv_rect[2] - texel,
-        uv_rect[3] - texel,
-    ];
-    Ok((alloc_id, inset))
+    Ok(AtlasAllocation {
+        uv_rect: [
+            alloc.uv_rect[0] + texel,
+            alloc.uv_rect[1] + texel,
+            alloc.uv_rect[2] - texel,
+            alloc.uv_rect[3] - texel,
+        ],
+        ..alloc
+    })
 }

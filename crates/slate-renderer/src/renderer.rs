@@ -234,7 +234,11 @@ impl Renderer {
             .map_err(|e| RendererError::Configure(format!("{:?}", e)))?;
         let format = target.format();
 
-        // --- Shared resources (Phase 7) ---
+        // --- Shared resources ---
+        // Built once here and passed by reference into every instanced
+        // pipeline below; no pipeline owns its own copy of the viewport BGL or
+        // the unit quad. This single-construction sharing is the invariant the
+        // `shared_unit_quad` test guards.
         let viewport_bgl = pipeline_shared::viewport_bind_group_layout(&device);
         let viewport_buf = device.create_buffer(&BufferDescriptor {
             label: Some("slate-viewport-buf"),

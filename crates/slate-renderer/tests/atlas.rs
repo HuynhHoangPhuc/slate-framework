@@ -94,6 +94,57 @@ fn evicts_lru_when_full() {
 }
 
 #[test]
+fn token_detects_eviction_even_when_alloc_id_is_recycled() {
+    // The liveness contract that the image cache depends on. etagere recycles
+    // the numeric AllocId when an evicted slot is reallocated, so `contains`
+    // can report a stale handle as live (a *different* allocation now owns the
+    // id). The monotonic token must still report the original handle dead.
+    let Some((device, _queue)) = common::make_headless_device() else {
+        return;
+    };
+    let mut atlas = Atlas::new(&device, Format::R8Unorm);
+    atlas.begin_frame();
+
+    // First slot is the eviction victim (LRU front, allocated earliest).
+    let victim = atlas.allocate(256, 256).expect("victim");
+    // A later allocation we will keep most-recently-used → survives eviction.
+    let survivor = atlas.allocate(256, 256).expect("survivor");
+    // Fill the rest of the 8×8 = 64-block page.
+    for _ in 0..62 {
+        atlas.allocate(256, 256).expect("fill");
+    }
+    assert_eq!(atlas.live_count(), 64);
+    assert!(
+        atlas.is_live(victim.alloc_id, victim.token),
+        "victim must be live before eviction"
+    );
+
+    // New frame so the initial allocs are evictable; keep `survivor` touched.
+    atlas.begin_frame();
+    atlas.touch(survivor.alloc_id);
+
+    // Force eviction + slot reuse.
+    let fresh = atlas.allocate(256, 256).expect("eviction allocate");
+
+    // The victim's slot was evicted. Its token is dead EVEN IF etagere handed
+    // its numeric AllocId to `fresh` (in which case `contains` stays true).
+    assert!(
+        !atlas.is_live(victim.alloc_id, victim.token),
+        "evicted victim must read dead by token (contains = {})",
+        atlas.contains(victim.alloc_id)
+    );
+    // The replacement allocation is live under its own token.
+    assert!(atlas.is_live(fresh.alloc_id, fresh.token));
+    // A touched survivor is untouched by eviction.
+    assert!(
+        atlas.is_live(survivor.alloc_id, survivor.token),
+        "touched survivor must stay live"
+    );
+    // Tokens are never reused, even when AllocIds are.
+    assert_ne!(victim.token, fresh.token);
+}
+
+#[test]
 fn does_not_evict_touched_this_frame() {
     let Some((device, _queue)) = common::make_headless_device() else {
         return;

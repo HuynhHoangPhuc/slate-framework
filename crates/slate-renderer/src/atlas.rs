@@ -92,10 +92,16 @@ pub enum AtlasError {
 
 /// Successful allocation result. `uv_rect = [u_min, v_min, u_max, v_max]`
 /// in `[0, 1]` page-relative coordinates.
+///
+/// `token` is a monotonic per-allocation stamp (never reused). It is the
+/// sound liveness key: etagere recycles the numeric `AllocId` when an evicted
+/// slot is reallocated, so `contains(alloc_id)` cannot tell a stale handle
+/// from a fresh one — but a recycled slot always carries a newer `token`.
 #[derive(Debug, Clone, Copy)]
 pub struct AtlasAllocation {
     pub uv_rect: [f32; 4],
     pub alloc_id: AllocId,
+    pub token: u64,
 }
 
 /// Per-allocation bookkeeping (private).
@@ -106,6 +112,7 @@ struct AllocMeta {
     width: u32,
     height: u32,
     last_touch_frame: u64,
+    token: u64,
 }
 
 /// VecDeque + position sidecar. `push_back` is O(1); `touch` / `pop_front`
@@ -169,6 +176,8 @@ pub struct Atlas {
     pinned: HashSet<AllocId>,
     lru: LruTracker,
     frame_counter: u64,
+    /// Monotonic allocation stamp; never reused. See [`AtlasAllocation::token`].
+    next_token: u64,
 }
 
 impl Atlas {
@@ -208,6 +217,8 @@ impl Atlas {
             pinned: HashSet::new(),
             lru: LruTracker::default(),
             frame_counter: 0,
+            // Start at 1 so 0 can mean "never allocated".
+            next_token: 1,
         }
     }
 
@@ -249,6 +260,8 @@ impl Atlas {
         let x = r.min.x as u32;
         let y = r.min.y as u32;
         let id = alloc.id;
+        let token = self.next_token;
+        self.next_token += 1;
         self.live.insert(
             id,
             AllocMeta {
@@ -257,6 +270,7 @@ impl Atlas {
                 width,
                 height,
                 last_touch_frame: self.frame_counter,
+                token,
             },
         );
         self.lru.push_back(id);
@@ -281,6 +295,7 @@ impl Atlas {
         Some(AtlasAllocation {
             uv_rect,
             alloc_id: id,
+            token,
         })
     }
 
@@ -379,8 +394,20 @@ impl Atlas {
     }
 
     /// Whether `alloc_id` is currently live in the atlas.
+    ///
+    /// NOTE: insufficient as a liveness key for cached handles — etagere
+    /// recycles the numeric `AllocId` on slot reuse, so this returns `true`
+    /// for a *different* allocation that took over the slot. Use
+    /// [`is_live`](Self::is_live) when validating a stored handle.
     pub fn contains(&self, alloc_id: AllocId) -> bool {
         self.live.contains_key(&alloc_id)
+    }
+
+    /// Whether the slot at `alloc_id` is still the *same* allocation that was
+    /// handed out with `token`. Sound across eviction + slot reuse: a recycled
+    /// `AllocId` carries a newer token, so a stale handle correctly reads dead.
+    pub fn is_live(&self, alloc_id: AllocId, token: u64) -> bool {
+        self.live.get(&alloc_id).is_some_and(|m| m.token == token)
     }
 
     /// Pop LRU front, evicting until at least `needed_pixels` of total
