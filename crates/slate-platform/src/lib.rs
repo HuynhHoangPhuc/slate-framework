@@ -470,8 +470,16 @@ pub mod clipboard;
 mod mac;
 #[cfg(target_os = "macos")]
 pub use mac::{MacPlatform as DefaultPlatform, MacWindow as DefaultWindow, wake_run_loop};
+#[cfg(all(target_os = "macos", feature = "test-hooks"))]
+pub use mac::{
+    clear_event_handler_for_test, dispatch_event_for_test, install_event_handler_for_test,
+};
 
 #[cfg(target_os = "windows")]
 mod win;
 #[cfg(target_os = "windows")]
 pub use win::{WinPlatform as DefaultPlatform, WinWindow as DefaultWindow, wake_run_loop};
+#[cfg(all(target_os = "windows", feature = "test-hooks"))]
+pub use win::{
+    clear_event_handler_for_test, dispatch_event_for_test, install_event_handler_for_test,
+};

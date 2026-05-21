@@ -105,6 +105,9 @@ struct Harness {
 }
 
 fn harness() -> Harness {
+    // Route copy/paste through an in-memory clipboard so the round-trip is
+    // deterministic and independent of a working OS pasteboard (headless CI).
+    slate_platform::clipboard::install_clipboard_override_for_test();
     let state = make_state();
     let elem = ElementId::from_raw(20);
     state.register_focusable_for_test(FocusableEntry {

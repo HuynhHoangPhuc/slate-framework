@@ -105,6 +105,26 @@ pub(crate) fn dispatch_event(event: Event) {
     });
 }
 
+/// Install an event handler directly into the thread-local slot, bypassing the
+/// native run loop. Lets a test exercise the `dispatch_event` funnel — the same
+/// path every real Win32 message callback uses — without standing up a window.
+#[cfg(feature = "test-hooks")]
+pub fn install_event_handler_for_test(handler: Box<dyn FnMut(Event) + 'static>) {
+    HANDLER.with(|h| *h.borrow_mut() = Some(handler));
+}
+
+/// Push an event through the real dispatch funnel from a test.
+#[cfg(feature = "test-hooks")]
+pub fn dispatch_event_for_test(event: Event) {
+    dispatch_event(event);
+}
+
+/// Clear the test-installed handler so a later test starts clean.
+#[cfg(feature = "test-hooks")]
+pub fn clear_event_handler_for_test() {
+    HANDLER.with(|h| *h.borrow_mut() = None);
+}
+
 pub(crate) fn next_window_id() -> WindowId {
     NEXT_WINDOW_ID.with(|c| {
         let id = c.get();

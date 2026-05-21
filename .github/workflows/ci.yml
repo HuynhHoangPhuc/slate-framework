@@ -111,7 +111,10 @@ jobs:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --workspace --all-targets
+      # test-hooks gates the platform dispatch + redraw suites; without it they
+      # silently compile to zero tests. Enabling it makes them actually run and
+      # satisfies the gated-suite sentinels.
+      - run: cargo test --workspace --all-targets --features test-hooks
       - name: Upload visual regression diffs
         if: failure()
         uses: actions/upload-artifact@v7

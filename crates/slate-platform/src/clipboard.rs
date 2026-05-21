@@ -21,13 +21,73 @@
 /// Returns `None` when the clipboard is empty, holds non-text content, or the
 /// OS denied access.
 pub fn get_text() -> Option<String> {
+    #[cfg(feature = "test-hooks")]
+    if test_override::is_active() {
+        return test_override::get();
+    }
     imp::get_text()
 }
 
 /// Write `s` to the system clipboard as plain text. Silently no-ops on
 /// transient OS errors (clipboard busy, etc).
 pub fn set_text(s: &str) {
+    #[cfg(feature = "test-hooks")]
+    if test_override::is_active() {
+        test_override::set(s);
+        return;
+    }
     imp::set_text(s);
+}
+
+// ---------------------------------------------------------------------------
+// Test seam — opt-in in-memory clipboard
+// ---------------------------------------------------------------------------
+
+/// Route clipboard reads/writes to a per-thread in-memory buffer instead of the
+/// OS clipboard. Lets a test exercise the real copy/paste handler path
+/// deterministically, with no dependency on a working pasteboard server or
+/// freedom from contention (headless CI, sandboxes). Starts empty.
+#[cfg(feature = "test-hooks")]
+pub fn install_clipboard_override_for_test() {
+    test_override::install();
+}
+
+/// Disable the in-memory override so later code hits the real OS clipboard.
+#[cfg(feature = "test-hooks")]
+pub fn clear_clipboard_override_for_test() {
+    test_override::clear();
+}
+
+#[cfg(feature = "test-hooks")]
+mod test_override {
+    use std::cell::{Cell, RefCell};
+
+    thread_local! {
+        static ACTIVE: Cell<bool> = const { Cell::new(false) };
+        static BUFFER: RefCell<Option<String>> = const { RefCell::new(None) };
+    }
+
+    pub(super) fn is_active() -> bool {
+        ACTIVE.with(|a| a.get())
+    }
+
+    pub(super) fn install() {
+        ACTIVE.with(|a| a.set(true));
+        BUFFER.with(|b| *b.borrow_mut() = None);
+    }
+
+    pub(super) fn clear() {
+        ACTIVE.with(|a| a.set(false));
+        BUFFER.with(|b| *b.borrow_mut() = None);
+    }
+
+    pub(super) fn get() -> Option<String> {
+        BUFFER.with(|b| b.borrow().clone())
+    }
+
+    pub(super) fn set(s: &str) {
+        BUFFER.with(|b| *b.borrow_mut() = Some(s.to_string()));
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -69,7 +129,7 @@ mod imp {
     use std::thread::sleep;
     use std::time::Duration;
 
-    use windows::Win32::Foundation::{GlobalFree, HANDLE, HWND};
+    use windows::Win32::Foundation::{GlobalFree, HANDLE, HGLOBAL, HWND};
     use windows::Win32::System::DataExchange::{
         CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, SetClipboardData,
     };
@@ -98,7 +158,7 @@ mod imp {
         }
         let handle = unsafe { GetClipboardData(CF_UNICODETEXT.0 as u32) }.ok();
         let result = handle.and_then(|h| unsafe {
-            let ptr = GlobalLock(std::mem::transmute::<HANDLE, _>(h)) as *const u16;
+            let ptr = GlobalLock(std::mem::transmute::<HANDLE, HGLOBAL>(h)) as *const u16;
             if ptr.is_null() {
                 return None;
             }
@@ -116,7 +176,7 @@ mod imp {
             }
             let slice = std::slice::from_raw_parts(ptr, len);
             let s = String::from_utf16_lossy(slice);
-            let _ = GlobalUnlock(std::mem::transmute::<HANDLE, _>(h));
+            let _ = GlobalUnlock(std::mem::transmute::<HANDLE, HGLOBAL>(h));
             Some(s)
         });
         let _ = unsafe { CloseClipboard() };

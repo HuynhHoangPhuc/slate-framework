@@ -62,6 +62,26 @@ pub(crate) fn dispatch_event(event: Event) {
     });
 }
 
+/// Install an event handler directly into the thread-local slot, bypassing the
+/// native run loop. Lets a test exercise the `dispatch_event` funnel — the same
+/// path every real AppKit callback uses — without standing up an NSWindow.
+#[cfg(feature = "test-hooks")]
+pub fn install_event_handler_for_test(handler: Box<dyn FnMut(Event) + 'static>) {
+    HANDLER.with(|h| *h.borrow_mut() = Some(handler));
+}
+
+/// Push an event through the real dispatch funnel from a test.
+#[cfg(feature = "test-hooks")]
+pub fn dispatch_event_for_test(event: Event) {
+    dispatch_event(event);
+}
+
+/// Clear the test-installed handler so a later test starts clean.
+#[cfg(feature = "test-hooks")]
+pub fn clear_event_handler_for_test() {
+    HANDLER.with(|h| *h.borrow_mut() = None);
+}
+
 /// Register a window in the thread-local registry.
 pub(crate) fn register_window(id: WindowId, window: &Arc<MacWindow>) {
     WINDOWS.with(|m| m.borrow_mut().insert(id, Arc::downgrade(window)));
