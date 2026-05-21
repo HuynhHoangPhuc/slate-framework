@@ -31,7 +31,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::backend::{Font, TextBackend};
 use crate::error::TextError;
-use crate::paragraph::{ShapedWord, assemble_visual_line, shape_words_in};
+use crate::paragraph::{ShapedWord, assemble_visual_line, fit_advance, shape_words_in};
 use crate::types::{ShapedGlyph, ShapedLine};
 
 /// One `\n`-delimited paragraph's pre-shaped words plus its absolute byte
@@ -188,6 +188,7 @@ fn fit_paragraph<'a>(
     out: &mut Vec<(ShapedLine, usize)>,
 ) {
     let first_idx = out.len();
+    let tab_width = 4.0 * doc.space_width;
     // Items committed to the current line in logical (source) order; glyphs are
     // placed in visual order — and word-local clusters rewritten to absolute —
     // only at line flush (`assemble_visual_line` with `rewrite_clusters_absolute`).
@@ -202,8 +203,14 @@ fn fit_paragraph<'a>(
     // absolute clusters). Caller guards against empty.
     let flush =
         |cur: &mut Vec<&'a ShapedWord>, cur_start: usize, out: &mut Vec<(ShapedLine, usize)>| {
-            let line =
-                assemble_visual_line(cur, doc.ascent_lpx, doc.descent_lpx, 0.0, true);
+            let line = assemble_visual_line(
+                cur,
+                doc.ascent_lpx,
+                doc.descent_lpx,
+                0.0,
+                true,
+                tab_width,
+            );
             out.push((line, cur_start));
             cur.clear();
         };
@@ -216,9 +223,9 @@ fn fit_paragraph<'a>(
         }
 
         // A word that cannot fit even on its own line is broken at grapheme
-        // boundaries. The pending run is a soft break → absorb it, flush the
-        // in-progress line, then emit the pieces.
-        if word.advance_width_lpx > max_width {
+        // boundaries (tabs are pen-relative, never over-wide). The pending run
+        // is a soft break → absorb it, flush the line, then emit the pieces.
+        if !word.is_tab && word.advance_width_lpx > max_width {
             pending = None;
             if !cur.is_empty() {
                 flush(&mut cur, cur_start, out);
@@ -231,12 +238,15 @@ fn fit_paragraph<'a>(
         }
 
         let pending_w = pending.map(|s| s.advance_width_lpx).unwrap_or(0.0);
+        let word_w = fit_advance(word, cur_width + pending_w, tab_width);
         let width_with = if cur.is_empty() {
-            word.advance_width_lpx
+            word_w
         } else {
-            cur_width + pending_w + word.advance_width_lpx
+            cur_width + pending_w + word_w
         };
-        if width_with > max_width && !cur.is_empty() {
+        // Wrap only at an allowed UAX #14 opportunity (`break_before`); items
+        // with no break before them ride out the overflow on the current line.
+        if width_with > max_width && !cur.is_empty() && word.break_before {
             // Wrap before this word; absorb the pending run (no visible width
             // on either line) and start the next line with the word.
             flush(&mut cur, cur_start, out);
@@ -244,7 +254,7 @@ fn fit_paragraph<'a>(
             pending = None;
             cur_start = word.source_byte_range.start;
             cur.push(word);
-            cur_width += word.advance_width_lpx;
+            cur_width += fit_advance(word, 0.0, tab_width);
         } else {
             if cur.is_empty() {
                 // Line begins at the pending run's start (leading spaces stay
@@ -258,7 +268,7 @@ fn fit_paragraph<'a>(
                 cur_width += sp.advance_width_lpx;
             }
             cur.push(word);
-            cur_width += word.advance_width_lpx;
+            cur_width += fit_advance(word, cur_width, tab_width);
         }
     }
 

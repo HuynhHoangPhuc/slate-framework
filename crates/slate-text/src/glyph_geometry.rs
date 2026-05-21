@@ -232,7 +232,7 @@ mod tests {
         // across the whole line and assert the rewritten O(N+G) impl matches
         // the old per-boundary reference for every sample.
         let n = 500usize;
-        let text: String = std::iter::repeat('a').take(n).collect();
+        let text: String = "a".repeat(n);
         let glyphs: Vec<ShapedGlyph> = (0..n)
             .map(|i| glyph(i as u32, 3.0 + (i % 7) as f32))
             .collect();

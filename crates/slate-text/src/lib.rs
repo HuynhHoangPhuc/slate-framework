@@ -29,6 +29,7 @@ pub mod fallback;
 pub mod font_handle;
 pub mod glyph_cache;
 pub mod glyph_geometry;
+pub(crate) mod linebreak;
 pub mod line_layout_cache;
 pub mod multiline;
 pub mod paragraph;

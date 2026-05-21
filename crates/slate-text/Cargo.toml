@@ -19,6 +19,7 @@ ttf-parser = "0.25"
 memmap2 = "0.9"
 unicode-segmentation.workspace = true
 unicode-bidi.workspace = true
+unicode-linebreak.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { workspace = true, features = ["Win32_Graphics_DirectWrite"] }

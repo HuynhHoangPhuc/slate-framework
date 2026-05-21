@@ -140,8 +140,10 @@ pub trait TextBackend {
 
     /// Shape a paragraph of text into multiple wrapped lines.
     ///
-    /// Breaks text at spaces using greedy first-fit algorithm. Each returned
-    /// `ShapedLine` has `y_offset_lpx` set to its vertical position.
+    /// Breaks text at UAX #14 opportunities (after spaces, between CJK
+    /// ideographs, after hyphens, …) using greedy first-fit, so space-less
+    /// scripts wrap. Each returned `ShapedLine` has `y_offset_lpx` set to its
+    /// vertical position.
     ///
     /// # Arguments
     ///

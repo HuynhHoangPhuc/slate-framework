@@ -46,6 +46,7 @@ pollster = "0.4"
 parking_lot = "0.12"
 unicode-segmentation = "1"
 unicode-bidi = "0.3"
+unicode-linebreak = "0.1"
 # macOS-only deps (target.'cfg(target_os = "macos")')
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = [
