@@ -449,6 +449,67 @@ fn line_for_byte_at_wrap_boundary_picks_next_line() {
     assert_eq!(layout.line_for_byte(8), 1);
 }
 
+// ── Mandatory breaks + CRLF normalization (caret-precise) ─────────────────────
+
+#[test]
+fn crlf_no_stray_glyph_and_caret_end_after_b() {
+    let backend = MockBackend;
+    let font = MockBackend::font();
+    let text = "ab\r\ncd"; // bytes: a=0 b=1 \r=2 \n=3 c=4 d=5
+    let doc = shape_document(&backend, &font, text).unwrap();
+    let layout = wrap_document(&doc, 1000.0);
+
+    assert_eq!(layout.lines.len(), 2, "CRLF must hard-break into two lines");
+    // No glyph is keyed to a terminator byte (2 = '\r', 3 = '\n') — the `\r` is
+    // never shaped into a glyph.
+    for vline in &layout.lines {
+        for g in &vline.line.glyphs {
+            assert!(
+                g.cluster != 2 && g.cluster != 3,
+                "a glyph was keyed to a CRLF terminator byte ({})",
+                g.cluster
+            );
+        }
+    }
+    // Caret-addressable end of line 0 stops after 'b' (byte 2), not the `\r`.
+    assert_eq!(layout.line_caret_end(text, 0), 2);
+    // Coverage gap-free and total: line0 0..4 (folds "\r\n"), line1 4..6.
+    assert_eq!((layout.lines[0].byte_start, layout.lines[0].byte_end), (0, 4));
+    assert_eq!((layout.lines[1].byte_start, layout.lines[1].byte_end), (4, 6));
+}
+
+#[test]
+fn unicode_separator_caret_end_excludes_separator() {
+    let backend = MockBackend;
+    let font = MockBackend::font();
+    let text = "ab\u{2028}cd"; // U+2028 is 3 bytes (2..5)
+    let doc = shape_document(&backend, &font, text).unwrap();
+    let layout = wrap_document(&doc, 1000.0);
+
+    assert_eq!(layout.lines.len(), 2);
+    assert_eq!(layout.line_caret_end(text, 0), 2); // after 'b', not the separator
+    assert_eq!(layout.lines[1].byte_start, "ab\u{2028}".len());
+    assert_eq!(layout.lines[1].byte_end, text.len());
+}
+
+#[test]
+fn crlf_caret_roundtrip() {
+    let backend = MockBackend;
+    let font = MockBackend::font();
+    let text = "ab\r\ncd";
+    let doc = shape_document(&backend, &font, text).unwrap();
+    let layout = wrap_document(&doc, 1000.0);
+    // Line 0 addressable bytes: 0,1,2 (end after 'b'). Line 1: 4,5,6.
+    for &(line_idx, byte) in &[(0usize, 0usize), (0, 1), (0, 2), (1, 4), (1, 5), (1, 6)] {
+        let (_, x, _) = layout.caret_position(byte);
+        assert_eq!(
+            layout.byte_at_line_x(text, line_idx, x),
+            byte,
+            "x={x} on line {line_idx} should map back to byte {byte}"
+        );
+    }
+}
+
 #[test]
 fn caret_position_maps_byte_to_line_x_y() {
     let backend = MockBackend;

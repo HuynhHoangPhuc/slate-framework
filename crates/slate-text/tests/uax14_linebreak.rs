@@ -111,3 +111,44 @@ fn rtl_paragraph_wraps_and_each_line_stays_rtl() {
         );
     }
 }
+
+// ── Mandatory breaks + CRLF normalization (document layer) ────────────────────
+//
+// These assert that the new `split_paragraphs` drives `shape_document`'s line
+// splits. The shared mock keys every glyph to cluster 0, so caret-byte precision
+// (e.g. `line_caret_end == 2`) is verified in `multiline_layout.rs` (its mock
+// sets `cluster = byte offset`); here we assert line structure + byte coverage.
+
+/// CRLF hard-breaks the document into two lines; the `\r\n` (2 bytes) folds
+/// into the preceding line's coverage so byte ranges stay gap-free and total.
+#[test]
+fn crlf_hard_breaks_and_coverage_is_total() {
+    let text = "ab\r\ncd";
+    let l = layout(text, WIDE);
+    assert_eq!(l.lines.len(), 2, "CRLF must hard-break into two lines");
+    assert_eq!(l.lines[0].byte_start, 0);
+    assert_eq!(l.lines[0].byte_end, 4); // "ab" + folded "\r\n"
+    assert_eq!(l.lines[1].byte_start, 4);
+    assert_eq!(l.lines[1].byte_end, text.len());
+}
+
+/// U+2028 LINE SEPARATOR is a UAX #14 mandatory break: it hard-breaks the
+/// document into two lines (was previously demoted to a soft opportunity).
+#[test]
+fn unicode_line_separator_hard_breaks() {
+    let text = "ab\u{2028}cd";
+    let l = layout(text, WIDE);
+    assert_eq!(l.lines.len(), 2, "U+2028 must hard-break into two lines");
+    assert_eq!(l.lines[1].byte_start, "ab\u{2028}".len());
+    assert_eq!(l.lines[1].byte_end, text.len());
+}
+
+/// Regression: `\n`-only layout is byte-identical to pre-change behaviour —
+/// "ab\ncd" yields line ranges 0..3 and 3..5.
+#[test]
+fn lf_only_layout_unchanged() {
+    let l = layout("ab\ncd", WIDE);
+    assert_eq!(l.lines.len(), 2);
+    assert_eq!((l.lines[0].byte_start, l.lines[0].byte_end), (0, 3));
+    assert_eq!((l.lines[1].byte_start, l.lines[1].byte_end), (3, 5));
+}

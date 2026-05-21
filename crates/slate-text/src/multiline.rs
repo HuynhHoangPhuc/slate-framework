@@ -4,10 +4,12 @@
 //! source bytes landed on which visual line — the multi-line caret model needs
 //! that mapping. This module adds it:
 //!
-//! - [`shape_document`] splits `text` on hard `\n` into paragraphs, shapes each
+//! - [`shape_document`] splits `text` at UAX #14 mandatory breaks (`\n`, `\r`,
+//!   `\r\n`, VT, FF, NEL, U+2028, U+2029) into paragraphs, shapes each
 //!   paragraph's words exactly once (reusing [`shape_words_in`]), and keeps the
-//!   absolute byte coverage of each paragraph (the trailing `\n` is folded into
-//!   the preceding paragraph so coverage is gap-free).
+//!   absolute byte coverage of each paragraph (the trailing terminator, of any
+//!   byte length, is folded into the preceding paragraph so coverage is
+//!   gap-free).
 //! - [`wrap_document`] fits that shaped document to a width by pure arithmetic
 //!   (no shaping — re-fit on resize is free), producing [`VisualLine`]s that
 //!   each carry an absolute `byte_start..byte_end`. Across all lines these
@@ -34,10 +36,11 @@ use crate::error::TextError;
 use crate::paragraph::{ShapedWord, assemble_visual_line, fit_advance, shape_words_in};
 use crate::types::{ShapedGlyph, ShapedLine};
 
-/// One `\n`-delimited paragraph's pre-shaped words plus its absolute byte
-/// coverage. `byte_range` includes the paragraph's trailing `\n` (except the
-/// last paragraph, which ends at `text.len()`), so concatenated paragraph
-/// ranges tile `0..text.len()` with no gaps.
+/// One paragraph's pre-shaped words plus its absolute byte coverage, delimited
+/// by UAX #14 mandatory breaks. `byte_range` includes the paragraph's trailing
+/// terminator of any byte length — `\n`, lone `\r`, `\r\n`, VT, FF, NEL, U+2028,
+/// U+2029 (except the last paragraph, which ends at `text.len()`), so
+/// concatenated paragraph ranges tile `0..text.len()` with no gaps.
 #[derive(Clone, Debug)]
 pub struct ShapedParagraph {
     /// Whitespace-delimited words, byte ranges absolute into the document.
@@ -88,8 +91,9 @@ pub struct MultilineLayout {
     pub line_height_lpx: f32,
 }
 
-/// Shape `text` into a [`ShapedDocument`]: split on hard `\n`, shape each
-/// paragraph's words once. Pair with [`wrap_document`] to fit to a width.
+/// Shape `text` into a [`ShapedDocument`]: split at UAX #14 mandatory breaks,
+/// shape each paragraph's words once. Pair with [`wrap_document`] to fit to a
+/// width.
 pub fn shape_document<B: TextBackend>(
     backend: &B,
     font: &B::Font,
@@ -102,15 +106,12 @@ pub fn shape_document<B: TextBackend>(
     let metrics = font.metrics();
     let line_height_lpx = metrics.ascent_lpx - metrics.descent_lpx + metrics.line_gap_lpx;
 
-    // Split on '\n', tracking each paragraph's absolute start. Coverage of a
-    // paragraph runs to the *next* paragraph's start (folding in the '\n'), so
-    // ranges are gap-free; the final paragraph ends at text.len().
-    let mut spans: Vec<(usize, &str)> = Vec::new();
-    let mut offset = 0usize;
-    for para in text.split('\n') {
-        spans.push((offset, para));
-        offset += para.len() + 1; // +1 for the consumed '\n'
-    }
+    // Split at UAX #14 mandatory breaks (`\n`, `\r`, `\r\n`, VT, FF, NEL,
+    // U+2028, U+2029), tracking each paragraph's absolute start. Coverage of a
+    // paragraph runs to the *next* paragraph's start (folding in the trailing
+    // terminator of any byte length), so ranges are gap-free; the final
+    // paragraph ends at text.len().
+    let spans = crate::linebreak::split_paragraphs(text);
 
     let total_len = text.len();
     let mut paragraphs = Vec::with_capacity(spans.len());

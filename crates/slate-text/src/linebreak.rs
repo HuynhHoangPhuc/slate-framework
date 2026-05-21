@@ -14,15 +14,50 @@
 //!
 //! **Mandatory vs. allowed.** [`break_offsets`] keeps both `Mandatory` and
 //! `Allowed` interior offsets but treats them identically — as *soft*
-//! opportunities the wrap fit may or may not take. This is exact for the only
-//! mandatory separator that reaches a line, the bare `\n`: the document splitter
-//! already cuts on `\n`, so a `\n`-free line carries no interior `\n` to force.
-//! It is a *known limitation* for the other UAX #14 mandatory separators
-//! (U+2028/2029 line/paragraph separator, FF, VT, NEL): they are currently
-//! demoted to soft opportunities here rather than forcing a break. Forcing them
-//! is deferred until the document splitter recognises them.
+//! opportunities the wrap fit may or may not take. This is exact because the
+//! document splitter ([`split_paragraphs`]) hard-breaks paragraphs at every
+//! UAX #14 *mandatory* separator before this module ever sees a line, so a line
+//! handed to [`break_offsets`] carries no interior mandatory separator. (The
+//! earlier limitation — non-`\n` mandatory separators demoted to soft here — is
+//! **resolved** at the document layer by [`split_paragraphs`].)
 
 use unicode_linebreak::linebreaks;
+
+/// Split `text` into paragraphs at UAX #14 *mandatory* breaks.
+///
+/// Recognized terminators: LF (U+000A), CR (U+000D), CRLF (`\r\n`, one unit),
+/// VT (U+000B), FF (U+000C), NEL (U+0085), LS (U+2028), PS (U+2029). Yields
+/// `(absolute_start, content)` where `content` excludes the trailing
+/// terminator. Terminator bytes fold into the preceding paragraph's coverage —
+/// the caller derives coverage from the next paragraph's start — so byte ranges
+/// stay gap-free. Semantics match `str::split` over the separator set: a
+/// trailing terminator produces a trailing empty paragraph; separator-free text
+/// produces a single paragraph.
+pub(crate) fn split_paragraphs(text: &str) -> Vec<(usize, &str)> {
+    let mut out: Vec<(usize, &str)> = Vec::new();
+    let mut start = 0usize;
+    let mut chars = text.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
+        let term_len = match c {
+            '\n' | '\u{000B}' | '\u{000C}' | '\u{0085}' | '\u{2028}' | '\u{2029}' => c.len_utf8(),
+            // CRLF is a single terminator; a lone CR breaks on its own.
+            '\r' => {
+                if matches!(chars.peek(), Some(&(_, '\n'))) {
+                    chars.next();
+                    2
+                } else {
+                    1
+                }
+            }
+            _ => continue,
+        };
+        out.push((start, &text[start..i]));
+        start = i + term_len;
+    }
+    // Final paragraph (empty when text ends on a terminator → split-parity).
+    out.push((start, &text[start..]));
+    out
+}
 
 /// Interior UAX #14 break opportunities in `text`, as byte offsets *before
 /// which* a soft break may fall.
@@ -129,5 +164,80 @@ mod tests {
         // the following char (offset 2 in "a\nb"). This is why the document
         // layer splits on `\n` before this module ever sees a line.
         assert_eq!(mandatory_offsets("a\nb"), vec![2]);
+    }
+
+    // ── split_paragraphs ──────────────────────────────────────────────────
+
+    /// Reference splitter: the pre-change `text.split('\n')` + cumulative
+    /// `+len+1` offset accounting. The new `split_paragraphs` must match it
+    /// byte-for-byte on `\n`-only / separator-free text (regression contract).
+    fn split_newline_reference(text: &str) -> Vec<(usize, &str)> {
+        let mut out = Vec::new();
+        let mut offset = 0usize;
+        for para in text.split('\n') {
+            out.push((offset, para));
+            offset += para.len() + 1;
+        }
+        out
+    }
+
+    #[test]
+    fn split_paragraphs_matches_split_newline_on_lf_only() {
+        for s in ["", "a", "a\nb", "a\n", "\n", "a\n\nb", "日本語\nx"] {
+            assert_eq!(
+                split_paragraphs(s),
+                split_newline_reference(s),
+                "split_paragraphs disagreed with split('\\n') reference for {s:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn crlf_is_one_terminator() {
+        // CRLF = 2 bytes consumed → next paragraph starts at 3, not 2.
+        assert_eq!(split_paragraphs("a\r\nb"), vec![(0, "a"), (3, "b")]);
+    }
+
+    #[test]
+    fn lone_cr_breaks() {
+        assert_eq!(split_paragraphs("a\rb"), vec![(0, "a"), (2, "b")]);
+    }
+
+    #[test]
+    fn unicode_separators_break() {
+        // VT / FF: 1-byte. NEL: 2-byte. LS / PS: 3-byte. Next-start offset
+        // reflects each terminator's UTF-8 length.
+        assert_eq!(split_paragraphs("a\u{000B}b"), vec![(0, "a"), (2, "b")]);
+        assert_eq!(split_paragraphs("a\u{000C}b"), vec![(0, "a"), (2, "b")]);
+        assert_eq!(split_paragraphs("a\u{0085}b"), vec![(0, "a"), (3, "b")]);
+        assert_eq!(split_paragraphs("a\u{2028}b"), vec![(0, "a"), (4, "b")]);
+        assert_eq!(split_paragraphs("a\u{2029}b"), vec![(0, "a"), (4, "b")]);
+    }
+
+    #[test]
+    fn trailing_terminator_yields_empty_paragraph() {
+        assert_eq!(split_paragraphs("a\r\n"), vec![(0, "a"), (3, "")]);
+    }
+
+    #[test]
+    fn content_excludes_terminator() {
+        // No returned content slice may contain any mandatory-separator byte.
+        let seps = ['\n', '\r', '\u{000B}', '\u{000C}', '\u{0085}', '\u{2028}', '\u{2029}'];
+        for (_, content) in split_paragraphs("a\r\nb\nc\u{2028}d\u{0085}\u{000C}e") {
+            assert!(
+                !content.chars().any(|c| seps.contains(&c)),
+                "content {content:?} contained a separator byte"
+            );
+        }
+    }
+
+    #[test]
+    fn mixed_terminators() {
+        // CRLF, LF, then LS — four paragraphs, gap-free ascending starts.
+        let spans = split_paragraphs("a\r\nb\nc\u{2028}d");
+        assert_eq!(spans, vec![(0, "a"), (3, "b"), (5, "c"), (9, "d")]);
+        for w in spans.windows(2) {
+            assert!(w[0].0 < w[1].0, "starts must strictly ascend");
+        }
     }
 }
