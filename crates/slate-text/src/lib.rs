@@ -54,8 +54,8 @@ pub use paragraph::{
 };
 pub use run_builder::TextRunBuilder;
 pub use types::{
-    CachedGlyph, FontDescriptor, FontId, FontMetrics, FontStyle, GlyphBitmap, GlyphBounds,
-    GlyphMetrics, ShapedGlyph, ShapedLine, TextAlignment,
+    CachedGlyph, Direction, FontDescriptor, FontId, FontMetrics, FontStyle, GlyphBitmap,
+    GlyphBounds, GlyphMetrics, RunSpan, ShapedGlyph, ShapedLine, TextAlignment,
 };
 
 /// Bundled DejaVu Sans font for testing and default text rendering.

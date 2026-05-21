@@ -82,6 +82,7 @@ fn synth_shaped(text: &str, adv: f32) -> ShapedLine {
             x_advance_lpx: adv,
             position_lpx: [i as f32 * adv, 0.0],
             cluster: b as u32,
+            direction: slate_text::Direction::Ltr,
         })
         .collect();
     let width = adv * glyphs.len() as f32;
@@ -91,6 +92,8 @@ fn synth_shaped(text: &str, adv: f32) -> ShapedLine {
         ascent_lpx: 12.0,
         descent_lpx: -3.0,
         y_offset_lpx: 0.0,
+        base_direction: slate_text::Direction::Ltr,
+        runs: Vec::new(),
     }
 }
 

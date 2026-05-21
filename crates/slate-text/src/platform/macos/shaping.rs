@@ -131,6 +131,8 @@ pub(crate) fn shape_line(
                 ascent_lpx: metrics.ascent_lpx,
                 descent_lpx: metrics.descent_lpx,
                 y_offset_lpx: 0.0,
+                base_direction: crate::types::Direction::Ltr,
+                runs: Vec::new(),
             },
             captured_fonts: Vec::new(),
         });
@@ -325,6 +327,10 @@ pub(crate) fn shape_line(
                     x_advance_lpx: x_advance_pt,
                     position_lpx: position,
                     cluster,
+                    // Direction is assigned per level-run by the segmenter;
+                    // `shape_line` shapes one already-resolved span, so the
+                    // raw shaper output stays at the LTR default here.
+                    direction: crate::types::Direction::Ltr,
                 });
 
                 total_width_pt += advances[j].width;
@@ -340,6 +346,8 @@ pub(crate) fn shape_line(
                 ascent_lpx: metrics.ascent_lpx,
                 descent_lpx: metrics.descent_lpx,
                 y_offset_lpx: 0.0,
+                base_direction: crate::types::Direction::Ltr,
+                runs: Vec::new(),
             },
             captured_fonts,
         })

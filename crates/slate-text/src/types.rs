@@ -5,6 +5,36 @@
 //! - CoreText (point-based) converts at `load_font`
 //! - DirectWrite (DIP-native) is 1:1
 
+/// Resolved writing direction of a glyph or run of text.
+///
+/// Even UAX #9 embedding levels are [`Ltr`](Direction::Ltr); odd levels are
+/// [`Rtl`](Direction::Rtl). Defaults to `Ltr` so additive direction fields are
+/// inert on the pure-LTR / CJK path.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Direction {
+    /// Left-to-right (Latin, CJK, default).
+    #[default]
+    Ltr,
+    /// Right-to-left (Arabic, Hebrew).
+    Rtl,
+}
+
+/// A contiguous same-direction span within a shaped line (UAX #9 level-run).
+///
+/// Stored on [`ShapedLine`] in **visual** order for line assembly; `byte_range`
+/// and `level` stay in logical (source) terms. A line with an empty run list is
+/// interpreted as a single implicit LTR run; the bidi segmenter populates real
+/// runs once direction resolution is wired in.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunSpan {
+    /// UTF-8 byte range of this run in the source line (logical order).
+    pub byte_range: std::ops::Range<usize>,
+    /// UAX #9 embedding level (even = LTR, odd = RTL).
+    pub level: u8,
+    /// Resolved direction (derived from `level` parity; cached for consumers).
+    pub direction: Direction,
+}
+
 /// Result of shaping a single line of text.
 #[derive(Clone, Debug)]
 pub struct ShapedLine {
@@ -19,6 +49,14 @@ pub struct ShapedLine {
     /// Vertical offset from paragraph origin in logical pixels.
     /// For single-line shaping, this is 0.0.
     pub y_offset_lpx: f32,
+    /// Resolved paragraph base direction for this line. `Ltr` by default;
+    /// auto-detected (first strong char) or explicitly overridden by the bidi
+    /// layer once direction resolution is wired in.
+    pub base_direction: Direction,
+    /// Level-runs of this line in **visual** order. Empty = single implicit LTR
+    /// run (pure-LTR / CJK text). Populated by the bidi segmenter and consumed
+    /// by the run-aware caret/hit-test paths.
+    pub runs: Vec<RunSpan>,
 }
 
 /// Text alignment for multi-line layout.
@@ -68,6 +106,11 @@ pub struct ShapedGlyph {
     /// values are monotonically non-decreasing in logical order (which equals
     /// visual order for LTR; reverse of visual order for RTL).
     pub cluster: u32,
+    /// Resolved direction of the run this glyph belongs to. `Ltr` by default
+    /// (pure-LTR / CJK); set per level-run by the segmenter. Lets the
+    /// caret/hit-test paths walk advances forward (LTR) or in reverse (RTL)
+    /// within a run.
+    pub direction: Direction,
 }
 
 /// Rasterized glyph bitmap with metrics.

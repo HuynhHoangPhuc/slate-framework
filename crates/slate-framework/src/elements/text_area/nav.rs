@@ -108,7 +108,7 @@ pub(crate) fn insert_newline(state: &mut ImeState) -> String {
 mod tests {
     use super::*;
     use slate_text::{MultilineLayout, VisualLine};
-    use slate_text::{FontId, ShapedGlyph, ShapedLine};
+    use slate_text::{Direction, FontId, ShapedGlyph, ShapedLine};
 
     fn glyph(cluster: u32, adv: f32) -> ShapedGlyph {
         ShapedGlyph {
@@ -118,6 +118,7 @@ mod tests {
             x_advance_lpx: adv,
             position_lpx: [0.0, 0.0],
             cluster,
+            direction: Direction::Ltr,
         }
     }
 
@@ -130,6 +131,8 @@ mod tests {
                 ascent_lpx: 10.0,
                 descent_lpx: -2.0,
                 y_offset_lpx: y,
+                base_direction: Direction::Ltr,
+                runs: Vec::new(),
             },
             byte_start,
             byte_end,

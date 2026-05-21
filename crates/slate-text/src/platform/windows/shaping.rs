@@ -255,6 +255,9 @@ impl IDWriteTextRenderer_Impl for ShapingRenderer_Impl {
                 x_advance_lpx: advances[i],
                 position_lpx: position,
                 cluster: clusters[i],
+                // Per-run direction is tagged by the segmenter; the raw shaper
+                // output stays at the LTR default (Phase 2 fixes RTL ordering).
+                direction: crate::types::Direction::Ltr,
             });
             pen += advances[i];
         }
@@ -328,6 +331,8 @@ pub(crate) fn shape_line(
                 ascent_lpx: metrics.ascent_lpx,
                 descent_lpx: metrics.descent_lpx,
                 y_offset_lpx: 0.0,
+                base_direction: crate::types::Direction::Ltr,
+                runs: Vec::new(),
             },
             captured_faces: Vec::new(),
         });
@@ -371,6 +376,8 @@ pub(crate) fn shape_line(
             ascent_lpx: metrics.ascent_lpx,
             descent_lpx: metrics.descent_lpx,
             y_offset_lpx: 0.0,
+            base_direction: crate::types::Direction::Ltr,
+            runs: Vec::new(),
         },
         captured_faces,
     })

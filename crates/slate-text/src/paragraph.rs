@@ -12,7 +12,7 @@
 
 use crate::backend::{Font, TextBackend};
 use crate::error::TextError;
-use crate::types::{ShapedGlyph, ShapedLine, TextAlignment};
+use crate::types::{Direction, ShapedGlyph, ShapedLine, TextAlignment};
 
 /// A single whitespace-delimited word shaped in isolation.
 ///
@@ -68,45 +68,104 @@ pub fn shape_words<B: TextBackend>(
     Ok((words, space_width))
 }
 
+/// A segmentation unit handed to the native shaper: a contiguous span of the
+/// source text that is a single resolved direction (and, in later phases, a
+/// single break-bounded level-run).
+///
+/// Today the only segmenter is [`WhitespaceSegmenter`], which produces maximal
+/// ASCII-space / non-space runs, all `Ltr` at level 0 — reproducing the
+/// historical `shape_words_in` byte scan exactly. The bidi segmenter replaces
+/// it with real level-runs once direction resolution is wired in.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Segment {
+    /// Byte range within the text passed to [`LineSegmenter::segments`].
+    pub byte_range: std::ops::Range<usize>,
+    /// Resolved direction of this span.
+    pub direction: Direction,
+    /// UAX #9 embedding level (0 for the whitespace segmenter).
+    pub level: u8,
+}
+
+/// Splits a line of text into shaping segments.
+///
+/// The seam that lets later phases swap whitespace-word segmentation for bidi
+/// level-run segmentation without touching the shaping/fit plumbing. The unit
+/// of segmentation is whatever the native shaper should receive in one call.
+pub(crate) trait LineSegmenter {
+    /// Segment `text` (a single `\n`-free run) into ordered shaping spans.
+    fn segments(&self, text: &str) -> Vec<Segment>;
+}
+
+/// Phase-1 segmenter: maximal runs of ASCII spaces (U+0020) interleaved with
+/// non-space spans, all `Ltr` at level 0.
+///
+/// Byte-for-byte equivalent to the historical `shape_words_in` scan, so the
+/// pure-LTR / CJK shaping output is unchanged. Retained after the bidi
+/// segmenter lands as the fixture for the LTR-identity regression gate.
+pub(crate) struct WhitespaceSegmenter;
+
+impl LineSegmenter for WhitespaceSegmenter {
+    fn segments(&self, text: &str) -> Vec<Segment> {
+        let bytes = text.as_bytes();
+        let mut segs = Vec::new();
+        let mut i = 0usize;
+        while i < bytes.len() {
+            let start = i;
+            let is_space = bytes[i] == b' ';
+            // Extend the run while its space-ness matches.
+            while i < bytes.len() && (bytes[i] == b' ') == is_space {
+                i += 1;
+            }
+            segs.push(Segment {
+                byte_range: start..i,
+                direction: Direction::Ltr,
+                level: 0,
+            });
+        }
+        segs
+    }
+}
+
 /// Shape `segment` into an ordered run of items, recording each item's byte
 /// span as an absolute offset into the larger document (`segment_start` is the
 /// byte offset of `segment` within that document; pass 0 when `segment` is the
 /// whole text).
 ///
-/// Unlike a `split_whitespace` collapse, this scans byte-by-byte and emits a
-/// separate [`ShapedWord`] for every maximal run of ASCII spaces (U+0020),
-/// interleaved with the text words in source order. Each space run carries one
-/// glyph per space byte so every space is preserved and caret-addressable; the
-/// shared inter-word gap is no longer implicit. Non-space whitespace (`\t`,
-/// NBSP, …) stays inside the surrounding text word and shapes as part of it.
+/// Drives off [`WhitespaceSegmenter`] via the [`LineSegmenter`] seam: each
+/// emitted span is shaped once via `shape_line`, and its glyphs are tagged with
+/// the span direction. A span whose first byte is U+0020 is a space run (one
+/// glyph per space byte, caret-addressable, soft-break candidate); other spans
+/// are text words. Non-space whitespace (`\t`, NBSP, …) stays inside the
+/// surrounding text word and shapes as part of it.
 ///
 /// Shared by [`shape_words`] (single segment, offset 0) and the multi-line
 /// paragraph shaper, which calls it once per `\n`-delimited paragraph so item
-/// ranges stay absolute across the document.
+/// ranges stay absolute across the document. With `WhitespaceSegmenter` the
+/// emitted item list is byte-identical to the historical scan.
 pub(crate) fn shape_words_in<B: TextBackend>(
     backend: &B,
     font: &B::Font,
     segment: &str,
     segment_start: usize,
 ) -> Result<Vec<ShapedWord>, TextError> {
-    let bytes = segment.as_bytes();
+    let segmenter = WhitespaceSegmenter;
     let mut items = Vec::new();
-    let mut i = 0usize;
-    while i < bytes.len() {
-        let start = i;
-        let is_space = bytes[i] == b' ';
-        // Extend the run while its space-ness matches.
-        while i < bytes.len() && (bytes[i] == b' ') == is_space {
-            i += 1;
+    for seg in segmenter.segments(segment) {
+        let slice = &segment[seg.byte_range.clone()];
+        // Homogeneous spans (segmenter never mixes space/non-space), so the
+        // first byte determines the whole run's space-ness.
+        let is_space = slice.as_bytes().first() == Some(&b' ');
+        let mut shaped = backend.shape_line(font, slice)?;
+        for g in &mut shaped.glyphs {
+            g.direction = seg.direction;
         }
-        let slice = &segment[start..i];
-        let shaped = backend.shape_line(font, slice)?;
         items.push(ShapedWord {
             glyphs: shaped.glyphs,
             advance_width_lpx: shaped.width_lpx,
             ascent_lpx: shaped.ascent_lpx,
             descent_lpx: shaped.descent_lpx,
-            source_byte_range: segment_start + start..segment_start + i,
+            source_byte_range: segment_start + seg.byte_range.start
+                ..segment_start + seg.byte_range.end,
             is_space_run: is_space,
         });
     }
@@ -282,6 +341,8 @@ fn build_line_from_glyphs(
         ascent_lpx,
         descent_lpx,
         y_offset_lpx,
+        base_direction: Direction::Ltr,
+        runs: Vec::new(),
     }
 }
 
@@ -329,6 +390,10 @@ pub fn truncate_with_ellipsis<B: TextBackend>(
             ascent_lpx: shaped.ascent_lpx,
             descent_lpx: shaped.descent_lpx,
             y_offset_lpx: shaped.y_offset_lpx,
+            base_direction: shaped.base_direction,
+            // Truncation invalidates source byte ranges; ellipsis display is
+            // LTR-only, so drop runs (empty = implicit LTR).
+            runs: Vec::new(),
         });
     }
 
@@ -364,6 +429,8 @@ pub fn truncate_with_ellipsis<B: TextBackend>(
         ascent_lpx: shaped.ascent_lpx,
         descent_lpx: shaped.descent_lpx,
         y_offset_lpx: shaped.y_offset_lpx,
+        base_direction: shaped.base_direction,
+        runs: Vec::new(),
     })
 }
 

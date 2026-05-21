@@ -113,6 +113,7 @@ impl TextBackend for MockBackend {
                 x_advance_lpx: advance,
                 position_lpx: [i as f32 * advance, 0.0],
                 cluster: 0,
+                direction: slate_text::Direction::Ltr,
             })
             .collect();
         let width = glyphs.len() as f32 * advance;
@@ -122,6 +123,8 @@ impl TextBackend for MockBackend {
             ascent_lpx: 12.0,
             descent_lpx: -3.0,
             y_offset_lpx: 0.0,
+            base_direction: slate_text::Direction::Ltr,
+            runs: Vec::new(),
         })
     }
 

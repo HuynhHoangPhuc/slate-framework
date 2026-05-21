@@ -412,12 +412,15 @@ mod tests {
                     x_advance_lpx: 10.0,
                     position_lpx: [0.0, 0.0],
                     cluster: 0,
+                    direction: slate_text::Direction::Ltr,
                 })
                 .collect(),
             width_lpx: glyph_count as f32 * 10.0,
             ascent_lpx: 14.0,
             descent_lpx: -4.0,
             y_offset_lpx: 0.0,
+            base_direction: slate_text::Direction::Ltr,
+            runs: Vec::new(),
         }
     }
 

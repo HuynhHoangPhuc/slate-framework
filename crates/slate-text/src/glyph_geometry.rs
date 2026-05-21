@@ -135,6 +135,7 @@ mod tests {
             x_advance_lpx: adv,
             position_lpx: [0.0, 0.0],
             cluster,
+            direction: crate::types::Direction::Ltr,
         }
     }
 
@@ -146,6 +147,8 @@ mod tests {
             ascent_lpx: 10.0,
             descent_lpx: -2.0,
             y_offset_lpx: 0.0,
+            base_direction: crate::types::Direction::Ltr,
+            runs: Vec::new(),
         }
     }
 

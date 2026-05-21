@@ -232,7 +232,7 @@ fn line_x_at_byte(line: &ShapedLine, byte: usize) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use slate_text::{FontHandle, FontId, ShapedGlyph, VisualLine};
+    use slate_text::{Direction, FontHandle, FontId, ShapedGlyph, VisualLine};
 
     fn glyph(cluster: u32, adv: f32) -> ShapedGlyph {
         ShapedGlyph {
@@ -242,6 +242,7 @@ mod tests {
             x_advance_lpx: adv,
             position_lpx: [0.0, 0.0],
             cluster,
+            direction: Direction::Ltr,
         }
     }
 
@@ -254,6 +255,8 @@ mod tests {
                 ascent_lpx: 10.0,
                 descent_lpx: -2.0,
                 y_offset_lpx: y,
+                base_direction: Direction::Ltr,
+                runs: Vec::new(),
             },
             byte_start,
             byte_end,

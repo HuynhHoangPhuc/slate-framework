@@ -76,10 +76,15 @@ pub trait TextBackend {
         scale: f32,
     ) -> Result<Self::Font, TextError>;
 
-    /// Shape a line of text into positioned glyphs.
+    /// Shape a single segment of text into positioned glyphs.
     ///
-    /// Returns glyph IDs with advance/offset information for rendering.
-    /// Phase 2a supports single-line LTR text only.
+    /// `text` is one segmentation unit produced by the `LineSegmenter` seam
+    /// (`paragraph.rs`): a whitespace word / space-run today, and a single
+    /// resolved bidi level-run once the bidi segmenter lands. The trait
+    /// signature is unchanged — callers feed already-resolved same-direction
+    /// spans and own the cross-run visual ordering, so the native shaper never
+    /// re-orders or re-resolves across runs. Returns glyph IDs with
+    /// advance/offset information for rendering.
     fn shape_line(&self, font: &Self::Font, text: &str) -> Result<ShapedLine, TextError>;
 
     /// Rasterize a glyph to an alpha bitmap.

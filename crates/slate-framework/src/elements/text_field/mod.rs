@@ -166,6 +166,8 @@ impl Element for TextField {
                         ascent_lpx: self.style.font_size,
                         descent_lpx: 0.0,
                         y_offset_lpx: 0.0,
+                        base_direction: slate_text::Direction::Ltr,
+                        runs: Vec::new(),
                     });
             (self.style.width, shaped.ascent_lpx - shaped.descent_lpx)
         } else {

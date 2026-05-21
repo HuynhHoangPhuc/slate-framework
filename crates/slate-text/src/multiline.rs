@@ -357,6 +357,8 @@ fn build_shaped_line(doc: &ShapedDocument, glyphs: Vec<ShapedGlyph>, width_lpx: 
         ascent_lpx: doc.ascent_lpx,
         descent_lpx: doc.descent_lpx,
         y_offset_lpx: 0.0,
+        base_direction: crate::types::Direction::Ltr,
+        runs: Vec::new(),
     }
 }
 
@@ -524,6 +526,7 @@ mod tests {
             x_advance_lpx: adv,
             position_lpx: [0.0, 0.0],
             cluster,
+            direction: crate::types::Direction::Ltr,
         }
     }
 
@@ -536,6 +539,8 @@ mod tests {
                 ascent_lpx: 10.0,
                 descent_lpx: -2.0,
                 y_offset_lpx: y,
+                base_direction: crate::types::Direction::Ltr,
+                runs: Vec::new(),
             },
             byte_start,
             byte_end,

@@ -86,6 +86,7 @@ impl TextBackend for MockBackend {
                     x_advance_lpx: advance,
                     position_lpx: [pen, 0.0],
                     cluster: 0,
+                    direction: slate_text::Direction::Ltr,
                 };
                 pen += advance;
                 g
@@ -98,6 +99,8 @@ impl TextBackend for MockBackend {
             ascent_lpx: font.metrics.ascent_lpx,
             descent_lpx: font.metrics.descent_lpx,
             y_offset_lpx: 0.0,
+            base_direction: slate_text::Direction::Ltr,
+            runs: Vec::new(),
         })
     }
 

@@ -258,6 +258,8 @@ impl Element for Text {
                     ascent_lpx: 0.0,
                     descent_lpx: 0.0,
                     y_offset_lpx: 0.0,
+                    base_direction: slate_text::Direction::Ltr,
+                    runs: Vec::new(),
                 }
             }
         };

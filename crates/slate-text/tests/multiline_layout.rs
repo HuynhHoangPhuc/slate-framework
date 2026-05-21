@@ -69,6 +69,7 @@ fn shape_line_impl(font: &MockFont, text: &str) -> ShapedLine {
                 x_advance_lpx: advance,
                 position_lpx: [pen, 0.0],
                 cluster: byte as u32,
+                direction: slate_text::Direction::Ltr,
             };
             pen += advance;
             byte += c.len_utf8();
@@ -82,6 +83,8 @@ fn shape_line_impl(font: &MockFont, text: &str) -> ShapedLine {
         ascent_lpx: font.metrics.ascent_lpx,
         descent_lpx: font.metrics.descent_lpx,
         y_offset_lpx: 0.0,
+        base_direction: slate_text::Direction::Ltr,
+        runs: Vec::new(),
     }
 }
 
