@@ -19,7 +19,13 @@
 //!
 //! - Multi-line editing, wrap, vertical nav, scroll viewport — future `TextArea`.
 //! - Rich text / styled spans.
-//! - Bidi visual↔logical reorder.
+//!
+//! # Bidi
+//!
+//! The display string is shaped through the bidi segment + reorder pipeline
+//! (`shape_line_bidi`), so mixed / RTL text reorders into visual order and the
+//! caret / hit-test geometry walks per level-run. Direction-boundary caret
+//! affinity (which side of an LTR↔RTL seam the caret favours) is a later refinement.
 
 mod handlers;
 
@@ -171,7 +177,9 @@ impl Element for TextField {
                     });
             (self.style.width, shaped.ascent_lpx - shaped.descent_lpx)
         } else {
-            match cx.text.shape_line(font, &current) {
+            // Bidi pipeline so intrinsic width matches the run-bearing line the
+            // paint pass shapes (and caret geometry consumes).
+            match cx.text.shape_line_bidi(font, &current) {
                 Ok(shaped) => (
                     shaped.width_lpx.max(self.style.width),
                     shaped.ascent_lpx - shaped.descent_lpx,
@@ -345,11 +353,14 @@ impl Element for TextField {
             committed_text.clone()
         };
 
-        // Shape display string
-        let shaped = match cx.text.shape_line(font, &display_string) {
+        // Shape display string through the bidi pipeline so the line carries
+        // UAX #9 level-runs; the caret / hit-test math (`pixel_x_at_byte`,
+        // `byte_at_pixel_x`) switches to its run-aware path for mixed / RTL
+        // text and stays byte-identical for pure-LTR / CJK (empty `runs`).
+        let shaped = match cx.text.shape_line_bidi(font, &display_string) {
             Ok(s) => s,
             Err(e) => {
-                log::error!("TextField: shape_line failed: {e}");
+                log::error!("TextField: shape_line_bidi failed: {e}");
                 return;
             }
         };

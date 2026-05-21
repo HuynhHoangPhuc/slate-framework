@@ -109,6 +109,22 @@ impl TextSystem {
         self.backend.shape_line(&font.inner, text)
     }
 
+    /// Shape a single line through the bidi segment + reorder pipeline,
+    /// producing a run-bearing [`ShapedLine`].
+    ///
+    /// Use this for editable single-line text (`TextField`) so the line carries
+    /// UAX #9 level-runs and the run-aware caret / hit-test math works on mixed
+    /// and RTL input. Pure-LTR / CJK output is byte-identical to [`Self::shape_line`]
+    /// (empty `runs` → original LTR pen walk); the trade-off is the loss of
+    /// whole-line cross-word kerning, consistent with the rest of the stack.
+    pub fn shape_line_bidi(
+        &self,
+        font: &PlatformFont,
+        text: &str,
+    ) -> Result<ShapedLine, TextError> {
+        slate_text::shape_line_bidi(&self.backend, &font.inner, text)
+    }
+
     /// Shape each whitespace-delimited word once for cached wrapping.
     ///
     /// Returns the pre-shaped words plus the inter-word space advance. Fit them

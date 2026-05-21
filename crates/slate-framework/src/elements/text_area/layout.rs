@@ -219,6 +219,11 @@ pub(crate) fn preedit_runs(layout: &MultilineLayout, start: usize, end: usize) -
 /// strictly before `byte`. Returns the line width for a byte past the last
 /// glyph. Mirrors `MultilineLayout::caret_position`'s pen walk.
 fn line_x_at_byte(line: &ShapedLine, byte: usize) -> f32 {
+    // Run-bearing line (mixed / RTL): defer to the run-aware caret math (`byte`
+    // is a caret / selection boundary, so the grapheme snap is skipped).
+    if !line.runs.is_empty() {
+        return slate_text::run_caret_x_at(line, byte);
+    }
     let mut pen = 0.0f32;
     for g in &line.glyphs {
         if g.cluster as usize >= byte {

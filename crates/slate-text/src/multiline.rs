@@ -415,6 +415,12 @@ impl MultilineLayout {
         }
         let idx = self.line_for_byte(byte);
         let vline = &self.lines[idx];
+        // Run-bearing line (mixed / RTL): defer to the run-aware caret math so
+        // the caret tracks the correct visual edge of a logical byte.
+        if !vline.line.runs.is_empty() {
+            let x = crate::glyph_geometry::run_caret_x_at(&vline.line, byte);
+            return (idx, x, vline.line.y_offset_lpx);
+        }
         // Pen-x = sum of advances of glyphs strictly before the caret byte
         // (clusters are document-absolute). This matches `pixel_x_at_byte` and,
         // unlike reading the next glyph's position, does not jump across an
@@ -439,10 +445,25 @@ impl MultilineLayout {
     /// empty line resolves to its own `byte_start`.
     pub fn line_caret_end(&self, text: &str, idx: usize) -> usize {
         match self.lines.get(idx) {
-            Some(vline) => match vline.line.glyphs.last() {
-                Some(g) => next_grapheme(text, g.cluster as usize),
-                None => vline.byte_start,
-            },
+            Some(vline) => {
+                // Run-bearing line: the last *logical* visible byte is the max
+                // run end (visual order is reordered, so the visually-last glyph
+                // is not the logical end). Runs already exclude a trailing hard
+                // `\n` (it is not shaped), so this is the caret-addressable end.
+                if !vline.line.runs.is_empty() {
+                    return vline
+                        .line
+                        .runs
+                        .iter()
+                        .map(|r| r.byte_range.end)
+                        .max()
+                        .unwrap_or(vline.byte_start);
+                }
+                match vline.line.glyphs.last() {
+                    Some(g) => next_grapheme(text, g.cluster as usize),
+                    None => vline.byte_start,
+                }
+            }
             None => 0,
         }
     }
@@ -462,6 +483,12 @@ impl MultilineLayout {
         let start = vline.byte_start;
         let end = self.line_caret_end(text, line_idx);
         let width = vline.line.width_lpx;
+        // Run-bearing line (mixed / RTL): the run-aware hit-test resolves the
+        // logical byte directly. Clamp into the line's addressable range so
+        // vertical motion never escapes to a neighbouring line.
+        if !vline.line.runs.is_empty() {
+            return crate::glyph_geometry::run_byte_at_x(&vline.line, x_lpx).clamp(start, end);
+        }
         if x_lpx <= 0.0 {
             return start;
         }

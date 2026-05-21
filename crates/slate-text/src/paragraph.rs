@@ -596,6 +596,57 @@ pub fn greedy_wrap<B: TextBackend>(
     Ok(wrap_shaped_words(&words, space_width, line_height, max_width_lpx))
 }
 
+/// Shape a single line through the bidi segment + reorder pipeline, producing a
+/// run-bearing [`ShapedLine`] (the same path [`greedy_wrap`] / `shape_document`
+/// use, minus the wrap fit).
+///
+/// Unlike the raw native `shape_line`, this resolves UAX #9 level-runs, shapes
+/// each per its resolved direction, reorders into visual order, and populates
+/// `runs` so the run-aware caret / hit-test math works on mixed / RTL text. On
+/// pure-LTR / CJK input every item is level 0, so `assemble_visual_line` takes
+/// its fast path: `runs` stays empty and glyph placement is byte-identical to
+/// the pre-bidi single-line shaper (caret geometry then uses the original LTR
+/// pen walk). The trade-off is that LTR text loses whole-line cross-word
+/// kerning — consistent with the rest of the system, which shapes per segment.
+///
+/// Clusters are line-relative (the caller passes the line text as the whole
+/// string); empty input yields a zero-glyph line carrying the font metrics.
+pub fn shape_line_bidi<B: TextBackend>(
+    backend: &B,
+    font: &B::Font,
+    text: &str,
+) -> Result<ShapedLine, TextError> {
+    let metrics = font.metrics();
+    if text.is_empty() {
+        return Ok(ShapedLine {
+            glyphs: Vec::new(),
+            width_lpx: 0.0,
+            ascent_lpx: metrics.ascent_lpx,
+            descent_lpx: metrics.descent_lpx,
+            y_offset_lpx: 0.0,
+            base_direction: Direction::Ltr,
+            runs: Vec::new(),
+        });
+    }
+
+    let space_width = backend
+        .shape_line(font, " ")
+        .map(|s| s.width_lpx)
+        .unwrap_or(0.0);
+    let tab_width = 4.0 * space_width;
+
+    let items = shape_words_in(backend, font, text, 0)?;
+    let item_refs: Vec<&ShapedWord> = items.iter().collect();
+    Ok(assemble_visual_line(
+        &item_refs,
+        metrics.ascent_lpx,
+        metrics.descent_lpx,
+        0.0,
+        true,
+        tab_width,
+    ))
+}
+
 /// Compute horizontal offset for text alignment.
 ///
 /// Returns the X offset to apply at paint time. Does not re-shape.
