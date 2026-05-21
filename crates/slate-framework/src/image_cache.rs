@@ -8,8 +8,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Weak;
 
-use slate_renderer::RendererObserver;
 use slate_renderer::atlas::{Atlas, AtlasAllocation};
+use slate_renderer::{RendererObserver, allocate_image, pad_rgba_with_gutter};
 use wgpu::Queue;
 
 /// Cache for uploaded images, keyed by (content_hash, width, height).
@@ -74,9 +74,11 @@ impl ImageCache {
                 entry.pixels.len() == (width as usize) * (height as usize) * 4,
                 "ImageCacheEntry pixel buffer size mismatch during re-upload"
             );
-            match atlas.allocate(width, height) {
-                Ok(alloc) => {
-                    atlas.upload(queue, alloc.alloc_id, &entry.pixels);
+            match allocate_image(atlas, width, height) {
+                Ok((alloc_id, uv_rect)) => {
+                    let padded = pad_rgba_with_gutter(&entry.pixels, width, height);
+                    atlas.upload(queue, alloc_id, &padded);
+                    let alloc = AtlasAllocation { uv_rect, alloc_id };
                     entry.alloc = Some(alloc);
                     return Some(alloc);
                 }
@@ -90,10 +92,13 @@ impl ImageCache {
             }
         }
 
-        // Cache miss — allocate, upload, insert
-        match atlas.allocate(width, height) {
-            Ok(alloc) => {
-                atlas.upload(queue, alloc.alloc_id, pixels);
+        // Cache miss — allocate (with a 1-texel transparent gutter so linear
+        // sampling never bleeds from a packed neighbour), upload, insert.
+        match allocate_image(atlas, width, height) {
+            Ok((alloc_id, uv_rect)) => {
+                let padded = pad_rgba_with_gutter(pixels, width, height);
+                atlas.upload(queue, alloc_id, &padded);
+                let alloc = AtlasAllocation { uv_rect, alloc_id };
                 self.entries.insert(
                     key,
                     ImageCacheEntry {

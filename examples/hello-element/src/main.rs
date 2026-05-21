@@ -14,10 +14,10 @@ use slate_framework::{
 struct HelloView;
 
 impl View for HelloView {
-    fn render(&mut self) -> AnyElement {
+    fn render(&mut self, _cx: &mut slate_framework::RenderCx) -> AnyElement {
         // Root container — dark background, centered column layout
         Div::new()
-            .background(Color::from_hex("#1e1e2e").unwrap_or(Color::BLACK).into())
+            .background(Color::from_hex("#1e1e2e").unwrap_or(Color::BLACK))
             .style(|s| {
                 s.flex_direction(FlexDirection::Column)
                     .align_items(AlignItems::Center)
@@ -35,7 +35,7 @@ impl View for HelloView {
             // Styled container — looks like a button
             .child(
                 Div::new()
-                    .background(Color::from_hex("#3b82f6").unwrap_or(Color::BLUE).into())
+                    .background(Color::from_hex("#3b82f6").unwrap_or(Color::BLUE))
                     .corner_radius(8.0)
                     .style(|s| s.padding_all(12.0))
                     .child(

@@ -36,7 +36,7 @@ struct TextAreaDemo {
 }
 
 impl View for TextAreaDemo {
-    fn render(&mut self) -> AnyElement {
+    fn render(&mut self, _cx: &mut slate_framework::RenderCx) -> AnyElement {
         let echo = self.value.clone();
 
         let area_style = TextAreaStyle {
@@ -52,7 +52,7 @@ impl View for TextAreaDemo {
         };
 
         Div::new()
-            .background(Color::from_hex("#1e1e2e").unwrap_or(Color::BLACK).into())
+            .background(Color::from_hex("#1e1e2e").unwrap_or(Color::BLACK))
             .style(|s| {
                 s.flex_direction(FlexDirection::Column)
                     .align_items(AlignItems::Center)

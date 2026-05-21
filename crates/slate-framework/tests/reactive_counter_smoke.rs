@@ -10,7 +10,7 @@ struct CounterView {
 }
 
 impl View for CounterView {
-    fn render(&mut self) -> AnyElement {
+    fn render(&mut self, _cx: &mut slate_framework::RenderCx) -> AnyElement {
         let c = self.count.clone();
         Text::new_reactive(move || format!("Count: {}", c.get())).into_any()
     }

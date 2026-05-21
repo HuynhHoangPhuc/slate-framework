@@ -21,7 +21,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
-pub use slate_platform::{Key, KeyCode, Modifiers, MouseButton, NamedKey};
+pub use slate_platform::{Key, KeyCode, Modifiers, MouseButton, NamedKey, WindowId};
 
 use crate::ime::{ImeRegistry, ImeState};
 use crate::types::ElementId;
@@ -340,6 +340,20 @@ pub enum PendingFocusOp {
     Blur,
 }
 
+/// Deferred mouse-capture operation. Set by handlers via
+/// [`EventCtx::set_capture`] / [`EventCtx::release_capture`]; drained by
+/// `AppState` after the handler chain unwinds (same lifecycle as
+/// [`PendingFocusOp`]). An explicit `Set` makes capture sticky — it survives
+/// mouse-up so multi-step drags across button releases keep routing to the
+/// captured element until `Release` is requested or the element is dropped.
+#[derive(Clone, Copy, Debug)]
+pub enum PendingCaptureOp {
+    /// Capture the pointer to the given element after the chain completes.
+    Set(ElementId),
+    /// Release any active capture after the chain completes.
+    Release,
+}
+
 /// Event dispatch context passed to handlers.
 ///
 /// Provides control over event propagation and focus changes. Handlers can call
@@ -349,6 +363,8 @@ pub enum PendingFocusOp {
 pub struct EventCtx<'a> {
     propagation_stopped: &'a mut bool,
     pending_focus_op: &'a mut Option<PendingFocusOp>,
+    pending_capture_op: &'a mut Option<PendingCaptureOp>,
+    window_id: WindowId,
     focused: Option<ElementId>,
     /// Element this handler is bound to (Phase 9c). `None` for App-level and
     /// non-element dispatch sites; `Some(id)` when the dispatch loop is in
@@ -367,11 +383,15 @@ impl<'a> EventCtx<'a> {
     pub(crate) fn new(
         propagation_stopped: &'a mut bool,
         pending_focus_op: &'a mut Option<PendingFocusOp>,
+        pending_capture_op: &'a mut Option<PendingCaptureOp>,
+        window_id: WindowId,
         focused: Option<ElementId>,
     ) -> EventCtx<'a> {
         EventCtx {
             propagation_stopped,
             pending_focus_op,
+            pending_capture_op,
+            window_id,
             focused,
             element_id: None,
             ime_registry: None,
@@ -428,6 +448,27 @@ impl<'a> EventCtx<'a> {
         *self.pending_focus_op = Some(PendingFocusOp::Blur);
     }
 
+    /// Capture the pointer to `id`. Applied by `AppState` after the handler
+    /// chain completes; subsequent pointer events route to `id` until capture
+    /// is released. Explicit capture is sticky — it survives mouse-up, so a
+    /// handler can drive a multi-step drag across button releases. The
+    /// framework auto-releases if the captured element is dropped from the tree.
+    pub fn set_capture(&mut self, id: ElementId) {
+        *self.pending_capture_op = Some(PendingCaptureOp::Set(id));
+    }
+
+    /// Release an active pointer capture. Applied after the handler chain
+    /// completes. Pairs with [`set_capture`](Self::set_capture).
+    pub fn release_capture(&mut self) {
+        *self.pending_capture_op = Some(PendingCaptureOp::Release);
+    }
+
+    /// The id of the window this event originated in. Single-window today —
+    /// the id is available to read but is never used to key per-window state.
+    pub fn window_id(&self) -> WindowId {
+        self.window_id
+    }
+
     /// Currently focused element id, snapshot at dispatch start. Does NOT
     /// reflect `request_focus` / `blur` calls made during this chain — focus
     /// only mutates after the chain unwinds.
@@ -441,6 +482,13 @@ impl<'a> EventCtx<'a> {
     pub(crate) fn take_pending_focus_op(&mut self) -> Option<PendingFocusOp> {
         self.pending_focus_op.take()
     }
+
+    /// Take the queued capture op, leaving `None` behind. Crate-private — used
+    /// by AppState to apply the op after a handler chain completes.
+    #[allow(dead_code)] // Drained by AppState after the dispatch chain unwinds.
+    pub(crate) fn take_pending_capture_op(&mut self) -> Option<PendingCaptureOp> {
+        self.pending_capture_op.take()
+    }
 }
 
 impl std::fmt::Debug for EventCtx<'_> {
@@ -448,6 +496,8 @@ impl std::fmt::Debug for EventCtx<'_> {
         f.debug_struct("EventCtx")
             .field("propagation_stopped", &*self.propagation_stopped)
             .field("pending_focus_op", &*self.pending_focus_op)
+            .field("pending_capture_op", &*self.pending_capture_op)
+            .field("window_id", &self.window_id)
             .field("focused", &self.focused)
             .finish()
     }

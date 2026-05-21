@@ -40,7 +40,7 @@ const TICK_INTERVAL: Duration = Duration::from_millis(10);
 pub struct NoopView;
 
 impl View for NoopView {
-    fn render(&mut self) -> AnyElement {
+    fn render(&mut self, _cx: &mut crate::RenderCx) -> AnyElement {
         Div::new().into_any()
     }
 }

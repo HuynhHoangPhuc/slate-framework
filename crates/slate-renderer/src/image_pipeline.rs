@@ -44,7 +44,7 @@ use wgpu::{
     VertexStepMode,
 };
 
-use crate::atlas::{Atlas, Format};
+use crate::atlas::{AllocId, Atlas, AtlasAllocation, AtlasError, Format, PAGE_SIZE};
 use crate::pipeline_shared::{atlas_bind_group, atlas_bind_group_layout, atlas_linear_sampler};
 use crate::scene::ImageInstance;
 
@@ -323,4 +323,62 @@ impl ImagePipeline {
         });
         self.instance_capacity_bytes = new_cap;
     }
+}
+
+/// Allocate an image slot with a 1-texel transparent gutter on every side.
+///
+/// Mirrors [`crate::allocate_glyph`]: the atlas reserves a
+/// `(width + 2) × (height + 2)` region but the returned `uv_rect` is inset by
+/// exactly 1 texel per side, so linear sampling at a non-integer scale never
+/// pulls texels from a neighbouring image. Caller uploads the padded buffer
+/// from [`pad_rgba_with_gutter`] (the gutter is zero-filled → samples read
+/// transparent). Returns `(alloc_id, inset_uv_rect)`.
+pub fn allocate_image(
+    atlas: &mut Atlas,
+    width: u32,
+    height: u32,
+) -> Result<(AllocId, [f32; 4]), AtlasError> {
+    debug_assert!(
+        width > 0 && height > 0,
+        "image dimensions must be non-zero (got {width}×{height})",
+    );
+    let padded_w = width.checked_add(2).ok_or(AtlasError::TooLarge {
+        requested: (width, height),
+        max: PAGE_SIZE,
+    })?;
+    let padded_h = height.checked_add(2).ok_or(AtlasError::TooLarge {
+        requested: (width, height),
+        max: PAGE_SIZE,
+    })?;
+    let AtlasAllocation { uv_rect, alloc_id } = atlas.allocate(padded_w, padded_h)?;
+    // 1-texel inset in normalized coords; query the atlas so multi-page atlases
+    // with differing page sizes stay correct.
+    let texel = atlas.texel_size_uv();
+    let inset = [
+        uv_rect[0] + texel,
+        uv_rect[1] + texel,
+        uv_rect[2] - texel,
+        uv_rect[3] - texel,
+    ];
+    Ok((alloc_id, inset))
+}
+
+/// Pad a `w × h` straight-RGBA image with a 1-pixel zero-fill (transparent)
+/// gutter on all sides, producing the `(w+2) × (h+2)` buffer that the
+/// [`allocate_image`] slot expects.
+pub fn pad_rgba_with_gutter(src: &[u8], w: u32, h: u32) -> Vec<u8> {
+    debug_assert!(
+        src.len() == w as usize * h as usize * 4,
+        "src must be tight RGBA8 of w×h ({w}×{h})"
+    );
+    let pw = (w + 2) as usize;
+    let ph = (h + 2) as usize;
+    let row = w as usize * 4;
+    let mut buf = vec![0u8; pw * ph * 4];
+    for y in 0..h as usize {
+        let src_off = y * row;
+        let dst_off = ((y + 1) * pw + 1) * 4;
+        buf[dst_off..dst_off + row].copy_from_slice(&src[src_off..src_off + row]);
+    }
+    buf
 }

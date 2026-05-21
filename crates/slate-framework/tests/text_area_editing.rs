@@ -70,7 +70,7 @@ use slate_reactive::{Runtime, Signal};
 struct NoopView;
 
 impl View for NoopView {
-    fn render(&mut self) -> AnyElement {
+    fn render(&mut self, _cx: &mut slate_framework::RenderCx) -> AnyElement {
         Div::new().into_any()
     }
 }

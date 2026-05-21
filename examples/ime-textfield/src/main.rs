@@ -32,7 +32,7 @@ struct ImeDemo {
 }
 
 impl View for ImeDemo {
-    fn render(&mut self) -> AnyElement {
+    fn render(&mut self, _cx: &mut slate_framework::RenderCx) -> AnyElement {
         let echo = self.value.clone();
 
         let field_style = TextFieldStyle {
@@ -45,7 +45,7 @@ impl View for ImeDemo {
         };
 
         Div::new()
-            .background(Color::from_hex("#1e1e2e").unwrap_or(Color::BLACK).into())
+            .background(Color::from_hex("#1e1e2e").unwrap_or(Color::BLACK))
             .style(|s| {
                 s.flex_direction(FlexDirection::Column)
                     .align_items(AlignItems::Center)

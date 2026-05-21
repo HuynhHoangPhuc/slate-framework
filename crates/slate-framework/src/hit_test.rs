@@ -134,6 +134,12 @@ impl HitTestList {
         self.regions.is_empty()
     }
 
+    /// Returns true if `id` has a registered hit region this frame. Used to
+    /// detect unmounted elements (e.g. to auto-release a stale mouse capture).
+    pub fn contains(&self, id: ElementId) -> bool {
+        self.regions.iter().any(|r| r.element_id == id)
+    }
+
     /// Find the topmost element under a point.
     ///
     /// Walks the list back-to-front (last registered = topmost).

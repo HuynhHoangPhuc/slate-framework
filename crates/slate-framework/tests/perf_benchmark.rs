@@ -72,7 +72,7 @@ fn p99_duration(durations: &[Duration]) -> Duration {
 /// Nested div structure similar to reactive-counter
 fn counter_app_tree() -> AnyElement {
     Div::new()
-        .background(Color::from_hex("#1e1e2e").unwrap_or(Color::BLACK).into())
+        .background(Color::from_hex("#1e1e2e").unwrap_or(Color::BLACK))
         .style(|s| s.flex_grow(1.0).padding_all(32.0).gap(16.0))
         .child(
             Text::new("Reactive Counter")
@@ -81,7 +81,7 @@ fn counter_app_tree() -> AnyElement {
         )
         .child(
             Div::new()
-                .background(Color::from_hex("#3b82f6").unwrap_or(Color::BLUE).into())
+                .background(Color::from_hex("#3b82f6").unwrap_or(Color::BLUE))
                 .corner_radius(8.0)
                 .style(|s| s.padding_all(16.0))
                 .child(
@@ -101,7 +101,7 @@ fn counter_app_tree() -> AnyElement {
 /// 1000-element tree (flat div with 1000 text children)
 fn large_tree_1000() -> AnyElement {
     let mut div = Div::new()
-        .background(Color::BLACK.into())
+        .background(Color::BLACK)
         .style(|s| s.flex_grow(1.0));
 
     for i in 0..1000 {

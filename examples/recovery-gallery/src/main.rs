@@ -39,9 +39,9 @@ impl GalleryView {
 }
 
 impl View for GalleryView {
-    fn render(&mut self) -> AnyElement {
+    fn render(&mut self, _cx: &mut slate_framework::RenderCx) -> AnyElement {
         Div::new()
-            .background(Color::from_hex("#0d0d14").unwrap_or(Color::BLACK).into())
+            .background(Color::from_hex("#0d0d14").unwrap_or(Color::BLACK))
             .style(|s| {
                 s.flex_direction(FlexDirection::Column)
                     .align_items(AlignItems::Center)

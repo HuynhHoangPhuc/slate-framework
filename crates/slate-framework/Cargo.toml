@@ -70,3 +70,8 @@ required-features = ["test-hooks"]
 name = "text_area_mouse"
 harness = false
 required-features = ["test-hooks"]
+
+[[test]]
+name = "event_capture_and_window_id"
+harness = false
+required-features = ["test-hooks"]

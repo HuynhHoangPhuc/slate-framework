@@ -29,6 +29,7 @@ use crate::device_lost_reason;
 use crate::glyph_pipeline::GlyphPipeline;
 use crate::image_pipeline::ImagePipeline;
 use crate::instanced_rect_pipeline::InstancedRectPipeline;
+use crate::layer_ordering::{DefaultPainterOrder, LayerOrdering, ScenePrimitive};
 use crate::observer::RendererObserver;
 use crate::pipeline_shared::{self, ViewportUniform};
 use crate::scene::Scene;
@@ -676,32 +677,39 @@ impl Renderer {
                 multiview_mask: None::<NonZeroU32>,
             });
 
-            for layer in &scene.layers {
-                self.shadow_pipeline.record(
-                    &mut pass,
-                    &self.viewport_bg,
-                    &self.unit_quad,
-                    layer.shadows.clone(),
-                );
-                self.rect_pipeline.record(
-                    &mut pass,
-                    &self.viewport_bg,
-                    &self.unit_quad,
-                    layer.rects.clone(),
-                );
-                self.glyph_pipeline.record(
-                    &mut pass,
-                    &self.viewport_bg,
-                    &self.unit_quad,
-                    layer.glyphs.clone(),
-                );
-                self.image_pipeline.record(
-                    &mut pass,
-                    &self.viewport_bg,
-                    &self.unit_quad,
-                    layer.images.clone(),
-                );
-            }
+            // Draw order is driven through the `LayerOrdering` seam so the
+            // strategy (depth buckets, BoundsTree) can be swapped post-v1
+            // without touching this pass-recording code. The default is the v1
+            // painter's walk; monomorphized here, so no per-frame vtable.
+            DefaultPainterOrder.for_each_draw(scene.layers.len(), |idx, kind| {
+                let layer = &scene.layers[idx];
+                match kind {
+                    ScenePrimitive::Shadow => self.shadow_pipeline.record(
+                        &mut pass,
+                        &self.viewport_bg,
+                        &self.unit_quad,
+                        layer.shadows.clone(),
+                    ),
+                    ScenePrimitive::Rect => self.rect_pipeline.record(
+                        &mut pass,
+                        &self.viewport_bg,
+                        &self.unit_quad,
+                        layer.rects.clone(),
+                    ),
+                    ScenePrimitive::Glyph => self.glyph_pipeline.record(
+                        &mut pass,
+                        &self.viewport_bg,
+                        &self.unit_quad,
+                        layer.glyphs.clone(),
+                    ),
+                    ScenePrimitive::Image => self.image_pipeline.record(
+                        &mut pass,
+                        &self.viewport_bg,
+                        &self.unit_quad,
+                        layer.images.clone(),
+                    ),
+                }
+            });
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));

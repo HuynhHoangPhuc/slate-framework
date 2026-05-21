@@ -40,6 +40,7 @@ pub mod device_lost_reason;
 pub mod glyph_pipeline;
 pub mod image_pipeline;
 pub mod instanced_rect_pipeline;
+pub mod layer_ordering;
 pub mod observer;
 pub mod pipeline_shared;
 pub mod renderer;
@@ -65,8 +66,9 @@ pub use color::{
 
 // Re-exports from pipelines
 pub use glyph_pipeline::{GlyphPipeline, allocate_glyph};
-pub use image_pipeline::ImagePipeline;
+pub use image_pipeline::{ImagePipeline, allocate_image, pad_rgba_with_gutter};
 pub use instanced_rect_pipeline::InstancedRectPipeline;
+pub use layer_ordering::{DefaultPainterOrder, LayerOrdering, ScenePrimitive};
 pub use pipeline_shared::{ViewportUniform, create_unit_quad, viewport_bind_group_layout};
 pub use shadow_pipeline::ShadowPipeline;
 

@@ -48,6 +48,8 @@ pub mod ime;
 pub mod layout;
 pub(crate) mod paint_cache;
 pub(crate) mod reactive_state;
+pub mod reactive_value;
+pub mod render_cx;
 pub mod style;
 #[cfg(all(target_os = "windows", feature = "test-hooks"))]
 pub mod test_support;
@@ -69,6 +71,8 @@ pub use event::{
     TextInputEvent, TextInputHandler,
 };
 pub use headless::{HeadlessApp, HeadlessError};
+pub use reactive_value::Reactive;
+pub use render_cx::RenderCx;
 
 /// Reactive primitives for building reactive UIs.
 ///

@@ -12,7 +12,9 @@ use slate_renderer::Lpx;
 use slate_renderer::scene::RectInstance;
 use taffy::prelude::*;
 
+use crate::color::Color;
 use crate::context::{LayoutCtx, PaintCtx, PrepaintCtx};
+use crate::reactive_value::Reactive;
 use crate::element::{AnyElement, Element, IntoElement, Sealed};
 use crate::event::{
     ElementKeyHandler, ElementTextInputHandler, EventCtx, Handlers, KeyEvent, KeyHandlers,
@@ -193,14 +195,22 @@ impl Div {
     }
 
     /// Set background color (linear, premultiplied RGBA).
-    pub fn background(mut self, color: [f32; 4]) -> Self {
-        self.visual.background = Some(color);
+    ///
+    /// Accepts a plain color or a signal-backed [`Reactive`]: a signal value
+    /// is read here (under the render observer), so the view re-renders and the
+    /// background re-resolves when that signal changes.
+    pub fn background(mut self, color: impl Into<Reactive<Color>>) -> Self {
+        let value: Reactive<Color> = color.into();
+        self.visual.background = Some(value.resolve().0);
         self
     }
 
     /// Set corner radius in logical pixels.
-    pub fn corner_radius(mut self, radius: f32) -> Self {
-        self.visual.corner_radius = radius;
+    ///
+    /// Accepts a plain `f32` or a signal-backed [`Reactive`]; see [`Self::background`].
+    pub fn corner_radius(mut self, radius: impl Into<Reactive<f32>>) -> Self {
+        let value: Reactive<f32> = radius.into();
+        self.visual.corner_radius = value.resolve();
         self
     }
 

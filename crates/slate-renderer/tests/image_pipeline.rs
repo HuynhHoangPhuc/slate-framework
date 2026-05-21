@@ -10,10 +10,11 @@
 
 mod common;
 
-use slate_renderer::atlas::{Atlas, Format};
+use slate_renderer::atlas::{Atlas, Format, PAGE_SIZE};
 use slate_renderer::{
-    ImageInstance, ImagePipeline, Lpx, ViewportUniform, create_unit_quad, linear_to_srgb_channel,
-    srgb_u8_to_linear_premul, viewport_bind_group_layout,
+    ImageInstance, ImagePipeline, Lpx, ViewportUniform, allocate_image, create_unit_quad,
+    linear_to_srgb_channel, pad_rgba_with_gutter, srgb_u8_to_linear_premul,
+    viewport_bind_group_layout,
 };
 use wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindingResource, Buffer,
@@ -435,4 +436,71 @@ fn empty_instances_is_a_noop() {
     let before = pipeline.capacity_bytes();
     pipeline.prepare(&device, &queue, &[]);
     assert_eq!(pipeline.capacity_bytes(), before);
+}
+
+#[test]
+fn allocate_image_reserves_gutter_and_insets_uv() {
+    // Mirror of `allocate_glyph_reserves_gutter_and_insets_uv`: the image path
+    // must inset its uv_rect by exactly 1 texel per side so linear sampling at
+    // a non-integer scale never bleeds from a packed neighbour.
+    let Some((device, _queue)) = common::make_headless_device() else {
+        eprintln!("image_pipeline: no GPU adapter — skipping");
+        return;
+    };
+    let mut atlas = Atlas::new(&device, Format::Rgba8UnormSrgb);
+
+    // Nominal 16×16 image. Atlas reserves 18×18; uv_rect inset by 1/PAGE.
+    let (_id_a, uv_a) = allocate_image(&mut atlas, 16, 16).expect("allocate image A");
+    let texel = 1.0 / PAGE_SIZE as f32;
+    assert!(
+        (uv_a[2] - uv_a[0] - 16.0 * texel).abs() < 1e-6,
+        "inset uv width drift: got {} want {}",
+        uv_a[2] - uv_a[0],
+        16.0 * texel
+    );
+    assert!(
+        (uv_a[3] - uv_a[1] - 16.0 * texel).abs() < 1e-6,
+        "inset uv height drift: got {} want {}",
+        uv_a[3] - uv_a[1],
+        16.0 * texel
+    );
+    // Inset at least 1 texel inside the raw allocation's top-left.
+    assert!(uv_a[0] >= texel - 1e-6);
+    assert!(uv_a[1] >= texel - 1e-6);
+
+    // Adjacent image on the same shelf: its inset uv must stay disjoint from A.
+    let (_id_b, uv_b) = allocate_image(&mut atlas, 16, 16).expect("allocate image B");
+    let a_disjoint_b = uv_a[2] <= uv_b[0] + 1e-6
+        || uv_b[2] <= uv_a[0] + 1e-6
+        || uv_a[3] <= uv_b[1] + 1e-6
+        || uv_b[3] <= uv_a[1] + 1e-6;
+    assert!(a_disjoint_b, "image uv_rects overlap: A={uv_a:?} B={uv_b:?}");
+}
+
+#[test]
+fn pad_rgba_with_gutter_zeros_border_and_copies_inner() {
+    // 2×2 opaque-white image → 4×4 padded buffer: a transparent (zero) border
+    // ring with the original 2×2 block centred. A bleed at the inset edge
+    // therefore samples transparency, not a neighbour.
+    let src: Vec<u8> = (0..4).flat_map(|_| [255u8, 255, 255, 255]).collect();
+    let padded = pad_rgba_with_gutter(&src, 2, 2);
+    assert_eq!(padded.len(), 4 * 4 * 4);
+
+    let px = |x: usize, y: usize| {
+        let off = (y * 4 + x) * 4;
+        [padded[off], padded[off + 1], padded[off + 2], padded[off + 3]]
+    };
+    // Whole border ring is transparent.
+    for i in 0..4 {
+        assert_eq!(px(i, 0), [0, 0, 0, 0], "top row not zero at x={i}");
+        assert_eq!(px(i, 3), [0, 0, 0, 0], "bottom row not zero at x={i}");
+        assert_eq!(px(0, i), [0, 0, 0, 0], "left col not zero at y={i}");
+        assert_eq!(px(3, i), [0, 0, 0, 0], "right col not zero at y={i}");
+    }
+    // Inner 2×2 is the original opaque white.
+    for y in 1..3 {
+        for x in 1..3 {
+            assert_eq!(px(x, y), [255, 255, 255, 255], "inner ({x},{y}) not copied");
+        }
+    }
 }

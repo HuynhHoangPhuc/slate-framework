@@ -612,7 +612,9 @@ impl HeadlessApp {
     /// ```
     pub fn render_view<V: View>(&mut self, view: &mut V) -> Result<RgbaImage, HeadlessError> {
         // Phase 5: Build element tree inside observer scope for reactive subscriptions
-        let root = slate_reactive::with_observer(self.observer_id, || view.render());
+        let mut render_cx = crate::RenderCx::new(slate_platform::WindowId(0));
+        let root =
+            slate_reactive::with_observer(self.observer_id, || view.render(&mut render_cx));
         self.render(root)
     }
 

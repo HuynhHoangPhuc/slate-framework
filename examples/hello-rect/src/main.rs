@@ -13,7 +13,7 @@ use slate_framework::{
 struct HelloRectView;
 
 impl View for HelloRectView {
-    fn render(&mut self) -> AnyElement {
+    fn render(&mut self, _cx: &mut slate_framework::RenderCx) -> AnyElement {
         // Outer container: flex column, centered
         Div::new()
             .style(|s| {
@@ -25,7 +25,7 @@ impl View for HelloRectView {
             .child(
                 // Inner rect: sky blue (#66ccff), 400x200 logical pixels, corner radius 24
                 Div::new()
-                    .background(Color::from_hex("#66ccff").unwrap_or(Color::BLUE).into())
+                    .background(Color::from_hex("#66ccff").unwrap_or(Color::BLUE))
                     .corner_radius(24.0)
                     .style(|s| s.width(400.0).height(200.0)),
             )

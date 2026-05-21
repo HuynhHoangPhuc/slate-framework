@@ -52,7 +52,7 @@ impl ImageTestView {
 }
 
 impl View for ImageTestView {
-    fn render(&mut self) -> AnyElement {
+    fn render(&mut self, _cx: &mut slate_framework::RenderCx) -> AnyElement {
         Div::new()
             .child(Image::new(16, 16, self.pixels.clone()))
             .into_any()

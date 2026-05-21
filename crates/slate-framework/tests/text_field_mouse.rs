@@ -34,7 +34,7 @@ use slate_text::{ShapedGlyph, ShapedLine, byte_at_pixel_x, types::FontId};
 struct NoopView;
 
 impl View for NoopView {
-    fn render(&mut self) -> AnyElement {
+    fn render(&mut self, _cx: &mut slate_framework::RenderCx) -> AnyElement {
         Div::new().into_any()
     }
 }

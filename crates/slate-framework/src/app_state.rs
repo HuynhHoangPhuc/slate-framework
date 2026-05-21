@@ -35,8 +35,8 @@ use crate::event::{
     ElementKeyHandler, ElementTextInputHandler, EventCtx, Handlers, ImeCommitEvent,
     ImeCommitHandler, ImeHandlers, ImeLifecycleEvent, ImeLifecycleHandler, ImePreeditEvent,
     ImePreeditHandler, KeyEvent, KeyHandler, KeyHandlers, MouseEvent, MouseHandler, MouseHandlers,
-    PendingFocusOp, PointerEvent, PointerEventKind, PointerHandler, ScrollEvent, ScrollHandler,
-    TextInputEvent, TextInputHandler,
+    PendingCaptureOp, PendingFocusOp, PointerEvent, PointerEventKind, PointerHandler, ScrollEvent,
+    ScrollHandler, TextInputEvent, TextInputHandler,
 };
 use crate::executor::{Executor, RedrawRequester};
 use crate::focus::FocusRegistry;
@@ -46,6 +46,7 @@ use crate::ime::{CachedImeQuery, ImeRegistry, PendingImeOp};
 use crate::layout::{LayoutTree, compute_layout, resolve_bounds};
 use crate::paint_cache::{TextShapingCache, TextShapingCacheObserver};
 use crate::reactive_state::StateRegistry;
+use crate::render_cx::RenderCx;
 use crate::text_system::{TextSystem, TextSystemObserver};
 use crate::types::{AccessibilityNode, ElementId, Point, Size};
 use crate::view::View;
@@ -214,6 +215,13 @@ pub struct AppState<V: View> {
     pub hovered_element: RefCell<Option<ElementId>>,
     pub button_state: RefCell<u8>,
     pub capture_target: RefCell<Option<ElementId>>,
+    /// True when the active capture was requested explicitly by a handler
+    /// (`EventCtx::set_capture`) rather than auto-set on mouse-down. Explicit
+    /// capture is sticky: it is NOT released on mouse-up, so a handler can
+    /// drive a multi-step drag across button releases. Cleared by
+    /// `release_capture`, by capture-lost, or when the captured element is
+    /// dropped from the tree.
+    pub explicit_capture: RefCell<bool>,
     pub last_mouse_pos: RefCell<Option<(f32, f32)>>,
 
     // Move coalescing state
@@ -383,6 +391,7 @@ impl<V: View> AppState<V> {
             hovered_element: RefCell::new(None),
             button_state: RefCell::new(0),
             capture_target: RefCell::new(None),
+            explicit_capture: RefCell::new(false),
             last_mouse_pos: RefCell::new(None),
 
             coalesced_move_pos: RefCell::new(None),
@@ -443,6 +452,37 @@ impl<V: View> AppState<V> {
                 reg.set_focus(id);
             }
             PendingFocusOp::Blur => reg.clear_focus(),
+        }
+    }
+
+    /// Apply a queued capture op (drained from an `EventCtx` after the handler
+    /// chain unwinds). No-op when `op` is `None`. A `Set` marks the capture
+    /// explicit so it survives mouse-up; `Release` clears both the target and
+    /// the explicit flag.
+    pub(crate) fn apply_pending_capture_op(&self, op: Option<PendingCaptureOp>) {
+        let Some(op) = op else { return };
+        match op {
+            PendingCaptureOp::Set(id) => {
+                *self.capture_target.borrow_mut() = Some(id);
+                *self.explicit_capture.borrow_mut() = true;
+            }
+            PendingCaptureOp::Release => {
+                *self.capture_target.borrow_mut() = None;
+                *self.explicit_capture.borrow_mut() = false;
+            }
+        }
+    }
+
+    /// Clear an active capture if its target produced no hit region this frame
+    /// (i.e. the element was unmounted). Called from the prepaint pass after
+    /// the hit list is rebuilt.
+    fn release_capture_if_unmounted(&self, hit: &HitTestList) {
+        let captured = *self.capture_target.borrow();
+        if let Some(cap_id) = captured
+            && !hit.contains(cap_id)
+        {
+            *self.capture_target.borrow_mut() = None;
+            *self.explicit_capture.borrow_mut() = false;
         }
     }
 
@@ -953,7 +993,8 @@ impl<V: View> AppState<V> {
         let mut root = {
             let mut v = self.view.borrow_mut();
             let v = v.as_mut().expect("view not initialized");
-            slate_reactive::with_observer(self.view_observer_id, || v.render())
+            let mut render_cx = RenderCx::new(self.window.id());
+            slate_reactive::with_observer(self.view_observer_id, || v.render(&mut render_cx))
         };
 
         // 2. Layout pass
@@ -1062,6 +1103,12 @@ impl<V: View> AppState<V> {
             fr.prune_missing();
             // Phase 9c: drop ime entries for unmounted elements.
             self.ime_registry.borrow_mut().prune_missing(&iri);
+
+            // Auto-release mouse capture if the captured element was unmounted
+            // this frame (no hit region produced). An unmounted element can no
+            // longer receive pointer events, so a sticky explicit capture must
+            // not strand input on a dead id.
+            self.release_capture_if_unmounted(&hit);
         }
 
         // 4a. Coalesced move flush
@@ -1326,9 +1373,16 @@ impl<V: View> AppState<V> {
             // (last-write-wins); Phase 3 drains and applies after the loop.
             let mut stopped = false;
             let mut pending_focus_op: Option<PendingFocusOp> = None;
+            let mut pending_capture_op: Option<PendingCaptureOp> = None;
             let focused = self.focus_registry.borrow().focused();
             for (id_opt, handler) in &mouse_handlers {
-                let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused);
+                let mut ctx = EventCtx::new(
+                    &mut stopped,
+                    &mut pending_focus_op,
+                    &mut pending_capture_op,
+                    self.window.id(),
+                    focused,
+                );
                 if let Some(id) = id_opt {
                     ctx = ctx.with_ime(*id, &self.ime_registry);
                 }
@@ -1338,18 +1392,27 @@ impl<V: View> AppState<V> {
                 }
             }
             self.apply_pending_focus_op(pending_focus_op);
+            self.apply_pending_capture_op(pending_capture_op);
 
             stopped = false;
             let mut pending_focus_op: Option<PendingFocusOp> = None;
+            let mut pending_capture_op: Option<PendingCaptureOp> = None;
             let focused = self.focus_registry.borrow().focused();
             for handler in &pointer_handlers {
-                let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused);
+                let mut ctx = EventCtx::new(
+                    &mut stopped,
+                    &mut pending_focus_op,
+                    &mut pending_capture_op,
+                    self.window.id(),
+                    focused,
+                );
                 handler(&pointer_event, &mut ctx);
                 if stopped {
                     break;
                 }
             }
             self.apply_pending_focus_op(pending_focus_op);
+            self.apply_pending_capture_op(pending_capture_op);
         }
 
         *self.last_mouse_pos.borrow_mut() = Some(position);
@@ -1433,9 +1496,16 @@ impl<V: View> AppState<V> {
             // Invoke handlers (borrows released).
             let mut stopped = false;
             let mut pending_focus_op: Option<PendingFocusOp> = None;
+            let mut pending_capture_op: Option<PendingCaptureOp> = None;
             let focused = self.focus_registry.borrow().focused();
             for (id_opt, handler) in &mouse_up_handlers {
-                let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused);
+                let mut ctx = EventCtx::new(
+                    &mut stopped,
+                    &mut pending_focus_op,
+                    &mut pending_capture_op,
+                    self.window.id(),
+                    focused,
+                );
                 if let Some(id) = id_opt {
                     ctx = ctx.with_ime(*id, &self.ime_registry);
                 }
@@ -1445,34 +1515,53 @@ impl<V: View> AppState<V> {
                 }
             }
             self.apply_pending_focus_op(pending_focus_op);
+            self.apply_pending_capture_op(pending_capture_op);
 
             stopped = false;
             let mut pending_focus_op: Option<PendingFocusOp> = None;
+            let mut pending_capture_op: Option<PendingCaptureOp> = None;
             let focused = self.focus_registry.borrow().focused();
             for handler in &pointer_handlers {
-                let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused);
+                let mut ctx = EventCtx::new(
+                    &mut stopped,
+                    &mut pending_focus_op,
+                    &mut pending_capture_op,
+                    self.window.id(),
+                    focused,
+                );
                 handler(&pointer_event, &mut ctx);
                 if stopped {
                     break;
                 }
             }
             self.apply_pending_focus_op(pending_focus_op);
+            self.apply_pending_capture_op(pending_capture_op);
 
             stopped = false;
             let mut pending_focus_op: Option<PendingFocusOp> = None;
+            let mut pending_capture_op: Option<PendingCaptureOp> = None;
             let focused = self.focus_registry.borrow().focused();
             for handler in &click_handlers {
-                let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused);
+                let mut ctx = EventCtx::new(
+                    &mut stopped,
+                    &mut pending_focus_op,
+                    &mut pending_capture_op,
+                    self.window.id(),
+                    focused,
+                );
                 handler(&mouse_event, &mut ctx);
                 if stopped {
                     break;
                 }
             }
             self.apply_pending_focus_op(pending_focus_op);
+            self.apply_pending_capture_op(pending_capture_op);
         }
 
-        // Release capture when all buttons are up
-        if new_state == 0 {
+        // Release auto-capture when all buttons are up. Explicit capture
+        // (`EventCtx::set_capture`) is sticky and survives mouse-up so a
+        // handler can drive a multi-step drag across button releases.
+        if new_state == 0 && !*self.explicit_capture.borrow() {
             *self.capture_target.borrow_mut() = None;
         }
 
@@ -1518,15 +1607,23 @@ impl<V: View> AppState<V> {
             // Invoke handlers
             let mut stopped = false;
             let mut pending_focus_op: Option<PendingFocusOp> = None;
+            let mut pending_capture_op: Option<PendingCaptureOp> = None;
             let focused = self.focus_registry.borrow().focused();
             for handler in &handlers {
-                let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused);
+                let mut ctx = EventCtx::new(
+                    &mut stopped,
+                    &mut pending_focus_op,
+                    &mut pending_capture_op,
+                    self.window.id(),
+                    focused,
+                );
                 handler(&pointer_event, &mut ctx);
                 if stopped {
                     break;
                 }
             }
             self.apply_pending_focus_op(pending_focus_op);
+            self.apply_pending_capture_op(pending_capture_op);
         }
 
         *self.coalesced_move_pos.borrow_mut() = Some(position);
@@ -1579,15 +1676,23 @@ impl<V: View> AppState<V> {
             // Invoke handlers
             let mut stopped = false;
             let mut pending_focus_op: Option<PendingFocusOp> = None;
+            let mut pending_capture_op: Option<PendingCaptureOp> = None;
             let focused = self.focus_registry.borrow().focused();
             for handler in &handlers {
-                let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused);
+                let mut ctx = EventCtx::new(
+                    &mut stopped,
+                    &mut pending_focus_op,
+                    &mut pending_capture_op,
+                    self.window.id(),
+                    focused,
+                );
                 handler(&scroll_event, &mut ctx);
                 if stopped {
                     break;
                 }
             }
             self.apply_pending_focus_op(pending_focus_op);
+            self.apply_pending_capture_op(pending_capture_op);
         }
 
         AppSignal::RequestRedraw
@@ -1621,10 +1726,18 @@ impl<V: View> AppState<V> {
                 };
                 let mut stopped = false;
                 let mut pending_focus_op: Option<PendingFocusOp> = None;
+                let mut pending_capture_op: Option<PendingCaptureOp> = None;
                 let focused = self.focus_registry.borrow().focused();
-                let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused);
+                let mut ctx = EventCtx::new(
+                    &mut stopped,
+                    &mut pending_focus_op,
+                    &mut pending_capture_op,
+                    self.window.id(),
+                    focused,
+                );
                 handler(&event, &mut ctx);
                 self.apply_pending_focus_op(pending_focus_op);
+                self.apply_pending_capture_op(pending_capture_op);
             }
 
             *self.hovered_element.borrow_mut() = None;
@@ -1643,6 +1756,7 @@ impl<V: View> AppState<V> {
     /// re-extend the selection without a preceding mouse_down (Phase 10a.5).
     pub(crate) fn dispatch_capture_lost(&self) -> AppSignal {
         *self.capture_target.borrow_mut() = None;
+        *self.explicit_capture.borrow_mut() = false;
         *self.button_state.borrow_mut() = 0;
         self.ime_registry.borrow().clear_drag_flags();
         AppSignal::None
@@ -1704,6 +1818,7 @@ impl<V: View> AppState<V> {
         };
         let mut stopped = false;
         let mut pending_focus_op: Option<PendingFocusOp> = None;
+        let mut pending_capture_op: Option<PendingCaptureOp> = None;
         let focused = self.focus_registry.borrow().focused();
 
         // Snapshot per-element handlers up-front so we never hold the
@@ -1722,7 +1837,13 @@ impl<V: View> AppState<V> {
                 .collect()
         };
         for (id, handler) in &element_handlers {
-            let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused)
+            let mut ctx = EventCtx::new(
+                    &mut stopped,
+                    &mut pending_focus_op,
+                    &mut pending_capture_op,
+                    self.window.id(),
+                    focused,
+                )
                 .with_ime(*id, &self.ime_registry);
             handler(&event, &mut ctx);
             if stopped {
@@ -1733,7 +1854,13 @@ impl<V: View> AppState<V> {
         if !stopped && has_app_handlers {
             let mut handlers = self.on_key_down.borrow_mut();
             for handler in handlers.iter_mut() {
-                let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused);
+                let mut ctx = EventCtx::new(
+                    &mut stopped,
+                    &mut pending_focus_op,
+                    &mut pending_capture_op,
+                    self.window.id(),
+                    focused,
+                );
                 handler(&event, &mut ctx);
                 if stopped {
                     break;
@@ -1743,6 +1870,7 @@ impl<V: View> AppState<V> {
         }
 
         self.apply_pending_focus_op(pending_focus_op);
+        self.apply_pending_capture_op(pending_capture_op);
 
         // Phase 9c: Tab during active composition must synthetically commit
         // the preedit on the *still-focused* element before the focus shift.
@@ -1808,6 +1936,7 @@ impl<V: View> AppState<V> {
         };
         let mut stopped = false;
         let mut pending_focus_op: Option<PendingFocusOp> = None;
+        let mut pending_capture_op: Option<PendingCaptureOp> = None;
         let focused = self.focus_registry.borrow().focused();
 
         let element_handlers: SmallVec<[(ElementId, ElementKeyHandler); 8]> = {
@@ -1822,7 +1951,13 @@ impl<V: View> AppState<V> {
                 .collect()
         };
         for (id, handler) in &element_handlers {
-            let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused)
+            let mut ctx = EventCtx::new(
+                    &mut stopped,
+                    &mut pending_focus_op,
+                    &mut pending_capture_op,
+                    self.window.id(),
+                    focused,
+                )
                 .with_ime(*id, &self.ime_registry);
             handler(&event, &mut ctx);
             if stopped {
@@ -1833,7 +1968,13 @@ impl<V: View> AppState<V> {
         if !stopped && has_app_handlers {
             let mut handlers = self.on_key_up.borrow_mut();
             for handler in handlers.iter_mut() {
-                let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused);
+                let mut ctx = EventCtx::new(
+                    &mut stopped,
+                    &mut pending_focus_op,
+                    &mut pending_capture_op,
+                    self.window.id(),
+                    focused,
+                );
                 handler(&event, &mut ctx);
                 if stopped {
                     break;
@@ -1843,6 +1984,7 @@ impl<V: View> AppState<V> {
         }
 
         self.apply_pending_focus_op(pending_focus_op);
+        self.apply_pending_capture_op(pending_capture_op);
         AppSignal::RequestRedraw
     }
 
@@ -1860,6 +2002,7 @@ impl<V: View> AppState<V> {
         };
         let mut stopped = false;
         let mut pending_focus_op: Option<PendingFocusOp> = None;
+        let mut pending_capture_op: Option<PendingCaptureOp> = None;
         let focused = self.focus_registry.borrow().focused();
 
         let element_handlers: SmallVec<[(ElementId, ElementTextInputHandler); 8]> = {
@@ -1874,7 +2017,13 @@ impl<V: View> AppState<V> {
                 .collect()
         };
         for (id, handler) in &element_handlers {
-            let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused)
+            let mut ctx = EventCtx::new(
+                    &mut stopped,
+                    &mut pending_focus_op,
+                    &mut pending_capture_op,
+                    self.window.id(),
+                    focused,
+                )
                 .with_ime(*id, &self.ime_registry);
             handler(&event, &mut ctx);
             if stopped {
@@ -1885,7 +2034,13 @@ impl<V: View> AppState<V> {
         if !stopped && has_app_handlers {
             let mut handlers = self.on_text_input.borrow_mut();
             for handler in handlers.iter_mut() {
-                let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused);
+                let mut ctx = EventCtx::new(
+                    &mut stopped,
+                    &mut pending_focus_op,
+                    &mut pending_capture_op,
+                    self.window.id(),
+                    focused,
+                );
                 handler(&event, &mut ctx);
                 if stopped {
                     break;
@@ -1895,6 +2050,7 @@ impl<V: View> AppState<V> {
         }
 
         self.apply_pending_focus_op(pending_focus_op);
+        self.apply_pending_capture_op(pending_capture_op);
         AppSignal::RequestRedraw
     }
 
@@ -1997,6 +2153,7 @@ impl<V: View> AppState<V> {
         };
         let mut stopped = false;
         let mut pending_focus_op: Option<PendingFocusOp> = None;
+        let mut pending_capture_op: Option<PendingCaptureOp> = None;
         let focused = self.focus_registry.borrow().focused();
 
         let element_handlers: SmallVec<[ElementImeLifecycleHandler; 8]> = {
@@ -2008,7 +2165,13 @@ impl<V: View> AppState<V> {
         };
         for handler in &element_handlers {
             let id = chain.first().copied().unwrap_or_else(ElementId::root);
-            let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused)
+            let mut ctx = EventCtx::new(
+                    &mut stopped,
+                    &mut pending_focus_op,
+                    &mut pending_capture_op,
+                    self.window.id(),
+                    focused,
+                )
                 .with_ime(id, &self.ime_registry);
             handler(&event, &mut ctx);
             if stopped {
@@ -2020,7 +2183,13 @@ impl<V: View> AppState<V> {
             let mut handlers = self.on_ime_enabled.borrow_mut();
             for handler in handlers.iter_mut() {
                 let id = chain.first().copied().unwrap_or_else(ElementId::root);
-                let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused)
+                let mut ctx = EventCtx::new(
+                    &mut stopped,
+                    &mut pending_focus_op,
+                    &mut pending_capture_op,
+                    self.window.id(),
+                    focused,
+                )
                     .with_ime(id, &self.ime_registry);
                 handler(&event, &mut ctx);
                 if stopped {
@@ -2032,6 +2201,7 @@ impl<V: View> AppState<V> {
 
         self.drain_pending_ime_ops();
         self.apply_pending_focus_op(pending_focus_op);
+        self.apply_pending_capture_op(pending_capture_op);
         AppSignal::RequestRedraw
     }
 
@@ -2048,6 +2218,7 @@ impl<V: View> AppState<V> {
         };
         let mut stopped = false;
         let mut pending_focus_op: Option<PendingFocusOp> = None;
+        let mut pending_capture_op: Option<PendingCaptureOp> = None;
         let focused = self.focus_registry.borrow().focused();
 
         let element_handlers: SmallVec<[ElementImeLifecycleHandler; 8]> = {
@@ -2059,7 +2230,13 @@ impl<V: View> AppState<V> {
         };
         for handler in &element_handlers {
             let id = chain.first().copied().unwrap_or_else(ElementId::root);
-            let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused)
+            let mut ctx = EventCtx::new(
+                    &mut stopped,
+                    &mut pending_focus_op,
+                    &mut pending_capture_op,
+                    self.window.id(),
+                    focused,
+                )
                 .with_ime(id, &self.ime_registry);
             handler(&event, &mut ctx);
             if stopped {
@@ -2071,7 +2248,13 @@ impl<V: View> AppState<V> {
             let mut handlers = self.on_ime_disabled.borrow_mut();
             for handler in handlers.iter_mut() {
                 let id = chain.first().copied().unwrap_or_else(ElementId::root);
-                let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused)
+                let mut ctx = EventCtx::new(
+                    &mut stopped,
+                    &mut pending_focus_op,
+                    &mut pending_capture_op,
+                    self.window.id(),
+                    focused,
+                )
                     .with_ime(id, &self.ime_registry);
                 handler(&event, &mut ctx);
                 if stopped {
@@ -2083,6 +2266,7 @@ impl<V: View> AppState<V> {
 
         self.drain_pending_ime_ops();
         self.apply_pending_focus_op(pending_focus_op);
+        self.apply_pending_capture_op(pending_capture_op);
         AppSignal::RequestRedraw
     }
 
@@ -2110,6 +2294,7 @@ impl<V: View> AppState<V> {
         };
         let mut stopped = false;
         let mut pending_focus_op: Option<PendingFocusOp> = None;
+        let mut pending_capture_op: Option<PendingCaptureOp> = None;
         let focused = self.focus_registry.borrow().focused();
 
         let element_handlers: SmallVec<[ElementImePreeditHandler; 8]> = {
@@ -2121,7 +2306,13 @@ impl<V: View> AppState<V> {
         };
         for handler in &element_handlers {
             let id = chain.first().copied().unwrap_or_else(ElementId::root);
-            let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused)
+            let mut ctx = EventCtx::new(
+                    &mut stopped,
+                    &mut pending_focus_op,
+                    &mut pending_capture_op,
+                    self.window.id(),
+                    focused,
+                )
                 .with_ime(id, &self.ime_registry);
             handler(&event, &mut ctx);
             if stopped {
@@ -2133,7 +2324,13 @@ impl<V: View> AppState<V> {
             let mut handlers = self.on_ime_preedit.borrow_mut();
             for handler in handlers.iter_mut() {
                 let id = chain.first().copied().unwrap_or_else(ElementId::root);
-                let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused)
+                let mut ctx = EventCtx::new(
+                    &mut stopped,
+                    &mut pending_focus_op,
+                    &mut pending_capture_op,
+                    self.window.id(),
+                    focused,
+                )
                     .with_ime(id, &self.ime_registry);
                 handler(&event, &mut ctx);
                 if stopped {
@@ -2145,6 +2342,7 @@ impl<V: View> AppState<V> {
 
         self.drain_pending_ime_ops();
         self.apply_pending_focus_op(pending_focus_op);
+        self.apply_pending_capture_op(pending_capture_op);
         // Republish so OS queries arriving before next paint see fresh state.
         self.republish_ime_cache();
         AppSignal::RequestRedraw
@@ -2167,6 +2365,7 @@ impl<V: View> AppState<V> {
         };
         let mut stopped = false;
         let mut pending_focus_op: Option<PendingFocusOp> = None;
+        let mut pending_capture_op: Option<PendingCaptureOp> = None;
         let focused = self.focus_registry.borrow().focused();
 
         let element_handlers: SmallVec<[ElementImeCommitHandler; 8]> = {
@@ -2178,7 +2377,13 @@ impl<V: View> AppState<V> {
         };
         for handler in &element_handlers {
             let id = chain.first().copied().unwrap_or_else(ElementId::root);
-            let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused)
+            let mut ctx = EventCtx::new(
+                    &mut stopped,
+                    &mut pending_focus_op,
+                    &mut pending_capture_op,
+                    self.window.id(),
+                    focused,
+                )
                 .with_ime(id, &self.ime_registry);
             handler(&event, &mut ctx);
             if stopped {
@@ -2190,7 +2395,13 @@ impl<V: View> AppState<V> {
             let mut handlers = self.on_ime_commit.borrow_mut();
             for handler in handlers.iter_mut() {
                 let id = chain.first().copied().unwrap_or_else(ElementId::root);
-                let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused)
+                let mut ctx = EventCtx::new(
+                    &mut stopped,
+                    &mut pending_focus_op,
+                    &mut pending_capture_op,
+                    self.window.id(),
+                    focused,
+                )
                     .with_ime(id, &self.ime_registry);
                 handler(&event, &mut ctx);
                 if stopped {
@@ -2202,6 +2413,7 @@ impl<V: View> AppState<V> {
 
         self.drain_pending_ime_ops();
         self.apply_pending_focus_op(pending_focus_op);
+        self.apply_pending_capture_op(pending_capture_op);
         AppSignal::RequestRedraw
     }
 
@@ -2253,9 +2465,16 @@ impl<V: View> AppState<V> {
                     };
                     let mut stopped = false;
                     let mut pending_focus_op: Option<PendingFocusOp> = None;
+                    let mut pending_capture_op: Option<PendingCaptureOp> = None;
                     let focused = self.focus_registry.borrow().focused();
                     for (id_opt, handler) in &chain {
-                        let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, focused);
+                        let mut ctx = EventCtx::new(
+                    &mut stopped,
+                    &mut pending_focus_op,
+                    &mut pending_capture_op,
+                    self.window.id(),
+                    focused,
+                );
                         if let Some(id) = id_opt {
                             ctx = ctx.with_ime(*id, &self.ime_registry);
                         }
@@ -2265,6 +2484,7 @@ impl<V: View> AppState<V> {
                         }
                     }
                     self.apply_pending_focus_op(pending_focus_op);
+                    self.apply_pending_capture_op(pending_capture_op);
                 }
 
                 *self.last_dispatched_move_pos.borrow_mut() = Some(pos);
@@ -2294,6 +2514,7 @@ impl<V: View> AppState<V> {
                 new_hover,
                 &self.handler_map.borrow(),
                 &self.parent_map.borrow(),
+                self.window.id(),
             );
             *self.hovered_element.borrow_mut() = new_hover;
         }
@@ -2439,6 +2660,7 @@ pub(crate) fn bubble_mouse_handler<F>(
     event: &MouseEvent,
     handler_map: &HashMap<ElementId, Handlers>,
     parent_map: &HashMap<ElementId, ElementId>,
+    window_id: WindowId,
     get_handler: F,
 ) where
     F: Fn(&Handlers) -> Option<MouseHandler>,
@@ -2455,8 +2677,15 @@ pub(crate) fn bubble_mouse_handler<F>(
 
     let mut stopped = false;
     let mut pending_focus_op: Option<PendingFocusOp> = None;
+    let mut pending_capture_op: Option<PendingCaptureOp> = None;
     for handler in &chain {
-        let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, None);
+        let mut ctx = EventCtx::new(
+            &mut stopped,
+            &mut pending_focus_op,
+            &mut pending_capture_op,
+            window_id,
+            None,
+        );
         handler(event, &mut ctx);
         if stopped {
             break;
@@ -2474,6 +2703,7 @@ pub(crate) fn bubble_pointer_handler<F>(
     event: &PointerEvent,
     handler_map: &HashMap<ElementId, Handlers>,
     parent_map: &HashMap<ElementId, ElementId>,
+    window_id: WindowId,
     get_handler: F,
 ) where
     F: Fn(&Handlers) -> Option<PointerHandler>,
@@ -2490,8 +2720,15 @@ pub(crate) fn bubble_pointer_handler<F>(
 
     let mut stopped = false;
     let mut pending_focus_op: Option<PendingFocusOp> = None;
+    let mut pending_capture_op: Option<PendingCaptureOp> = None;
     for handler in &chain {
-        let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, None);
+        let mut ctx = EventCtx::new(
+            &mut stopped,
+            &mut pending_focus_op,
+            &mut pending_capture_op,
+            window_id,
+            None,
+        );
         handler(event, &mut ctx);
         if stopped {
             break;
@@ -2509,6 +2746,7 @@ pub(crate) fn bubble_scroll_handler(
     event: &ScrollEvent,
     handler_map: &HashMap<ElementId, Handlers>,
     parent_map: &HashMap<ElementId, ElementId>,
+    window_id: WindowId,
 ) {
     let mut chain: SmallVec<[ScrollHandler; 8]> = SmallVec::new();
     for id in ancestors(target, parent_map) {
@@ -2522,8 +2760,15 @@ pub(crate) fn bubble_scroll_handler(
 
     let mut stopped = false;
     let mut pending_focus_op: Option<PendingFocusOp> = None;
+    let mut pending_capture_op: Option<PendingCaptureOp> = None;
     for handler in &chain {
-        let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, None);
+        let mut ctx = EventCtx::new(
+            &mut stopped,
+            &mut pending_focus_op,
+            &mut pending_capture_op,
+            window_id,
+            None,
+        );
         handler(event, &mut ctx);
         if stopped {
             break;
@@ -2541,6 +2786,7 @@ pub(crate) fn fire_hover_transitions(
     new_hover: Option<ElementId>,
     handler_map: &HashMap<ElementId, Handlers>,
     parent_map: &HashMap<ElementId, ElementId>,
+    window_id: WindowId,
 ) {
     use std::collections::HashSet;
 
@@ -2597,7 +2843,14 @@ pub(crate) fn fire_hover_transitions(
         };
         let mut stopped = false;
         let mut pending_focus_op: Option<PendingFocusOp> = None;
-        let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, None);
+        let mut pending_capture_op: Option<PendingCaptureOp> = None;
+        let mut ctx = EventCtx::new(
+            &mut stopped,
+            &mut pending_focus_op,
+            &mut pending_capture_op,
+            window_id,
+            None,
+        );
         handler(&event, &mut ctx);
     }
 
@@ -2611,7 +2864,14 @@ pub(crate) fn fire_hover_transitions(
         };
         let mut stopped = false;
         let mut pending_focus_op: Option<PendingFocusOp> = None;
-        let mut ctx = EventCtx::new(&mut stopped, &mut pending_focus_op, None);
+        let mut pending_capture_op: Option<PendingCaptureOp> = None;
+        let mut ctx = EventCtx::new(
+            &mut stopped,
+            &mut pending_focus_op,
+            &mut pending_capture_op,
+            window_id,
+            None,
+        );
         handler(&event, &mut ctx);
     }
 }
@@ -2933,6 +3193,13 @@ impl<V: View> AppState<V> {
     pub fn window_id_for_test(&self) -> slate_platform::WindowId {
         use slate_platform::Window;
         self.window.id()
+    }
+
+    /// Run the unmount-driven capture release against the current hit list.
+    /// Test-only — exercises the same path the prepaint pass uses.
+    pub fn release_capture_if_unmounted_for_test(&self) {
+        let hit = self.hit_test_list.borrow();
+        self.release_capture_if_unmounted(&hit);
     }
 
     /// Re-publish the IME cache snapshot. Test-only.
