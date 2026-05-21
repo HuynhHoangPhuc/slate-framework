@@ -56,7 +56,7 @@ jobs:
 
       - name: Upload artifacts on failure
         if: failure() && steps.check-baseline.outputs.exists == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: png-diff-${{ matrix.os }}
           path: |
