@@ -93,6 +93,48 @@ impl DirectWriteBackend {
             handle,
         }
     }
+
+    /// Shape `text` and merge any substitute faces DirectWrite chose into the
+    /// registry. `forced_direction` pins the layout's reading direction (see
+    /// [`shaping::shape_line`]); `None` lets DirectWrite auto-detect.
+    fn shape_with_direction(
+        &self,
+        font: &DirectWriteFont,
+        text: &str,
+        forced_direction: Option<crate::types::Direction>,
+    ) -> Result<ShapedLine, TextError> {
+        let text_format = font.text_format.as_ref().ok_or_else(|| {
+            TextError::ShapingFailed(
+                "DirectWriteFont has no IDWriteTextFormat (substitute-only)".into(),
+            )
+        })?;
+        let result = shaping::shape_line(
+            &self.factory,
+            text_format,
+            text,
+            &font.metrics,
+            font.size_lpx,
+            font.scale,
+            font.handle,
+            forced_direction,
+        )?;
+        // Register every substitute face captured during this Draw() so
+        // per-glyph rasterize dispatch (via FontHandle) can resolve them.
+        if !result.captured_faces.is_empty() {
+            let mut reg = self.font_registry.borrow_mut();
+            for cf in result.captured_faces {
+                reg.entry(cf.handle).or_insert_with(|| {
+                    Box::new(Self::build_substitute_font(
+                        cf.face,
+                        font.size_lpx,
+                        font.scale,
+                        cf.handle,
+                    ))
+                });
+            }
+        }
+        Ok(result.line)
+    }
 }
 
 impl Drop for DirectWriteBackend {
@@ -161,36 +203,16 @@ impl TextBackend for DirectWriteBackend {
     }
 
     fn shape_line(&self, font: &Self::Font, text: &str) -> Result<ShapedLine, TextError> {
-        let text_format = font.text_format.as_ref().ok_or_else(|| {
-            TextError::ShapingFailed(
-                "DirectWriteFont has no IDWriteTextFormat (substitute-only)".into(),
-            )
-        })?;
-        let result = shaping::shape_line(
-            &self.factory,
-            text_format,
-            text,
-            &font.metrics,
-            font.size_lpx,
-            font.scale,
-            font.handle,
-        )?;
-        // Register every substitute face captured during this Draw() so
-        // per-glyph rasterize dispatch (via FontHandle) can resolve them.
-        if !result.captured_faces.is_empty() {
-            let mut reg = self.font_registry.borrow_mut();
-            for cf in result.captured_faces {
-                reg.entry(cf.handle).or_insert_with(|| {
-                    Box::new(Self::build_substitute_font(
-                        cf.face,
-                        font.size_lpx,
-                        font.scale,
-                        cf.handle,
-                    ))
-                });
-            }
-        }
-        Ok(result.line)
+        self.shape_with_direction(font, text, None)
+    }
+
+    fn shape_segment(
+        &self,
+        font: &Self::Font,
+        text: &str,
+        direction: crate::types::Direction,
+    ) -> Result<ShapedLine, TextError> {
+        self.shape_with_direction(font, text, Some(direction))
     }
 
     fn font_for(&self, handle: FontHandle) -> Option<&Self::Font> {

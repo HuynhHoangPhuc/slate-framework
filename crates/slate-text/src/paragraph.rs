@@ -11,8 +11,9 @@
 //! width). [`greedy_wrap`] is the convenience wrapper that does both.
 
 use crate::backend::{Font, TextBackend};
+use crate::bidi::{self, BidiRun};
 use crate::error::TextError;
-use crate::types::{Direction, ShapedGlyph, ShapedLine, TextAlignment};
+use crate::types::{Direction, RunSpan, ShapedGlyph, ShapedLine, TextAlignment};
 
 /// A single whitespace-delimited word shaped in isolation.
 ///
@@ -41,6 +42,10 @@ pub struct ShapedWord {
     /// wrap fit treats it as a soft-break candidate whose trailing copy is
     /// absorbed at a soft wrap but kept (visible) at a hard line end.
     pub is_space_run: bool,
+    /// UAX #9 embedding level of the level-run this item belongs to (even = LTR,
+    /// odd = RTL). `0` on the pure-LTR / CJK path. Line assembly reorders a
+    /// line's items into visual order from these levels (rule L2).
+    pub level: u8,
 }
 
 /// Shape every whitespace-delimited word in `text` exactly once.
@@ -99,11 +104,14 @@ pub(crate) trait LineSegmenter {
 /// Phase-1 segmenter: maximal runs of ASCII spaces (U+0020) interleaved with
 /// non-space spans, all `Ltr` at level 0.
 ///
-/// Byte-for-byte equivalent to the historical `shape_words_in` scan, so the
-/// pure-LTR / CJK shaping output is unchanged. Retained after the bidi
-/// segmenter lands as the fixture for the LTR-identity regression gate.
+/// Byte-for-byte equivalent to the historical `shape_words_in` scan. The bidi
+/// segmenter superseded it on the production path; it survives as the oracle
+/// for the LTR-identity regression gate (the bidi segmenter must reproduce its
+/// spans on pure-LTR / CJK text), hence test-only.
+#[cfg(test)]
 pub(crate) struct WhitespaceSegmenter;
 
+#[cfg(test)]
 impl LineSegmenter for WhitespaceSegmenter {
     fn segments(&self, text: &str) -> Vec<Segment> {
         let bytes = text.as_bytes();
@@ -123,6 +131,50 @@ impl LineSegmenter for WhitespaceSegmenter {
             });
         }
         segs
+    }
+}
+
+/// Production segmenter: resolves UAX #9 bidi levels paragraph-wide, then emits
+/// one shaping span per level-run, split further on ASCII spaces so the wrap
+/// fit keeps its space-run / soft-break model. Each span carries its run's
+/// resolved direction and level; line assembly reorders them into visual order.
+///
+/// For pure-LTR / CJK text this yields a single level-0 run whose whitespace
+/// split is byte-for-byte identical to [`WhitespaceSegmenter`], so the shaping
+/// output is unchanged (verified by the segmenter-equivalence test below).
+pub(crate) struct BidiSegmenter {
+    /// Forced paragraph base direction; `None` auto-detects (first strong char).
+    pub base: Option<Direction>,
+}
+
+impl LineSegmenter for BidiSegmenter {
+    fn segments(&self, text: &str) -> Vec<Segment> {
+        let resolved = bidi::resolve_line(text, self.base);
+        let mut segs = Vec::new();
+        for run in &resolved.logical_runs {
+            split_run_on_spaces(text, run, &mut segs);
+        }
+        segs
+    }
+}
+
+/// Split one level-run's byte range into maximal ASCII-space / non-space spans,
+/// each tagged with the run's direction and level. Appends to `out` in logical
+/// (source) order.
+fn split_run_on_spaces(text: &str, run: &BidiRun, out: &mut Vec<Segment>) {
+    let bytes = text.as_bytes();
+    let mut i = run.byte_range.start;
+    while i < run.byte_range.end {
+        let start = i;
+        let is_space = bytes[i] == b' ';
+        while i < run.byte_range.end && (bytes[i] == b' ') == is_space {
+            i += 1;
+        }
+        out.push(Segment {
+            byte_range: start..i,
+            direction: run.direction,
+            level: run.level,
+        });
     }
 }
 
@@ -148,14 +200,14 @@ pub(crate) fn shape_words_in<B: TextBackend>(
     segment: &str,
     segment_start: usize,
 ) -> Result<Vec<ShapedWord>, TextError> {
-    let segmenter = WhitespaceSegmenter;
+    let segmenter = BidiSegmenter { base: None };
     let mut items = Vec::new();
     for seg in segmenter.segments(segment) {
         let slice = &segment[seg.byte_range.clone()];
         // Homogeneous spans (segmenter never mixes space/non-space), so the
         // first byte determines the whole run's space-ness.
         let is_space = slice.as_bytes().first() == Some(&b' ');
-        let mut shaped = backend.shape_line(font, slice)?;
+        let mut shaped = backend.shape_segment(font, slice, seg.direction)?;
         for g in &mut shaped.glyphs {
             g.direction = seg.direction;
         }
@@ -167,6 +219,7 @@ pub(crate) fn shape_words_in<B: TextBackend>(
             source_byte_range: segment_start + seg.byte_range.start
                 ..segment_start + seg.byte_range.end,
             is_space_run: is_space,
+            level: seg.level,
         });
     }
     Ok(items)
@@ -190,6 +243,24 @@ pub(crate) fn shape_words_in<B: TextBackend>(
 /// break, so a leading space run before an over-wide first word stays visible
 /// here (the multi-line fit absorbs it). Harmless: this path feeds non-editable
 /// `Text` rendering only and does no caret/byte math on these glyphs.
+/// Record `word` on the current line (logical order), growing the running
+/// width and seeding the line's ascent/descent from the first item placed.
+/// Glyph placement is deferred to [`assemble_visual_line`] at line flush.
+fn commit_item<'a>(
+    word: &'a ShapedWord,
+    cur: &mut Vec<&'a ShapedWord>,
+    cur_width: &mut f32,
+    cur_ascent: &mut f32,
+    cur_descent: &mut f32,
+) {
+    if cur.is_empty() {
+        *cur_ascent = word.ascent_lpx;
+        *cur_descent = word.descent_lpx;
+    }
+    cur.push(word);
+    *cur_width += word.advance_width_lpx;
+}
+
 pub fn wrap_shaped_words(
     items: &[ShapedWord],
     space_width: f32,
@@ -198,32 +269,15 @@ pub fn wrap_shaped_words(
 ) -> Vec<ShapedLine> {
     let _ = space_width; // spaces are explicit items now; kept for API stability
     let mut lines: Vec<ShapedLine> = Vec::new();
-    let mut cur: Vec<ShapedGlyph> = Vec::new();
+    // Items committed to the current line in logical (source) order; glyphs are
+    // placed in visual order only at line flush (`assemble_visual_line`).
+    let mut cur: Vec<&ShapedWord> = Vec::new();
     let mut cur_width = 0.0f32;
     let mut cur_ascent = 0.0f32;
     let mut cur_descent = 0.0f32;
     let mut y_offset = 0.0f32;
     // A trailing space run not yet committed to the line's visible width.
     let mut pending: Option<&ShapedWord> = None;
-
-    // Append `word`'s glyphs at the current pen and grow the line width.
-    let commit = |word: &ShapedWord,
-                  cur: &mut Vec<ShapedGlyph>,
-                  cur_width: &mut f32,
-                  cur_ascent: &mut f32,
-                  cur_descent: &mut f32| {
-        if cur.is_empty() {
-            *cur_ascent = word.ascent_lpx;
-            *cur_descent = word.descent_lpx;
-        }
-        let pen_x = *cur_width;
-        for g in &word.glyphs {
-            let mut adjusted = *g;
-            adjusted.position_lpx[0] += pen_x;
-            cur.push(adjusted);
-        }
-        *cur_width += word.advance_width_lpx;
-    };
 
     for item in items {
         if item.is_space_run {
@@ -242,35 +296,155 @@ pub fn wrap_shaped_words(
 
         if candidate > max_width_lpx && !cur.is_empty() {
             // Wrap before this word; absorb the pending space run.
-            lines.push(build_line_from_glyphs(
-                std::mem::take(&mut cur),
-                cur_width,
+            lines.push(assemble_visual_line(
+                &std::mem::take(&mut cur),
                 cur_ascent,
                 cur_descent,
                 y_offset,
+                false,
             ));
             y_offset += line_height;
             cur_width = 0.0;
             pending = None;
         } else if let Some(sp) = pending.take() {
             // Word fits with the run: make the spaces visible, then the word.
-            commit(sp, &mut cur, &mut cur_width, &mut cur_ascent, &mut cur_descent);
+            commit_item(sp, &mut cur, &mut cur_width, &mut cur_ascent, &mut cur_descent);
         }
 
-        commit(item, &mut cur, &mut cur_width, &mut cur_ascent, &mut cur_descent);
+        commit_item(item, &mut cur, &mut cur_width, &mut cur_ascent, &mut cur_descent);
     }
 
     // Trailing/standalone spaces at the end of the text stay visible.
     if let Some(sp) = pending.take() {
-        commit(sp, &mut cur, &mut cur_width, &mut cur_ascent, &mut cur_descent);
+        commit_item(sp, &mut cur, &mut cur_width, &mut cur_ascent, &mut cur_descent);
     }
     if !cur.is_empty() {
-        lines.push(build_line_from_glyphs(
-            cur, cur_width, cur_ascent, cur_descent, y_offset,
+        lines.push(assemble_visual_line(
+            &cur, cur_ascent, cur_descent, y_offset, false,
         ));
     }
 
     lines
+}
+
+/// Place a line's committed `items` (logical order) into a [`ShapedLine`] in
+/// **visual** order.
+///
+/// Reorders items by UAX #9 rule L2 over their embedding levels and flows the
+/// pen left-to-right, so RTL runs sit at the correct screen position while each
+/// run's glyphs keep the visual order the native shaper returned. Populates
+/// `runs` (level-runs in visual order) and `base_direction` (parity of the
+/// minimum level = the paragraph base level).
+///
+/// When `rewrite_clusters_absolute` is set, each glyph's word-local `cluster`
+/// is rewritten to a document-absolute byte offset (`source_byte_range.start +
+/// local`) so the editable caret math stays byte-keyed.
+///
+/// **Pure-LTR / CJK fast path:** when every item is level 0 the logical order
+/// *is* the visual order, so glyphs are placed exactly as the pre-bidi code did
+/// and `runs` is left empty (implicit single LTR run) — byte-identical output.
+pub(crate) fn assemble_visual_line(
+    items: &[&ShapedWord],
+    ascent_lpx: f32,
+    descent_lpx: f32,
+    y_offset_lpx: f32,
+    rewrite_clusters_absolute: bool,
+) -> ShapedLine {
+    let place = |word: &ShapedWord, pen_x: f32, out: &mut Vec<ShapedGlyph>| {
+        for g in &word.glyphs {
+            let mut a = *g;
+            a.position_lpx[0] += pen_x;
+            if rewrite_clusters_absolute {
+                a.cluster = (word.source_byte_range.start + g.cluster as usize) as u32;
+            }
+            out.push(a);
+        }
+    };
+
+    // All-LTR (including the empty line): logical order = visual order, runs
+    // empty. This reproduces the pre-bidi placement byte-for-byte.
+    if items.iter().all(|w| w.level == 0) {
+        let mut glyphs = Vec::new();
+        let mut pen = 0.0f32;
+        for w in items {
+            place(w, pen, &mut glyphs);
+            pen += w.advance_width_lpx;
+        }
+        return ShapedLine {
+            glyphs,
+            width_lpx: pen,
+            ascent_lpx,
+            descent_lpx,
+            y_offset_lpx,
+            base_direction: Direction::Ltr,
+            runs: Vec::new(),
+        };
+    }
+
+    let levels: Vec<u8> = items.iter().map(|w| w.level).collect();
+    let order = bidi::visual_order(&levels);
+    let mut glyphs = Vec::new();
+    let mut pen = 0.0f32;
+    for &idx in &order {
+        place(items[idx], pen, &mut glyphs);
+        pen += items[idx].advance_width_lpx;
+    }
+
+    let base_level = levels.iter().copied().min().unwrap_or(0);
+    ShapedLine {
+        glyphs,
+        width_lpx: pen,
+        ascent_lpx,
+        descent_lpx,
+        y_offset_lpx,
+        base_direction: dir_from_level(base_level),
+        runs: build_visual_runs(items, &levels),
+    }
+}
+
+/// Direction implied by an embedding level's parity.
+#[inline]
+pub(crate) fn dir_from_level(level: u8) -> Direction {
+    if level.is_multiple_of(2) {
+        Direction::Ltr
+    } else {
+        Direction::Rtl
+    }
+}
+
+/// Coalesce a line's items into level-runs (adjacent same-level items merged,
+/// byte ranges logical) and return them in **visual** order (rule L2).
+fn build_visual_runs(items: &[&ShapedWord], levels: &[u8]) -> Vec<RunSpan> {
+    // Consecutive same-level items share a contiguous logical byte range, so a
+    // merged run's byte span is just [first.start, last.end]. The segmenter
+    // emits items in logical order without interleaving levels; the assert locks
+    // that invariant so a future reorder can't silently produce a gappy merge.
+    let mut logical: Vec<(usize, usize, u8)> = Vec::new();
+    for (w, &lvl) in items.iter().zip(levels) {
+        let (s, e) = (w.source_byte_range.start, w.source_byte_range.end);
+        match logical.last_mut() {
+            Some(last) if last.2 == lvl => {
+                debug_assert!(
+                    s >= last.1,
+                    "merged level-run items must be source-contiguous",
+                );
+                last.1 = e;
+            }
+            _ => logical.push((s, e, lvl)),
+        }
+    }
+    let run_levels: Vec<u8> = logical.iter().map(|r| r.2).collect();
+    bidi::visual_order(&run_levels)
+        .into_iter()
+        .map(|i| {
+            let (s, e, lvl) = logical[i];
+            RunSpan {
+                byte_range: s..e,
+                level: lvl,
+                direction: dir_from_level(lvl),
+            }
+        })
+        .collect()
 }
 
 /// Wrap text into multiple lines using greedy first-fit algorithm.
@@ -320,30 +494,6 @@ pub fn greedy_wrap<B: TextBackend>(
     // re-shaping; here we just chain them for the one-shot convenience path.
     let (words, space_width) = shape_words(backend, font, text)?;
     Ok(wrap_shaped_words(&words, space_width, line_height, max_width_lpx))
-}
-
-/// Build a `ShapedLine` from pre-accumulated glyphs.
-///
-/// Glyphs must already have their `position_lpx[0]` adjusted to their
-/// absolute positions within the line. `width_lpx` should be the total
-/// advance width (sum of per-glyph advances including inter-word space
-/// advances).
-fn build_line_from_glyphs(
-    glyphs: Vec<ShapedGlyph>,
-    width_lpx: f32,
-    ascent_lpx: f32,
-    descent_lpx: f32,
-    y_offset_lpx: f32,
-) -> ShapedLine {
-    ShapedLine {
-        glyphs,
-        width_lpx,
-        ascent_lpx,
-        descent_lpx,
-        y_offset_lpx,
-        base_direction: Direction::Ltr,
-        runs: Vec::new(),
-    }
 }
 
 /// Compute horizontal offset for text alignment.
@@ -437,6 +587,44 @@ pub fn truncate_with_ellipsis<B: TextBackend>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// LTR-identity gate: on pure-LTR / CJK text the bidi segmenter must emit
+    /// the exact same spans (byte ranges + direction + level) as the whitespace
+    /// segmenter, so the shaping output is unchanged. `WhitespaceSegmenter` is
+    /// the oracle here.
+    #[test]
+    fn bidi_segmenter_matches_whitespace_segmenter_on_ltr() {
+        let bidi = BidiSegmenter { base: None };
+        let ws = WhitespaceSegmenter;
+        for text in [
+            "",
+            "hello",
+            "ab cd",
+            "a  b",
+            " ab ",
+            "the quick brown fox",
+            "日本語 のテキスト",
+        ] {
+            assert_eq!(
+                bidi.segments(text),
+                ws.segments(text),
+                "segmenters diverged on {text:?}"
+            );
+        }
+    }
+
+    /// On RTL / mixed text the bidi segmenter must tag runs with the resolved
+    /// direction (the whitespace segmenter cannot).
+    #[test]
+    fn bidi_segmenter_tags_rtl_runs() {
+        let segs = BidiSegmenter { base: None }.segments("abc אבג");
+        // "abc" + " " are LTR; "אבג" is RTL.
+        assert!(segs.iter().any(|s| s.direction == Direction::Rtl));
+        assert!(segs.iter().any(|s| s.direction == Direction::Ltr));
+        // Byte coverage is gap-free and ordered.
+        assert_eq!(segs.first().unwrap().byte_range.start, 0);
+        assert_eq!(segs.last().unwrap().byte_range.end, "abc אבג".len());
+    }
 
     #[test]
     fn alignment_offsets() {

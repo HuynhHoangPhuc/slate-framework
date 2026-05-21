@@ -31,7 +31,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::backend::{Font, TextBackend};
 use crate::error::TextError;
-use crate::paragraph::{ShapedWord, shape_words_in};
+use crate::paragraph::{ShapedWord, assemble_visual_line, shape_words_in};
 use crate::types::{ShapedGlyph, ShapedLine};
 
 /// One `\n`-delimited paragraph's pre-shaped words plus its absolute byte
@@ -180,34 +180,33 @@ pub fn wrap_document(doc: &ShapedDocument, max_width_lpx: f32) -> MultilineLayou
 /// pairs to `out`. The first emitted line's `byte_start` is forced to the
 /// paragraph's coverage start so leading whitespace and the contiguity chain
 /// stay intact. Always emits ≥ 1 line.
-fn fit_paragraph(
+fn fit_paragraph<'a>(
     doc: &ShapedDocument,
-    words: &[ShapedWord],
+    words: &'a [ShapedWord],
     max_width: f32,
     coverage: &Range<usize>,
     out: &mut Vec<(ShapedLine, usize)>,
 ) {
     let first_idx = out.len();
-    let mut cur: Vec<ShapedGlyph> = Vec::new();
+    // Items committed to the current line in logical (source) order; glyphs are
+    // placed in visual order — and word-local clusters rewritten to absolute —
+    // only at line flush (`assemble_visual_line` with `rewrite_clusters_absolute`).
+    let mut cur: Vec<&'a ShapedWord> = Vec::new();
     let mut cur_width = 0.0f32;
     let mut cur_start = 0usize;
     // A trailing space run held back: committed (visible) before a following
     // word that fits, or absorbed at a soft wrap / before an over-wide word.
-    let mut pending: Option<&ShapedWord> = None;
+    let mut pending: Option<&'a ShapedWord> = None;
 
-    // Append an item's glyphs at the running pen, rewriting word-local clusters
-    // to document-absolute byte offsets so caret/hit-test math is byte-keyed
-    // end to end (applies to space-run glyphs identically).
-    fn place(word: &ShapedWord, cur: &mut Vec<ShapedGlyph>, cur_width: &mut f32) {
-        let pen_x = *cur_width;
-        for g in &word.glyphs {
-            let mut adjusted = *g;
-            adjusted.position_lpx[0] += pen_x;
-            adjusted.cluster = (word.source_byte_range.start + g.cluster as usize) as u32;
-            cur.push(adjusted);
-        }
-        *cur_width += word.advance_width_lpx;
-    }
+    // Flush the current line's items into `out` (visual order, doc metrics,
+    // absolute clusters). Caller guards against empty.
+    let flush =
+        |cur: &mut Vec<&'a ShapedWord>, cur_start: usize, out: &mut Vec<(ShapedLine, usize)>| {
+            let line =
+                assemble_visual_line(cur, doc.ascent_lpx, doc.descent_lpx, 0.0, true);
+            out.push((line, cur_start));
+            cur.clear();
+        };
 
     for word in words {
         if word.is_space_run {
@@ -222,7 +221,7 @@ fn fit_paragraph(
         if word.advance_width_lpx > max_width {
             pending = None;
             if !cur.is_empty() {
-                out.push((build_shaped_line(doc, std::mem::take(&mut cur), cur_width), cur_start));
+                flush(&mut cur, cur_start, out);
                 cur_width = 0.0;
             }
             for (glyphs, width, start) in break_word(word, max_width) {
@@ -240,11 +239,12 @@ fn fit_paragraph(
         if width_with > max_width && !cur.is_empty() {
             // Wrap before this word; absorb the pending run (no visible width
             // on either line) and start the next line with the word.
-            out.push((build_shaped_line(doc, std::mem::take(&mut cur), cur_width), cur_start));
+            flush(&mut cur, cur_start, out);
             cur_width = 0.0;
             pending = None;
             cur_start = word.source_byte_range.start;
-            place(word, &mut cur, &mut cur_width);
+            cur.push(word);
+            cur_width += word.advance_width_lpx;
         } else {
             if cur.is_empty() {
                 // Line begins at the pending run's start (leading spaces stay
@@ -254,9 +254,11 @@ fn fit_paragraph(
                     .unwrap_or(word.source_byte_range.start);
             }
             if let Some(sp) = pending.take() {
-                place(sp, &mut cur, &mut cur_width);
+                cur.push(sp);
+                cur_width += sp.advance_width_lpx;
             }
-            place(word, &mut cur, &mut cur_width);
+            cur.push(word);
+            cur_width += word.advance_width_lpx;
         }
     }
 
@@ -266,10 +268,10 @@ fn fit_paragraph(
         if cur.is_empty() {
             cur_start = sp.source_byte_range.start;
         }
-        place(sp, &mut cur, &mut cur_width);
+        cur.push(sp);
     }
     if !cur.is_empty() {
-        out.push((build_shaped_line(doc, cur, cur_width), cur_start));
+        flush(&mut cur, cur_start, out);
     }
 
     if out.len() == first_idx {

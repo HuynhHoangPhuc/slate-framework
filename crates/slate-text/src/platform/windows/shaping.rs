@@ -8,6 +8,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use windows::Win32::Graphics::DirectWrite::{
     DWRITE_GLYPH_RUN, DWRITE_GLYPH_RUN_DESCRIPTION, DWRITE_MATRIX, DWRITE_MEASURING_MODE,
+    DWRITE_READING_DIRECTION_LEFT_TO_RIGHT, DWRITE_READING_DIRECTION_RIGHT_TO_LEFT,
     DWRITE_STRIKETHROUGH, DWRITE_UNDERLINE, IDWriteFactory5, IDWriteFontFace, IDWriteInlineObject,
     IDWritePixelSnapping_Impl, IDWriteTextFormat, IDWriteTextRenderer, IDWriteTextRenderer_Impl,
 };
@@ -106,7 +107,7 @@ impl IDWriteTextRenderer_Impl for ShapingRenderer_Impl {
     fn DrawGlyphRun(
         &self,
         _clientdrawingcontext: *const core::ffi::c_void,
-        _baselineoriginx: f32,
+        baselineoriginx: f32,
         _baselineoriginy: f32,
         _measuringmode: DWRITE_MEASURING_MODE,
         glyphrun: *const DWRITE_GLYPH_RUN,
@@ -235,14 +236,15 @@ impl IDWriteTextRenderer_Impl for ShapingRenderer_Impl {
         // matches CoreText's baseline-relative Y convention (Y-up at the
         // shaper layer — the renderer applies its own axis flip).
         //
-        // Pen continuity across DrawGlyphRun callbacks: DirectWrite invokes
-        // this callback once per shaped run, but the caller's pen does NOT
-        // reset between callbacks within a single CreateTextLayout / Draw
-        // (the layout's draw pipeline calls into the renderer with
-        // `_baselineoriginx` reflecting the layout's pen). We bridge this by
-        // seeding `pen` with the current line's accumulated width — i.e. the
-        // sum of advances already pushed into `glyphs_store`.
-        let mut pen: f32 = glyphs.iter().map(|g| g.x_advance_lpx).sum();
+        // Pen origin per callback: DirectWrite invokes this once per shaped run
+        // and passes `baselineoriginx` already positioned at that run's visual
+        // left edge (relative to the `Draw` origin, which we pass as 0.0). Seed
+        // the pen from it rather than summing prior advances — a sum assumes
+        // every run is laid out left-to-right in callback order, which is false
+        // for RTL/bidi: DirectWrite emits an RTL run's rightmost glyphs first
+        // and steps the origin leftward, so the sum would mis-stack the runs.
+        // Using the reported origin places each run where the layout put it.
+        let mut pen: f32 = baselineoriginx;
         for i in 0..count {
             let (off_x, off_y) = offsets
                 .map(|o| (o[i].advanceOffset, -o[i].ascenderOffset))
@@ -255,8 +257,9 @@ impl IDWriteTextRenderer_Impl for ShapingRenderer_Impl {
                 x_advance_lpx: advances[i],
                 position_lpx: position,
                 cluster: clusters[i],
-                // Per-run direction is tagged by the segmenter; the raw shaper
-                // output stays at the LTR default (Phase 2 fixes RTL ordering).
+                // Per-run direction is assigned by the segmenter from the
+                // resolved bidi level; this raw shaper output carries no
+                // direction of its own, so it stays at the LTR default.
                 direction: crate::types::Direction::Ltr,
             });
             pen += advances[i];
@@ -314,6 +317,15 @@ pub(crate) struct ShapeResult {
 /// `size_lpx` / `scale` parametrize the `FontHandle`s recorded on each glyph
 /// (and on each `CapturedFace`) so the downstream cache key matches the
 /// primary font's handle convention.
+///
+/// `forced_direction = Some(dir)` pins the layout's reading direction so an
+/// isolated, already-resolved level-run cannot be re-detected with a different
+/// base by DirectWrite's own bidi pass; `None` lets it auto-detect (used by
+/// direction-agnostic callers).
+// Internal shaping primitive: factory + format + the font's cache-key params
+// (size/scale/handle) are all genuinely needed per call; bundling them into a
+// struct would only move the argument list, not shrink the real coupling.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn shape_line(
     factory: &IDWriteFactory5,
     text_format: &IDWriteTextFormat,
@@ -322,6 +334,7 @@ pub(crate) fn shape_line(
     size_lpx: f32,
     scale: f32,
     primary_handle: FontHandle,
+    forced_direction: Option<crate::types::Direction>,
 ) -> std::result::Result<ShapeResult, TextError> {
     if text.is_empty() {
         return Ok(ShapeResult {
@@ -347,6 +360,18 @@ pub(crate) fn shape_line(
     // CreateTextLayout takes &[u16]
     let layout = unsafe { factory.CreateTextLayout(&wide, text_format, f32::MAX, f32::MAX) }
         .map_err(|e| TextError::ShapingFailed(format!("CreateTextLayout: {e}")))?;
+
+    // Pin the reading direction for an already-resolved level-run so DirectWrite
+    // does not re-detect a different base for the isolated substring. The layout
+    // extends IDWriteTextFormat, which declares SetReadingDirection.
+    if let Some(direction) = forced_direction {
+        let reading_direction = match direction {
+            crate::types::Direction::Ltr => DWRITE_READING_DIRECTION_LEFT_TO_RIGHT,
+            crate::types::Direction::Rtl => DWRITE_READING_DIRECTION_RIGHT_TO_LEFT,
+        };
+        unsafe { layout.SetReadingDirection(reading_direction) }
+            .map_err(|e| TextError::ShapingFailed(format!("SetReadingDirection: {e}")))?;
+    }
 
     // Rc<RefCell> shared state for glyph + face accumulation
     let glyphs_store: GlyphStore = Rc::new(RefCell::new(Vec::new()));

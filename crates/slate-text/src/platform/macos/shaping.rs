@@ -4,10 +4,14 @@
 
 use crate::FontHandle;
 use crate::error::TextError;
-use crate::types::{FontId, FontMetrics, ShapedGlyph, ShapedLine};
+use crate::types::{Direction, FontId, FontMetrics, ShapedGlyph, ShapedLine};
 use objc2_core_foundation::{CFIndex, CFRange, CFRetained, CGPoint, CGSize};
-use objc2_core_text::{CTFont, CTRun, kCTFontAttributeName};
+use objc2_core_text::{
+    CTFont, CTParagraphStyle, CTParagraphStyleSetting, CTParagraphStyleSpecifier, CTRun,
+    CTWritingDirection, kCTFontAttributeName, kCTParagraphStyleAttributeName,
+};
 use std::ffi::c_void;
+use std::ptr::NonNull;
 
 /// One CTFont captured from a `CTRun`, paired with the `FontHandle` derived
 /// from its PostScript-name hash + the line's size/scale. The font is
@@ -111,16 +115,42 @@ impl Drop for ScopedCf {
     }
 }
 
+/// Build an immutable `CTParagraphStyle` forcing the base writing direction.
+///
+/// CoreText otherwise re-runs UAX #9 base detection on whatever substring it is
+/// handed; pinning the base direction stops it from flipping an isolated
+/// digit-only or space-only run that the caller already resolved in a wider
+/// context. The `CTWritingDirection` value is copied into the immutable style
+/// during `CTParagraphStyleCreate`, so the local only needs to outlive the call.
+fn forced_paragraph_style(direction: Direction) -> CFRetained<CTParagraphStyle> {
+    let mut writing_direction = match direction {
+        Direction::Ltr => CTWritingDirection::LeftToRight,
+        Direction::Rtl => CTWritingDirection::RightToLeft,
+    };
+    let setting = CTParagraphStyleSetting {
+        spec: CTParagraphStyleSpecifier::BaseWritingDirection,
+        valueSize: std::mem::size_of::<CTWritingDirection>(),
+        value: NonNull::from(&mut writing_direction).cast::<c_void>(),
+    };
+    // Safety: `setting` points to one valid entry; the value outlives the call.
+    unsafe { CTParagraphStyle::new(&setting, 1) }
+}
+
 /// Shape a line of text into positioned glyphs.
 ///
 /// `size_lpx` / `scale` parametrize the `FontHandle`s recorded on each glyph
 /// and each `CapturedFont` so the cache key convention matches the primary.
+///
+/// `forced_direction = Some(dir)` pins the CoreText base writing direction so an
+/// isolated, already-resolved level-run cannot be re-detected with a different
+/// base; `None` lets CoreText auto-detect (used by direction-agnostic callers).
 pub(crate) fn shape_line(
     ct_font: &CTFont,
     text: &str,
     metrics: &FontMetrics,
     size_lpx: f32,
     scale: f32,
+    forced_direction: Option<Direction>,
 ) -> Result<ShapeResult, TextError> {
     // Empty string guard
     if text.is_empty() {
@@ -160,19 +190,29 @@ pub(crate) fn shape_line(
             return Err(TextError::ShapingFailed("Failed to create CFString".into()));
         }
 
-        // Create attributes dictionary with font.
-        // Use kCFTypeDictionaryKeyCallBacks / kCFTypeDictionaryValueCallBacks so
-        // CF correctly retains/releases the CF-type key and value on its own.
+        // Create attributes dictionary with font (and, when a base direction is
+        // forced, a paragraph style pinning it). Use the CF-type key/value
+        // callbacks so CF retains/releases the CF-type entries on its own — the
+        // dict thus owns a strong reference to the paragraph style, which can
+        // then drop at the end of this scope.
         let font_key = kCTFontAttributeName as *const _ as *const c_void;
         let font_value = ct_font as *const CTFont as *const c_void;
-        let keys = [font_key];
-        let values = [font_value];
+        let mut keys = vec![font_key];
+        let mut values = vec![font_value];
+
+        let para_style = forced_direction.map(forced_paragraph_style);
+        if let Some(style) = &para_style {
+            let para_key = kCTParagraphStyleAttributeName as *const _ as *const c_void;
+            let para_value = (&**style as *const CTParagraphStyle) as *const c_void;
+            keys.push(para_key);
+            values.push(para_value);
+        }
 
         let attrs = ScopedCf(CFDictionaryCreate(
             std::ptr::null(),
             keys.as_ptr(),
             values.as_ptr(),
-            1,
+            keys.len() as CFIndex,
             &kCFTypeDictionaryKeyCallBacks as *const c_void,
             &kCFTypeDictionaryValueCallBacks as *const c_void,
         ));

@@ -87,6 +87,27 @@ pub trait TextBackend {
     /// advance/offset information for rendering.
     fn shape_line(&self, font: &Self::Font, text: &str) -> Result<ShapedLine, TextError>;
 
+    /// Shape one already-resolved bidi level-run, forcing its base direction.
+    ///
+    /// `text` is a single same-direction span; `direction` is its UAX #9
+    /// resolved direction. Platforms force this into the native shaper's
+    /// paragraph/base writing direction so it cannot re-detect a different base
+    /// for the isolated substring (e.g. a digit-only or space-only run resolved
+    /// in a wider RTL context). The default forwards to [`shape_line`] — correct
+    /// for backends whose shaping is direction-agnostic (the test mock) and for
+    /// strong-directional runs the native shaper auto-detects identically.
+    ///
+    /// [`shape_line`]: TextBackend::shape_line
+    fn shape_segment(
+        &self,
+        font: &Self::Font,
+        text: &str,
+        direction: crate::types::Direction,
+    ) -> Result<ShapedLine, TextError> {
+        let _ = direction;
+        self.shape_line(font, text)
+    }
+
     /// Rasterize a glyph to an alpha bitmap.
     ///
     /// # Arguments

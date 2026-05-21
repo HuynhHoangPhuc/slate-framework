@@ -19,6 +19,7 @@
 //! - DirectWrite (DIP-native) is 1:1 with logical pixels
 
 pub mod backend;
+pub(crate) mod bidi;
 pub mod bounds_cache;
 pub(crate) mod cluster;
 pub mod deferred_font;

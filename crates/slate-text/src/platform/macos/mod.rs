@@ -75,6 +75,39 @@ impl CoreTextBackend {
             handle,
         }
     }
+
+    /// Shape `text` and merge any substitute fonts CoreText chose into the
+    /// registry. `forced_direction` pins the CoreText base writing direction
+    /// (see [`shaping::shape_line`]); `None` lets CoreText auto-detect.
+    fn shape_with_direction(
+        &self,
+        font: &CoreTextFont,
+        text: &str,
+        forced_direction: Option<crate::types::Direction>,
+    ) -> Result<ShapedLine, TextError> {
+        let result = shaping::shape_line(
+            &font.ct_font,
+            text,
+            &font.metrics,
+            font.size_lpx,
+            font.scale,
+            forced_direction,
+        )?;
+        if !result.captured_fonts.is_empty() {
+            let mut reg = self.font_registry.borrow_mut();
+            for cf in result.captured_fonts {
+                reg.entry(cf.handle).or_insert_with(|| {
+                    Box::new(Self::build_substitute_font(
+                        cf.font,
+                        font.size_lpx,
+                        font.scale,
+                        cf.handle,
+                    ))
+                });
+            }
+        }
+        Ok(result.line)
+    }
 }
 
 impl Default for CoreTextBackend {
@@ -153,27 +186,16 @@ impl TextBackend for CoreTextBackend {
     }
 
     fn shape_line(&self, font: &Self::Font, text: &str) -> Result<ShapedLine, TextError> {
-        let result = shaping::shape_line(
-            &font.ct_font,
-            text,
-            &font.metrics,
-            font.size_lpx,
-            font.scale,
-        )?;
-        if !result.captured_fonts.is_empty() {
-            let mut reg = self.font_registry.borrow_mut();
-            for cf in result.captured_fonts {
-                reg.entry(cf.handle).or_insert_with(|| {
-                    Box::new(Self::build_substitute_font(
-                        cf.font,
-                        font.size_lpx,
-                        font.scale,
-                        cf.handle,
-                    ))
-                });
-            }
-        }
-        Ok(result.line)
+        self.shape_with_direction(font, text, None)
+    }
+
+    fn shape_segment(
+        &self,
+        font: &Self::Font,
+        text: &str,
+        direction: crate::types::Direction,
+    ) -> Result<ShapedLine, TextError> {
+        self.shape_with_direction(font, text, Some(direction))
     }
 
     fn font_for(&self, handle: FontHandle) -> Option<&Self::Font> {
