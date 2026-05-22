@@ -57,17 +57,62 @@ define_class!(
                 }
             }
 
-            // Cmd+key routing: bypass main-menu key-equivalent matching so
-            // Cmd+W/M/H/A/, all reach the view's keyDown: selector.
-            // Cmd+Q stays as terminate (system shortcut preserved).
+            // Cmd+key routing: this app installs no main menu, so the two
+            // system shortcuts that rely on a menu key-equivalent (Quit, the
+            // emoji/character palette) are handled explicitly here, and every
+            // other Cmd+combo is delivered straight to the first responder's
+            // keyDown:/keyUp: (the framework's TextField/TextArea own
+            // Cmd+C/V/X etc.).
             let ev_ty = event.r#type();
             if matches!(ev_ty, NSEventType::KeyDown | NSEventType::KeyUp) {
                 let flags = event.modifierFlags();
                 if flags.contains(NSEventModifierFlags::Command) {
                     let vk = event.keyCode();
-                    // kVK_ANSI_Q = 0x0C. Let main-menu handle Cmd+Q.
-                    if vk != 0x0C
-                        && let Some(window) = self.keyWindow()
+                    // kVK_ANSI_Q = 0x0C, kVK_Space = 0x31.
+                    let is_quit = vk == 0x0C;
+                    let is_char_palette =
+                        vk == 0x31 && flags.contains(NSEventModifierFlags::Control);
+
+                    if ev_ty == NSEventType::KeyDown && is_quit {
+                        // No menu Quit item exists to match Cmd+Q. Stop the run
+                        // loop directly (mirrors MacPlatform::quit) so app.run()
+                        // returns and Event::Exiting still fires — never
+                        // terminate:, which exit()s and skips clean shutdown.
+                        // stop: only takes effect on the next loop iteration, so
+                        // post a synthetic event to wake the loop immediately.
+                        self.stop(None);
+                        let wake = NSEvent::otherEventWithType_location_modifierFlags_timestamp_windowNumber_context_subtype_data1_data2(
+                            NSEventType::ApplicationDefined,
+                            NSPoint::new(0.0, 0.0),
+                            NSEventModifierFlags::empty(),
+                            0.0,
+                            0,
+                            None,
+                            0,
+                            0,
+                            0,
+                        );
+                        if let Some(wake) = wake {
+                            self.postEvent_atStart(&wake, true);
+                        }
+                        return;
+                    }
+
+                    if ev_ty == NSEventType::KeyDown && is_char_palette {
+                        // Cmd+Ctrl+Space → system emoji & symbols picker. The
+                        // first-responder routing below would otherwise swallow
+                        // it before AppKit's character-palette action runs.
+                        self.orderFrontCharacterPalette(None);
+                        return;
+                    }
+
+                    // Swallow the key-up partners of the two shortcuts above so
+                    // no stray event leaks to the responder.
+                    if is_quit || is_char_palette {
+                        return;
+                    }
+
+                    if let Some(window) = self.keyWindow()
                         && let Some(first_responder) = window.firstResponder()
                     {
                         // Send the key event directly to the first responder,
