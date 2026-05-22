@@ -351,8 +351,9 @@ pub struct CachedImeQuery {
 pub enum PendingImeOp {
     /// Synthetic commit. Inserts `text` at the focused element's caret,
     /// advances the caret, and clears the preedit. Does NOT run user
-    /// `on_ime_commit` handlers (re-entrancy contract — see phase-04 spec
-    /// step 16).
+    /// `on_ime_commit` handlers: this op is itself drained from within the
+    /// dispatch unwind, so re-entering the handler chain here would risk
+    /// re-entrant borrows of the same element state.
     Commit { window: WindowId, text: String },
 }
 
