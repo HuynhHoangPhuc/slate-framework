@@ -356,6 +356,34 @@ pub enum PendingImeOp {
     Commit { window: WindowId, text: String },
 }
 
+// ---------------------------------------------------------------------------
+// Display caret affinity
+// ---------------------------------------------------------------------------
+
+/// Caret affinity to use when resolving the display caret-x.
+///
+/// During an active IME composition the caret must bind [`Affinity::Downstream`]
+/// regardless of the stored seam affinity: a preedit splices new text at the
+/// caret, so the pre-composition Upstream/Downstream choice belongs to the
+/// committed caret, not the preedit-shifted display caret. Re-applying the stale
+/// value double-shifts the caret across an LTR↔RTL boundary. Outside composition
+/// the stored affinity (set by visual ←/→ motion as it crosses a seam) is
+/// authoritative.
+///
+/// Shared by the TextField and TextArea paint paths so the invariant lives in
+/// one place — see [`crate::elements::text_field`] and
+/// [`crate::elements::text_area`].
+pub(crate) fn caret_affinity_for_display(
+    has_preedit: bool,
+    stored: slate_text::Affinity,
+) -> slate_text::Affinity {
+    if has_preedit {
+        slate_text::Affinity::Downstream
+    } else {
+        stored
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -527,6 +555,31 @@ mod tests {
             restored.map(|s| s.text),
             Some("init".to_string()),
             "second seed must not reset a stack with recorded edits"
+        );
+    }
+
+    #[test]
+    fn preedit_forces_downstream_affinity() {
+        use slate_text::Affinity;
+        // Outside composition the stored seam affinity is authoritative.
+        assert_eq!(
+            caret_affinity_for_display(false, Affinity::Upstream),
+            Affinity::Upstream
+        );
+        assert_eq!(
+            caret_affinity_for_display(false, Affinity::Downstream),
+            Affinity::Downstream
+        );
+        // During composition the caret binds Downstream regardless of the stored
+        // value — pins the fix for the seam double-shift, so a future refactor
+        // that threads cached affinity through preedit can't silently regress it.
+        assert_eq!(
+            caret_affinity_for_display(true, Affinity::Upstream),
+            Affinity::Downstream
+        );
+        assert_eq!(
+            caret_affinity_for_display(true, Affinity::Downstream),
+            Affinity::Downstream
         );
     }
 

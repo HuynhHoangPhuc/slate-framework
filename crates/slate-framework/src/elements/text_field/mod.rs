@@ -384,11 +384,8 @@ impl Element for TextField {
         // affinity; selection/preedit edges use the default-downstream `pixel_x`.
         // During composition the stored affinity belongs to the committed caret,
         // not the preedit-shifted `display_caret`, so fall back to downstream.
-        let effective_affinity = if preedit_snapshot.is_some() {
-            slate_text::Affinity::Downstream
-        } else {
-            caret_affinity
-        };
+        let effective_affinity =
+            crate::ime::caret_affinity_for_display(preedit_snapshot.is_some(), caret_affinity);
         let caret_pixel_x = if shaped.runs.is_empty() {
             pixel_x(display_caret)
         } else {

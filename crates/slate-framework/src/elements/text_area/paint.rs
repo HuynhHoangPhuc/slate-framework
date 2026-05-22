@@ -207,11 +207,7 @@ pub(super) fn paint(
     //    Uses `display_caret` so the caret sits inside the composed text.
     // During composition the stored affinity belongs to the committed caret,
     // not the preedit-shifted `display_caret`, so fall back to downstream.
-    let effective_affinity = if has_preedit {
-        slate_text::Affinity::Downstream
-    } else {
-        caret_affinity
-    };
+    let effective_affinity = crate::ime::caret_affinity_for_display(has_preedit, caret_affinity);
     let (_, caret_x, caret_y) =
         layout.caret_position_with_affinity(display_caret, effective_affinity);
 
