@@ -139,6 +139,59 @@ fn dispatch_ime_preedit_routes_to_focused_element_with_stop_propagation() {
     );
 }
 
+#[test]
+fn dispatch_empty_preedit_clears_active_preedit() {
+    // A composition deleted back to empty arrives as an empty-text preedit
+    // event. The element handler (mirroring production TextField) must clear
+    // the stored preedit so the last typed glyph does not stick on screen.
+    let state = make_state();
+    let elem_id = id(3);
+    state.register_focusable_for_test(entry(3));
+    state.set_focus_for_test(elem_id);
+
+    let ime_rc = state.register_ime_state_for_test(elem_id);
+
+    // Element handler mirrors `text_field::handlers::build_ime_preedit_handler`:
+    // empty text clears, non-empty text sets.
+    state.install_element_ime_handlers_for_test(
+        elem_id,
+        ImeHandlers {
+            on_ime_preedit: Some(Arc::new(move |e: &ImePreeditEvent, cx: &mut EventCtx| {
+                let Some(state_rc) = cx.ime_state(elem_id) else {
+                    return;
+                };
+                let mut s = state_rc.borrow_mut();
+                if e.text.is_empty() {
+                    s.preedit = None;
+                } else {
+                    s.preedit = Some(Preedit {
+                        text: e.text.clone(),
+                        cursor_byte_offset: e.cursor_byte_offset,
+                        selection: e.selection.clone(),
+                    });
+                }
+                cx.stop_propagation();
+            })),
+            ..Default::default()
+        },
+    );
+
+    let window = state.window_id_for_test();
+
+    // Type one glyph, then delete it back to empty.
+    state.dispatch_ime_preedit_for_test(window, "ぱ".into(), 3, None);
+    assert!(
+        ime_rc.borrow().preedit.is_some(),
+        "preedit must be set after first composition glyph"
+    );
+
+    state.dispatch_ime_preedit_for_test(window, String::new(), 0, None);
+    assert!(
+        ime_rc.borrow().preedit.is_none(),
+        "empty preedit must clear the stored composition — no glyph may stick"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Commit — empty vs. non-empty text
 // ---------------------------------------------------------------------------

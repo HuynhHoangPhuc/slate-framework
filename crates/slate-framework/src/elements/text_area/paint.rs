@@ -77,12 +77,10 @@ pub(super) fn paint(
             Ok(doc) => {
                 display_layout = Rc::new(slate_text::wrap_document(&doc, style.width));
                 // `compose_display` floors the caret to a char boundary ≤ caret;
-                // recompute the same anchor so the span lines up with the splice.
-                // `cursor_byte_offset` arrives raw from the platform IME event —
-                // clamp it into the composed text so a misreporting backend can't
-                // push the caret past the run.
+                // recompute the same anchor so the span lines up with the splice,
+                // then bind the caret to the IME cursor inside the preedit.
                 let at = floor_char_boundary(&committed_text, caret_byte);
-                display_caret = at + p.cursor_byte_offset.min(p.text.len());
+                display_caret = crate::ime::caret_display_byte(at, Some(p));
                 preedit_span = Some((at, p.selection.clone()));
             }
             Err(e) => {

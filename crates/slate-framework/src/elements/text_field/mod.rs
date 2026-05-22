@@ -386,10 +386,16 @@ impl Element for TextField {
         // not the preedit-shifted `display_caret`, so fall back to downstream.
         let effective_affinity =
             crate::ime::caret_affinity_for_display(preedit_snapshot.is_some(), caret_affinity);
+        // The painted caret binds to the IME composition cursor *inside* the
+        // preedit, not the start of the composed run. (The preedit
+        // underline/selection overlays below keep using `display_caret`, the
+        // run's start.)
+        let caret_display_byte =
+            crate::ime::caret_display_byte(display_caret, preedit_snapshot.as_ref());
         let caret_pixel_x = if shaped.runs.is_empty() {
-            pixel_x(display_caret)
+            pixel_x(caret_display_byte)
         } else {
-            slate_text::run_caret_x_at_affinity(&shaped, display_caret, effective_affinity)
+            slate_text::run_caret_x_at_affinity(&shaped, caret_display_byte, effective_affinity)
         };
 
         // 1. User selection rect (gated). Rendered behind glyphs so glyphs

@@ -686,24 +686,41 @@ impl WinWindowInner {
                             cursor_byte_offset,
                             selection,
                         });
+                    } else {
+                        // GCS_COMPSTR is flagged but the IMM reports a zero-length
+                        // string: the composition was deleted back to empty (the
+                        // user backspaced the last char) while the session stays
+                        // open. `read_composition_string_utf8` returns None for
+                        // length 0, so emit an explicit empty preedit — otherwise
+                        // the framework keeps painting the last non-empty
+                        // composition, which sticks on screen and blocks further
+                        // deletion.
+                        dispatch_event(Event::ImePreedit {
+                            window: self.id,
+                            text: String::new(),
+                            cursor_byte_offset: 0,
+                            selection: None,
+                        });
                     }
-                    // Query delegate for caret rect; convert screen → client (physical px under PMv2).
+                    // Anchor the candidate window at the caret. The caret rect is
+                    // already in client-relative physical pixels (the element
+                    // paints the caret in scene/client space, and under
+                    // Per-Monitor-v2 awareness those are physical px), and
+                    // ImmSetCompositionWindow's COMPOSITIONFORM expects client
+                    // coordinates — so feed the rect through unchanged. (No
+                    // ScreenToClient: the rect was never in screen space, and
+                    // subtracting the window origin again would fling the
+                    // candidate window to a screen corner.)
                     let weak = self.ime_delegate.borrow().clone();
                     if let Some(weak) = weak
                         && let Some(strong) = weak.upgrade()
                         && let Some(rect) = strong.ime_caret_rect(self.id)
                     {
-                        let mut pt = POINT {
-                            x: rect.x,
-                            y: rect.y,
-                        };
-                        // SAFETY: hwnd is valid for the message lifetime; pt is owned.
-                        let _ = unsafe { ScreenToClient(hwnd, &mut pt) };
                         let client_rect = RECT {
-                            left: pt.x,
-                            top: pt.y,
-                            right: pt.x + rect.width as i32,
-                            bottom: pt.y + rect.height as i32,
+                            left: rect.x,
+                            top: rect.y,
+                            right: rect.x + rect.width as i32,
+                            bottom: rect.y + rect.height as i32,
                         };
                         set_composition_window(imc, client_rect);
                     }
@@ -719,6 +736,17 @@ impl WinWindowInner {
             }
             WM_IME_ENDCOMPOSITION => {
                 self.composition_active.set(false);
+                // Clear any lingering preedit: a cancelled composition ends
+                // without a final empty GCS_COMPSTR, and no element wires an
+                // `on_ime_disabled` handler, so the overlay would otherwise stay
+                // painted. A preceding commit already cleared it, making this a
+                // no-op there.
+                dispatch_event(Event::ImePreedit {
+                    window: self.id,
+                    text: String::new(),
+                    cursor_byte_offset: 0,
+                    selection: None,
+                });
                 dispatch_event(Event::ImeDisabled { window: self.id });
                 // SAFETY: default proc must run for IMM cleanup.
                 unsafe { DefWindowProcW(hwnd, msg, _wparam, lparam) }

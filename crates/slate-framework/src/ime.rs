@@ -384,6 +384,29 @@ pub(crate) fn caret_affinity_for_display(
     }
 }
 
+/// Byte index the caret is painted at, given the display caret (the committed
+/// caret, or the preedit's start byte during composition) and the active
+/// preedit.
+///
+/// During composition the visible caret binds to the IME cursor *inside* the
+/// preedit — where the next keystroke lands — not to the start of the composed
+/// run. Without this the caret stays pinned at the composition start for the
+/// whole session and only jumps once it commits, so it never visibly advances
+/// as you type (most visible with multi-glyph CJK/Vietnamese composition). The
+/// offset is clamped into the preedit text so a misreporting backend can't push
+/// the caret past the composed run. Outside composition this is just the
+/// display caret.
+///
+/// Shared by the TextField and TextArea paint paths so the invariant lives in
+/// one place — see [`crate::elements::text_field`] and
+/// [`crate::elements::text_area`].
+pub(crate) fn caret_display_byte(display_caret: usize, preedit: Option<&Preedit>) -> usize {
+    match preedit {
+        Some(p) => display_caret + p.cursor_byte_offset.min(p.text.len()),
+        None => display_caret,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -581,6 +604,39 @@ mod tests {
             caret_affinity_for_display(true, Affinity::Downstream),
             Affinity::Downstream
         );
+    }
+
+    #[test]
+    fn caret_display_byte_tracks_preedit_cursor() {
+        // Outside composition the caret sits at the display caret unchanged.
+        assert_eq!(caret_display_byte(7, None), 7);
+
+        // During composition the caret advances by the IME cursor offset, so it
+        // moves through the composed run as you type instead of pinning at the
+        // start.
+        let p = Preedit {
+            text: "かんじ".to_string(), // 9 bytes
+            cursor_byte_offset: 6,
+            selection: None,
+        };
+        assert_eq!(caret_display_byte(4, Some(&p)), 10);
+
+        // A backend over-reporting the cursor offset is clamped to the end of
+        // the composed text — never past it.
+        let over = Preedit {
+            text: "ab".to_string(), // 2 bytes
+            cursor_byte_offset: 99,
+            selection: None,
+        };
+        assert_eq!(caret_display_byte(4, Some(&over)), 6);
+
+        // Zero offset binds to the composition start (display caret unchanged).
+        let zero = Preedit {
+            text: "xyz".to_string(),
+            cursor_byte_offset: 0,
+            selection: None,
+        };
+        assert_eq!(caret_display_byte(4, Some(&zero)), 4);
     }
 
     #[test]
