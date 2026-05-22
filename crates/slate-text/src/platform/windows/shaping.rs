@@ -373,6 +373,43 @@ pub(crate) fn shape_line(
             .map_err(|e| TextError::ShapingFailed(format!("SetReadingDirection: {e}")))?;
     }
 
+    // An RTL run anchors its glyph origins at the layout box's RIGHT edge. With
+    // the f32::MAX max-width above, that edge sits at ~f32::MAX, where the float
+    // grid is so coarse that adding a glyph advance is a no-op (every glyph
+    // collapses onto the same origin) and the origins themselves overflow to
+    // infinity downstream — RTL text then paints far off-screen (blank). LTR is
+    // unaffected because it anchors at the left edge (0) regardless of width.
+    //
+    // Measure the line's natural width and pin the box to it, so the right edge
+    // is a small finite coordinate where per-glyph advances are preserved and
+    // origins stay word-origin-relative — the contract `assemble_visual_line`
+    // relies on (it shifts each segment's glyphs by the running pen). A 1 lpx
+    // margin absorbs sub-DIP rounding so the trailing glyph never wraps.
+    let mut text_metrics = windows::Win32::Graphics::DirectWrite::DWRITE_TEXT_METRICS::default();
+    unsafe { layout.GetMetrics(&mut text_metrics) }
+        .map_err(|e| TextError::ShapingFailed(format!("GetMetrics: {e}")))?;
+    // `width` excludes trailing whitespace; `widthIncludingTrailingWhitespace`
+    // covers a space-only segment. RTL reports the real content in `width` while
+    // `widthIncludingTrailingWhitespace` comes back 0, so take the max to cover
+    // both: pure-space LTR runs and RTL content runs alike.
+    let measured = text_metrics
+        .width
+        .max(text_metrics.widthIncludingTrailingWhitespace);
+    // A pure-whitespace RTL segment (e.g. the space between two Arabic words —
+    // UAX #9 gives it an RTL level) reports 0 in BOTH metric fields, which would
+    // leave the f32::MAX box in place and collapse a multi-space run onto one
+    // origin. Fall back to a finite bound that comfortably exceeds any
+    // whitespace run (each space ≪ one em) so the box stays small enough to
+    // preserve per-glyph advances yet never wraps the content. Always set a
+    // finite max width so the RTL right-edge anchor can never reach f32::MAX.
+    let box_width = if measured.is_finite() && measured > 0.0 {
+        measured
+    } else {
+        (wide.len() as f32 + 1.0) * size_lpx
+    };
+    unsafe { layout.SetMaxWidth(box_width + 1.0) }
+        .map_err(|e| TextError::ShapingFailed(format!("SetMaxWidth: {e}")))?;
+
     // Rc<RefCell> shared state for glyph + face accumulation
     let glyphs_store: GlyphStore = Rc::new(RefCell::new(Vec::new()));
     let faces_store: FaceStore = Rc::new(RefCell::new(Vec::new()));
@@ -390,8 +427,27 @@ pub(crate) fn shape_line(
     unsafe { layout.Draw(None, &renderer_iface, 0.0, 0.0) }
         .map_err(|e| TextError::ShapingFailed(format!("IDWriteTextLayout::Draw: {e}")))?;
 
-    let glyphs: Vec<ShapedGlyph> = glyphs_store.borrow_mut().drain(..).collect();
+    let mut glyphs: Vec<ShapedGlyph> = glyphs_store.borrow_mut().drain(..).collect();
     let captured_faces: Vec<CapturedFace> = faces_store.borrow_mut().drain(..).collect();
+
+    // Anchor the segment to a word-origin-relative pen (min x = 0). LTR already
+    // arrives at 0; an RTL run arrives offset by the (now finite) box width
+    // because it anchors at the right edge. `assemble_visual_line` shifts each
+    // segment by the running line pen and so requires 0-based glyph origins —
+    // subtract the minimum x to satisfy that contract for every direction.
+    if let Some(min_x) = glyphs
+        .iter()
+        .map(|g| g.position_lpx[0])
+        .fold(None, |acc: Option<f32>, x| {
+            Some(acc.map_or(x, |a| a.min(x)))
+        })
+        && min_x != 0.0
+    {
+        for g in &mut glyphs {
+            g.position_lpx[0] -= min_x;
+        }
+    }
+
     let width_lpx = glyphs.iter().map(|g| g.x_advance_lpx).sum();
 
     Ok(ShapeResult {

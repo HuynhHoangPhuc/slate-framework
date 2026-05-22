@@ -43,6 +43,32 @@ fn shape(text: &str) -> ShapedLine {
     shape_line_bidi(&backend, &font, text).expect("shape_line_bidi")
 }
 
+/// Shape a single segment with a forced RTL direction — the per-segment path
+/// `shape_words_in` uses (including for whitespace runs between RTL words).
+#[cfg(target_os = "macos")]
+fn shape_rtl_segment(text: &str) -> ShapedLine {
+    use slate_text::CoreTextBackend;
+    let mut backend = CoreTextBackend::new().expect("CoreText backend init");
+    let font = backend
+        .load_font_from_bytes(TEST_FONT, 16.0, 2.0)
+        .expect("load bundled DejaVu Sans");
+    backend
+        .shape_segment(&font, text, Direction::Rtl)
+        .expect("shape_segment")
+}
+
+#[cfg(target_os = "windows")]
+fn shape_rtl_segment(text: &str) -> ShapedLine {
+    use slate_text::DirectWriteBackend;
+    let mut backend = DirectWriteBackend::new().expect("DirectWrite backend init");
+    let font = backend
+        .load_font_from_bytes(TEST_FONT, 16.0, 2.0)
+        .expect("load bundled DejaVu Sans");
+    backend
+        .shape_segment(&font, text, Direction::Rtl)
+        .expect("shape_segment")
+}
+
 /// Walk `visual_caret_step` rightward from the visual-left edge, returning the
 /// ordered `(byte, affinity, x)` stops actually visited. Panics if the walk
 /// fails to terminate (a stuck stop would loop forever).
@@ -110,6 +136,67 @@ fn arabic_line_has_rtl_run_and_screen_monotonic_caret() {
         None,
         "no stop past the visual right edge"
     );
+}
+
+#[test]
+fn rtl_glyph_paint_positions_are_finite_and_word_origin_relative() {
+    // Regression: the DirectWrite path created its layout with an f32::MAX
+    // max-width. An RTL run anchors at the box's RIGHT edge, so glyph origins
+    // came back at ~f32::MAX — where adding an advance is a float no-op (all
+    // glyphs collapse onto one origin) and the paint rect overflowed to
+    // infinity, rendering Arabic off-screen (blank) while caret math (which
+    // uses advances, not positions) still passed. This pins the paint contract
+    // `assemble_visual_line` depends on: every glyph's x is finite, the run is
+    // word-origin-relative (min x == 0), positions are non-decreasing, and the
+    // span stays within the advance-sum width. Font-portable (no glyph ids).
+    let line = shape("مرحبا");
+    assert!(!line.glyphs.is_empty(), "expected glyphs for Arabic input");
+
+    let xs: Vec<f32> = line.glyphs.iter().map(|g| g.position_lpx[0]).collect();
+    for &x in &xs {
+        assert!(x.is_finite(), "glyph x must be finite, got {x} in {xs:?}");
+    }
+    let min_x = xs.iter().copied().fold(f32::INFINITY, f32::min);
+    assert!(
+        min_x.abs() < 0.05,
+        "RTL run must be word-origin-relative (min x ≈ 0), got {min_x} in {xs:?}"
+    );
+    for w in xs.windows(2) {
+        assert!(
+            w[1] >= w[0] - 0.05,
+            "glyph paint x must be non-decreasing in array order, got {xs:?}"
+        );
+    }
+    let max_x = xs.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    assert!(
+        max_x <= line.width_lpx + 0.5,
+        "glyph span ({max_x}) must stay within the run width ({})",
+        line.width_lpx
+    );
+}
+
+#[test]
+fn rtl_whitespace_segment_glyphs_stay_finite_and_distinct() {
+    // A pure-whitespace RTL segment (the space between Arabic words carries an
+    // RTL level under UAX #9) reports a 0 natural width in DirectWrite's metrics.
+    // Without a finite max-width fallback the layout keeps its f32::MAX box, the
+    // space glyphs anchor at ~f32::MAX, their advances are swallowed by the
+    // float grid, and post-Draw normalization then collapses them onto a single
+    // origin. Drive the per-segment shaper directly (the path `shape_words_in`
+    // takes for a space run) and assert the glyphs stay finite and spread.
+    let line = shape_rtl_segment("  "); // two spaces, forced RTL
+    assert!(!line.glyphs.is_empty(), "expected glyphs for the space run");
+    let xs: Vec<f32> = line.glyphs.iter().map(|g| g.position_lpx[0]).collect();
+    for &x in &xs {
+        assert!(x.is_finite(), "space-glyph x must be finite, got {x} in {xs:?}");
+    }
+    if xs.len() >= 2 {
+        // Distinct origins: a second space must not sit on top of the first.
+        assert!(
+            (xs[1] - xs[0]).abs() > 0.01,
+            "multi-space RTL run collapsed onto one origin: {xs:?}"
+        );
+    }
 }
 
 #[test]
