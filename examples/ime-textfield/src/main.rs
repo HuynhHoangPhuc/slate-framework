@@ -8,6 +8,9 @@
 //!   Notes-style undo history.
 //! - Drag-select with the mouse; the caret blinks at 530 ms while focused.
 //! - "You typed:" reactively echoes the bound `Signal<String>`.
+//! - A mixed LTR/RTL (English + Arabic) sample is preloaded: press ←/→ to walk
+//!   the caret across direction boundaries — it always moves the way you press,
+//!   not by logical byte order — and Home/End jump to the visual line edges.
 //!
 //! Run: `cargo run -p ime-textfield`
 
@@ -26,6 +29,10 @@ const SHORTCUTS_HINT: &str = "Shortcuts: \u{2318}C copy \u{00b7} \u{2318}X cut \
 const SHORTCUTS_HINT: &str = "Shortcuts: Ctrl+C copy \u{00b7} Ctrl+X cut \u{00b7} \
                               Ctrl+V paste \u{00b7} Ctrl+Z undo \u{00b7} Ctrl+Y redo \u{00b7} \
                               Shift+arrows select \u{00b7} drag to select";
+
+/// Preloaded mixed LTR/RTL content (English + Arabic) so visual caret motion,
+/// Home/End-to-visual-edge, and per-run selection are visible on launch.
+const RTL_SAMPLE: &str = "Hello مرحبا world";
 
 struct ImeDemo {
     value: Signal<String>,
@@ -79,6 +86,15 @@ impl View for ImeDemo {
             )
             .child(
                 Text::new(
+                    "BiDi: a mixed English + Arabic sample is preloaded · \
+                     ←/→ walk the caret across direction boundaries · \
+                     Home/End go to the visual line edges",
+                )
+                .font_size(12.0)
+                .color(Color::from_hex("#64748b").unwrap_or(Color::WHITE).into()),
+            )
+            .child(
+                Text::new(
                     "Switch IME — macOS: Ctrl+Space · Windows: Win+Space. \
                      Try Pinyin \"nihao\", Hiragana \"konnichiha\", Hangul \"annyeonghaseyo\".",
                 )
@@ -101,6 +117,6 @@ fn main() {
     };
 
     App::new(opts).run(|cx: &AppContext| ImeDemo {
-        value: Signal::new(cx.runtime(), String::new()),
+        value: Signal::new(cx.runtime(), RTL_SAMPLE.to_string()),
     });
 }

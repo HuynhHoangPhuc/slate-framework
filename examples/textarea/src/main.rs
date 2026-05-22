@@ -11,6 +11,9 @@
 //! - Cmd/Ctrl + Z undo, Shift+Z (macOS) / Y (Windows/Linux) redo.
 //! - Switch to a CJK IME and compose mid-document; the caret blinks while
 //!   focused. "You typed:" reactively echoes the bound `Signal<String>`.
+//! - A mixed LTR/RTL (English + Arabic) sample is preloaded: press ←/→ to walk
+//!   the caret across direction boundaries — it always moves the way you press,
+//!   not by logical byte order — and Home/End jump to the visual line edges.
 //!
 //! Run: `cargo run -p textarea`
 
@@ -30,6 +33,10 @@ const SHORTCUTS_HINT: &str = "Shortcuts: Ctrl+C copy \u{00b7} Ctrl+X cut \u{00b7
                               Ctrl+V paste \u{00b7} Ctrl+Z undo \u{00b7} Ctrl+Y redo \u{00b7} \
                               Shift+arrows select \u{00b7} double=word \u{00b7} triple=line \u{00b7} \
                               drag to select";
+
+/// Preloaded mixed LTR/RTL content (English + Arabic) so visual caret motion,
+/// Home/End-to-visual-edge, and per-run selection are visible on launch.
+const RTL_SAMPLE: &str = "Hello مرحبا world\nMixed العربية and English text\nصباح الخير";
 
 struct TextAreaDemo {
     value: Signal<String>,
@@ -88,6 +95,15 @@ impl View for TextAreaDemo {
             )
             .child(
                 Text::new(
+                    "BiDi: a mixed English + Arabic sample is preloaded \u{00b7} \
+                     \u{2190}/\u{2192} walk the caret across direction boundaries \u{00b7} \
+                     Home/End go to the visual line edges",
+                )
+                .font_size(12.0)
+                .color(Color::from_hex("#64748b").unwrap_or(Color::WHITE).into()),
+            )
+            .child(
+                Text::new(
                     "Switch IME — macOS: Ctrl+Space \u{00b7} Windows: Win+Space. \
                      Try Pinyin \"nihao\", Hiragana \"konnichiha\", Hangul \"annyeonghaseyo\".",
                 )
@@ -110,6 +126,6 @@ fn main() {
     };
 
     App::new(opts).run(|cx: &AppContext| TextAreaDemo {
-        value: Signal::new(cx.runtime(), String::new()),
+        value: Signal::new(cx.runtime(), RTL_SAMPLE.to_string()),
     });
 }
