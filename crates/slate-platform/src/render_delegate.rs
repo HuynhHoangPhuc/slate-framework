@@ -70,13 +70,13 @@ impl From<PhysicalSize> for (u32, u32) {
     }
 }
 
-/// Physical pixel rectangle in screen coordinates.
+/// Physical pixel rectangle.
 ///
 /// Used by the IME delegate query channel ([`WindowImeDelegate::ime_caret_rect`])
 /// to report the caret position to the OS for candidate-window placement.
-/// Origin is top-left; coordinates are physical pixels in **screen space**
-/// (not window-relative). Platform impls perform any final OS-specific
-/// conversions (Y-flip on macOS, ScreenToClient on Windows).
+/// Origin is top-left; coordinates are **window-client-relative** physical
+/// pixels. Platform impls convert to the OS's expected space (macOS → screen
+/// via `convertRectToScreen:`; Windows → client coords as-is).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
 pub struct PhysicalRect {
     pub x: i32,
@@ -183,8 +183,9 @@ pub trait WindowRenderDelegate {
 /// only, from inside OS query callbacks during composition. Matches
 /// [`WindowRenderDelegate`] threading.
 pub trait WindowImeDelegate {
-    /// Screen-coord physical-pixel rect of the active caret. The OS uses
-    /// this to position the candidate / suggestion window.
+    /// Window-client-relative physical-pixel rect of the active caret; the
+    /// platform impl converts it to the OS's expected space. The OS uses this
+    /// to position the candidate / suggestion window.
     ///
     /// Returns `None` when no focused element is IME-capable, or when
     /// the cache has not been published yet (pre-first-paint).

@@ -85,7 +85,7 @@ impl Default for BlinkState {
 /// composition.
 ///
 /// Default constructs an empty state (no preedit, caret 0, zero rect). The
-/// `caret_screen_rect` is updated by the host element during paint and at the
+/// `caret_client_rect` is updated by the host element during paint and at the
 /// end of `dispatch_ime_preedit`; the cached query path reads from it.
 #[derive(Clone, Debug, Default)]
 pub struct ImeState {
@@ -110,9 +110,11 @@ pub struct ImeState {
     pub selection_anchor: Option<usize>,
     /// Active composition, if any. `None` outside of IME sessions.
     pub preedit: Option<Preedit>,
-    /// Screen-coord physical-pixel rect of the caret. Updated by the element
-    /// during paint; consumed by the cache republish path.
-    pub caret_screen_rect: PhysicalRect,
+    /// Window-client-relative physical-pixel rect of the caret, top-left
+    /// origin. Updated by the element during paint; consumed by the cache
+    /// republish path. Platform consumers convert to the OS's expected space
+    /// (macOS → screen; Windows → client coords as-is).
+    pub caret_client_rect: PhysicalRect,
     // ----- TextField paint cache + interaction state (NOT IME contract) -----
     /// Most recent shaped line, cached during paint so that mouse handlers can
     /// invert pixel-x to byte offset without re-shaping (the dispatch path has
@@ -326,8 +328,9 @@ impl std::fmt::Debug for ImeRegistry {
 /// All fields are `None` when no element claims IME this frame.
 #[derive(Clone, Debug, Default)]
 pub struct CachedImeQuery {
-    /// Caret rect in screen-space physical pixels.
-    pub caret_screen_rect: Option<PhysicalRect>,
+    /// Caret rect in window-client-relative physical pixels (top-left origin);
+    /// platform consumers convert to the OS's expected space.
+    pub caret_client_rect: Option<PhysicalRect>,
     /// Active composition byte range, if any.
     pub marked_range: Option<Range<usize>>,
     /// Current selection (caret-only collapses to empty range at caret).

@@ -300,7 +300,7 @@ impl<'a> PrepaintCtx<'a> {
 
     /// Mark `id` as ime-capable for this frame and ensure an [`ImeState`]
     /// entry exists. Returns the shared `Rc<RefCell<_>>` so the caller can
-    /// keep a clone for its paint-time `caret_screen_rect` update.
+    /// keep a clone for its paint-time `caret_client_rect` update.
     ///
     /// [`ImeState`]: crate::ime::ImeState
     pub(crate) fn register_ime_state(
@@ -449,7 +449,7 @@ pub struct PaintCtx<'a> {
     /// Display scale factor.
     pub scale_factor: f64,
     /// Per-frame IME state registry. Elements use this in `paint` to update
-    /// their cached `caret_screen_rect` so the published `CachedImeQuery`
+    /// their cached `caret_client_rect` so the published `CachedImeQuery`
     /// reflects the freshly-painted caret position. Wired here in Phase 9c;
     /// first consumer is the TextField element added in Phase 5.
     #[allow(dead_code)]

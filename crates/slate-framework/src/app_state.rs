@@ -1147,7 +1147,7 @@ impl<V: View> AppState<V> {
             root.paint(root_bounds, &mut cx);
 
             // Phase 9c: refresh the IME query cache after every paint so the
-            // platform delegate sees the freshly-painted `caret_screen_rect`.
+            // platform delegate sees the freshly-painted `caret_client_rect`.
             // NLL drops `cx`'s borrows here since it's not used past this point.
             self.republish_ime_cache();
 
@@ -2084,7 +2084,7 @@ impl<V: View> AppState<V> {
         if let Some(state_rc) = entry
             && let Ok(state) = state_rc.try_borrow()
         {
-            snap.caret_screen_rect = Some(state.caret_screen_rect);
+            snap.caret_client_rect = Some(state.caret_client_rect);
             snap.marked_range = state.answer_marked_range();
             snap.selected_range = state.answer_selected_range();
 
@@ -2610,7 +2610,7 @@ impl<V: View> WindowRenderDelegate for AppState<V> {
 
 impl<V: View> WindowImeDelegate for AppState<V> {
     fn ime_caret_rect(&self, _window_id: WindowId) -> Option<PhysicalRect> {
-        self.cached_ime_query.borrow().caret_screen_rect
+        self.cached_ime_query.borrow().caret_client_rect
     }
 
     fn ime_text(&self, _window_id: WindowId, range: std::ops::Range<usize>) -> Option<String> {

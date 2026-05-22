@@ -16,6 +16,7 @@
 mod display_link;
 mod keymap;
 mod platform;
+mod text_offset;
 mod view;
 mod view_ime;
 mod window;

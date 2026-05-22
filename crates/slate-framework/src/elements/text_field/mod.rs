@@ -324,7 +324,7 @@ impl Element for TextField {
         // Snapshot ImeState into owned locals. The borrow is released before
         // `shape_line` (which is fallible and may log) and before the
         // `try_borrow_mut` at the end of paint() that updates
-        // `caret_screen_rect` — keeping the registry borrow scope narrow.
+        // `caret_client_rect` — keeping the registry borrow scope narrow.
         let (committed_text, caret_byte, caret_affinity, preedit_snapshot, selection_anchor) = {
             match cx.ime_registry.borrow().get(element_id) {
                 Some(rc) => {
@@ -551,18 +551,19 @@ impl Element for TextField {
             });
         }
 
-        // Update ImeState.caret_screen_rect for OS IME query channel AND cache
+        // Update ImeState.caret_client_rect for OS IME query channel AND cache
         // the just-shaped line + paint origin so the mouse handlers can compute
         // click-to-byte on the next frame. Folding both writes into a single
         // borrow keeps the registry borrow scope narrow and matches the
         // try_borrow_mut re-entrancy guard already in place.
         // `try_borrow_mut` skips silently on re-entrancy (handler re-entering paint).
-        // Scene-space coordinates are lpx; convert to physical here since IME
-        // delegates report screen-space physical pixels to the OS.
+        // Scene-space coordinates are lpx (window-client-relative); convert to
+        // physical here. The rect stays client-relative — platform delegates
+        // convert to the OS's expected space (macOS → screen; Windows as-is).
         if let Some(state_rc) = cx.ime_registry.borrow().get(element_id)
             && let Ok(mut state) = state_rc.try_borrow_mut()
         {
-            state.caret_screen_rect = slate_platform::PhysicalRect::from_lpx_rect(
+            state.caret_client_rect = slate_platform::PhysicalRect::from_lpx_rect(
                 bounds.origin.x + caret_pixel_x,
                 bounds.origin.y,
                 1.0,
