@@ -769,6 +769,64 @@ mod tests {
     }
 
     #[test]
+    fn seam_collapse_threshold_holds_at_realistic_dpi() {
+        // The 0.05 lpx tolerance must still merge a true seam coincidence — and
+        // still refuse to merge genuinely distinct stops — at the x magnitudes a
+        // 2× / ~192-DPI display produces (x ≈ 300), where the original
+        // `f32::EPSILON` test silently stopped firing: one ULP near x=300 is
+        // ≈3e-5, dwarfing EPSILON ≈1.2e-7, so coincident-but-rounded stops never
+        // collapsed and the caret double-stepped at the seam.
+
+        // (a) Real LTR→RTL seam at x ≈ 300: "ab" LTR scaled to width 300, then a
+        // small RTL run. The LTR-end stop and the RTL run's leftmost stop both
+        // land at x = 300 and collapse to one, exactly as at small magnitudes.
+        let mixed = run_line(
+            vec![
+                dglyph(0, 150.0, Direction::Ltr),
+                dglyph(1, 150.0, Direction::Ltr),
+                dglyph(4, 7.0, Direction::Rtl),
+                dglyph(2, 8.0, Direction::Rtl),
+            ],
+            vec![run(0..2, Direction::Ltr), run(2..6, Direction::Rtl)],
+        );
+        // Six raw stops; the duplicate seam pair at x=300 collapses to five.
+        assert_eq!(visual_caret_stops(&mixed).len(), 5);
+        // The dropped duplicate's byte stays reachable (byte 2 lives at the RTL
+        // right edge); stepping right from byte 1 lands on the kept seam stop.
+        assert_eq!(
+            visual_caret_step(&mixed, 1, Affinity::Downstream, true),
+            Some((6, Affinity::Upstream))
+        );
+
+        // (b) Near-threshold pair at x ≈ 300: two LTR stops 0.03 lpx apart (below
+        // 0.05) merge. 0.03 is ~250000× f32::EPSILON, so an EPSILON check would
+        // wrongly keep both — this pins the tolerance as deliberately sub-pixel.
+        let near = run_line(
+            vec![
+                dglyph(0, 150.0, Direction::Ltr),
+                dglyph(1, 150.0, Direction::Ltr),
+                dglyph(2, 0.03, Direction::Ltr),
+            ],
+            vec![run(0..3, Direction::Ltr)],
+        );
+        // Stops at x = 0, 150, 300, 300.03 → last pair (Δ0.03 < 0.05) collapses.
+        assert_eq!(visual_caret_stops(&near).len(), 3);
+
+        // (c) A real glyph advance apart (Δ7 ≫ 0.05) at x ≈ 300 must NOT merge —
+        // the tolerance sits far below one logical pixel, so distinct stops survive.
+        let distinct = run_line(
+            vec![
+                dglyph(0, 150.0, Direction::Ltr),
+                dglyph(1, 150.0, Direction::Ltr),
+                dglyph(2, 7.0, Direction::Ltr),
+            ],
+            vec![run(0..3, Direction::Ltr)],
+        );
+        // Stops at x = 0, 150, 300, 307 → all four kept.
+        assert_eq!(visual_caret_stops(&distinct).len(), 4);
+    }
+
+    #[test]
     fn selection_rects_split_at_direction_boundary() {
         // "ab" LTR (x 0..11) then "אב" RTL (x 11..26). Selecting bytes [1,4)
         // covers "b" (LTR, x 5..11) and the first logical RTL char (bytes 2..4),
