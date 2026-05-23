@@ -315,6 +315,12 @@ impl MetalView {
     /// The `_range` arg (UTF-16 char range the IME asks about) is ignored: we
     /// always return the single tracked caret rect. Honoring sub-ranges would
     /// require mapping the range to per-glyph rects (multi-range support).
+    /// In practice every observed query from Pinyin / Hiragana / Telex came in
+    /// as either `len == 0` (caret anchor at `loc`) or `loc == NSNotFound`
+    /// (`NSIntegerMax`, Cocoa's "no specific range" sentinel — the IME wants
+    /// any fallback anchor it can get). Returning the cached caret rect is the
+    /// right answer for both shapes, so ignoring `_range` stays safe until an
+    /// IME starts asking for a genuine sub-range.
     ///
     /// **C11 (panel below the typed line):** the cached rect's `y_client`
     /// sits at the line top with `h_client = line_height`. After the in-view
