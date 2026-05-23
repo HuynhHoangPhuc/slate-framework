@@ -336,9 +336,12 @@ impl MetalView {
             return NSRect::ZERO;
         };
 
-        // A degenerate cached rect (no caret tracked yet) flips to the view's
-        // top-left after `physical_client_rect_to_view_nsrect`'s flip — return
-        // ZERO so AppKit falls back to its screen-default placement instead.
+        // Defense-in-depth: real producers always publish `Some(rect)` with
+        // non-zero dims (TextField/TextArea paint), and the framework reports
+        // `None` when nothing's been published (caught above). A true-zero
+        // `Some` here would flip to the view's top-left after the in-view
+        // flip — return ZERO so AppKit falls back to its screen-default
+        // placement instead of anchoring the panel at the top-left corner.
         if rect_phys.width == 0 && rect_phys.height == 0 {
             return NSRect::ZERO;
         }

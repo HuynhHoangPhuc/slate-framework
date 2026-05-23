@@ -217,7 +217,7 @@ fn dispatch_ime_commit_with_empty_text_only_clears_preedit() {
                 cursor_byte_offset: 3,
                 selection: None,
             }),
-            caret_client_rect: PhysicalRect::default(),
+            caret_client_rect: None,
             ..Default::default()
         },
     );
@@ -349,7 +349,7 @@ fn ime_caret_rect_returns_cached_value_when_focused() {
     state.set_ime_state_for_test(
         elem_id,
         ImeState {
-            caret_client_rect: expected,
+            caret_client_rect: Some(expected),
             ..Default::default()
         },
     );

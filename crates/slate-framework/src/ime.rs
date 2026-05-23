@@ -111,10 +111,13 @@ pub struct ImeState {
     /// Active composition, if any. `None` outside of IME sessions.
     pub preedit: Option<Preedit>,
     /// Window-client-relative physical-pixel rect of the caret, top-left
-    /// origin. Updated by the element during paint; consumed by the cache
-    /// republish path. Platform consumers convert to the OS's expected space
-    /// (macOS → screen; Windows → client coords as-is).
-    pub caret_client_rect: PhysicalRect,
+    /// origin. `None` means no element has published a caret rect this frame
+    /// (default state, or focused element forgot to publish during paint);
+    /// `Some(rect)` is the current caret. Updated by the element during paint
+    /// and consumed by the cache republish path. Platform consumers convert
+    /// to the OS's expected space (macOS → screen; Windows → client coords
+    /// as-is) and treat `None` as "no anchor available."
+    pub caret_client_rect: Option<PhysicalRect>,
     // ----- TextField paint cache + interaction state (NOT IME contract) -----
     /// Most recent shaped line, cached during paint so that mouse handlers can
     /// invert pixel-x to byte offset without re-shaping (the dispatch path has

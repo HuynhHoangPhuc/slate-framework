@@ -563,13 +563,13 @@ impl Element for TextField {
         if let Some(state_rc) = cx.ime_registry.borrow().get(element_id)
             && let Ok(mut state) = state_rc.try_borrow_mut()
         {
-            state.caret_client_rect = slate_platform::PhysicalRect::from_lpx_rect(
+            state.caret_client_rect = Some(slate_platform::PhysicalRect::from_lpx_rect(
                 bounds.origin.x + caret_pixel_x,
                 bounds.origin.y,
                 1.0,
                 line_height,
                 scale,
-            );
+            ));
             state.last_shaped = Some(std::rc::Rc::new(shaped));
             state.paint_origin_x = bounds.origin.x;
         }

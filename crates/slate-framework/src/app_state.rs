@@ -2084,7 +2084,7 @@ impl<V: View> AppState<V> {
         if let Some(state_rc) = entry
             && let Ok(state) = state_rc.try_borrow()
         {
-            snap.caret_client_rect = Some(state.caret_client_rect);
+            snap.caret_client_rect = state.caret_client_rect;
             snap.marked_range = state.answer_marked_range();
             snap.selected_range = state.answer_selected_range();
 

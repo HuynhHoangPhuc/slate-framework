@@ -319,7 +319,7 @@ fn set_ime_state_caret_rect_readable_via_query() {
     state.set_ime_state_for_test(
         elem_id,
         ImeState {
-            caret_client_rect: rect,
+            caret_client_rect: Some(rect),
             ..Default::default()
         },
     );
