@@ -245,6 +245,14 @@ pub(super) fn paint(
     if let Some(state_rc) = cx.ime_registry.borrow().get(element_id)
         && let Ok(mut state) = state_rc.try_borrow_mut()
     {
+        let scale = cx.scale_factor as f32;
+        state.caret_client_rect = slate_platform::PhysicalRect::from_lpx_rect(
+            bounds.origin.x + caret_x,
+            bounds.origin.y + caret_y,
+            1.0,
+            layout.line_height_lpx,
+            scale,
+        );
         state.last_layout = Some(layout.clone());
         state.paint_origin_x = bounds.origin.x;
         state.paint_origin_y = bounds.origin.y;

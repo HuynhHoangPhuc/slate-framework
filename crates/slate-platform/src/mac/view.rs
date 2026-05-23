@@ -208,6 +208,29 @@ pub struct MetalViewIvars {
     /// typing (AppKit clears marked text BEFORE `insertText:` on commit,
     /// so `hasMarkedText` is unreliable at that point).
     pub(crate) was_composing: Cell<bool>,
+    /// C14 — IME-first key routing while composing.
+    ///
+    /// When `keyDown:` fires *during* a composition, we must NOT pre-dispatch
+    /// `Event::KeyDown` (it would let the framework act on Tab/etc. before
+    /// the IME got a chance to use the key — e.g. Pinyin uses Tab to cycle
+    /// tone marks, but the framework's focus logic would also fire). We
+    /// instead stash the decoded key here and run `interpretKeyEvents:`
+    /// first. If the IME refuses the key (AppKit calls `doCommandBySelector:`),
+    /// that callback dispatches the stashed `KeyDown` so navigation /
+    /// Escape / IMEs-that-pass-Tab-through still reach the framework.
+    ///
+    /// Holds `RefCell` (not `Cell`) because `Key::Character(String)` isn't `Copy`.
+    pub(crate) pending_keydown: RefCell<Option<PendingKey>>,
+}
+
+/// C14 — decoded key info stashed by `keyDown:` while composing, dispatched
+/// by `doCommandBySelector:` if the IME refused the key. See
+/// [`MetalViewIvars::pending_keydown`].
+pub(crate) struct PendingKey {
+    pub(crate) code: KeyCode,
+    pub(crate) key: Key,
+    pub(crate) modifiers: Modifiers,
+    pub(crate) is_repeat: bool,
 }
 
 define_class!(
@@ -543,18 +566,42 @@ define_class!(
                     .unwrap_or_default();
                 let key = decode_key(code, &chars);
                 let _ = is_visible_text; // retained for keyUp; suppress unused-fn warning here.
-                dispatch_event(Event::KeyDown {
-                    window: id,
-                    code,
-                    key,
-                    modifiers,
-                    is_repeat,
-                });
-                // Route through IME. AppKit will either call `insertText:`
-                // directly (no IME / emoji-picker output) or call
-                // `setMarkedText:` / `insertText:` for composition.
+                // C14: IME-first routing while composing. If a composition is
+                // already live (`was_composing == true`), do NOT pre-dispatch
+                // `Event::KeyDown` — the IME may consume the key for
+                // composition purposes (e.g. Pinyin Tab cycles tone marks),
+                // and the framework's focus/shortcut logic must not race the
+                // IME. Stash the decoded key and let `interpretKeyEvents:`
+                // run first; `doCommandBySelector:` re-emits the `KeyDown`
+                // only if the IME refused the key.
+                //
+                // Non-composing keystrokes keep today's order (`KeyDown` →
+                // `interpretKeyEvents:`) so plain typing + Cmd-shortcuts are
+                // unaffected (9a back-compat).
                 let arr = NSArray::from_slice(&[event]);
-                self.interpretKeyEvents(&arr);
+                if self.ivars().was_composing.get() {
+                    *self.ivars().pending_keydown.borrow_mut() = Some(PendingKey {
+                        code,
+                        key,
+                        modifiers,
+                        is_repeat,
+                    });
+                    self.interpretKeyEvents(&arr);
+                    // Clear after the dispatch: either `doCommandBySelector:`
+                    // already consumed it (None now), or the IME consumed the
+                    // key via setMarkedText:/insertText: and we want to drop
+                    // the stashed event so no spurious KeyDown fires later.
+                    self.ivars().pending_keydown.borrow_mut().take();
+                } else {
+                    dispatch_event(Event::KeyDown {
+                        window: id,
+                        code,
+                        key,
+                        modifiers,
+                        is_repeat,
+                    });
+                    self.interpretKeyEvents(&arr);
+                }
             });
         }
 
@@ -646,10 +693,28 @@ define_class!(
 
         #[unsafe(method(doCommandBySelector:))]
         fn do_command_by_selector(&self, _selector: Sel) {
-            // No-op: the underlying Event::KeyDown was already dispatched
-            // from `key_down` before `interpretKeyEvents:` ran, so the
-            // framework / handler chain already saw the key. AppKit only
-            // calls this when the IME refuses to consume the keystroke.
+            // C14: AppKit calls this when the IME refused the keystroke.
+            // - Composing path (`keyDown:` deferred the `KeyDown` dispatch):
+            //   emit the stashed `Event::KeyDown` now so navigation /
+            //   Escape / IMEs-that-pass-Tab-through still reach the
+            //   framework. This is also what makes the "Tab commits then
+            //   focuses" flow work for IMEs that commit-on-Tab — by the
+            //   time AppKit reaches `doCommandBySelector:(insertTab:)`,
+            //   the prior `insertText:` already cleared `was_composing`
+            //   and emitted `ImeCommit`, so the synthesized `KeyDown{Tab}`
+            //   moves focus *after* the commit on a single press.
+            // - Non-composing path: `keyDown:` already dispatched `KeyDown`,
+            //   so `pending_keydown` is `None` and this is a no-op.
+            let id = self.ivars().window_id.get();
+            if let Some(pk) = self.ivars().pending_keydown.borrow_mut().take() {
+                dispatch_event(Event::KeyDown {
+                    window: id,
+                    code: pk.code,
+                    key: pk.key,
+                    modifiers: pk.modifiers,
+                    is_repeat: pk.is_repeat,
+                });
+            }
         }
 
         #[unsafe(method(setMarkedText:selectedRange:replacementRange:))]
@@ -737,6 +802,7 @@ impl MetalView {
             live_resize: Cell::new(false),
             prev_modifier_flags: Cell::new(NSEventModifierFlags::empty()),
             was_composing: Cell::new(false),
+            pending_keydown: RefCell::new(None),
         });
         // SAFETY: `NSView`'s designated initializer `initWithFrame:` takes an
         // `NSRect` and returns `Retained<NSView>`. The super-call signature matches.

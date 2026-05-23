@@ -315,12 +315,33 @@ impl MetalView {
     /// The `_range` arg (UTF-16 char range the IME asks about) is ignored: we
     /// always return the single tracked caret rect. Honoring sub-ranges would
     /// require mapping the range to per-glyph rects (multi-range support).
+    ///
+    /// **C11 (panel below the typed line):** the cached rect's `y_client`
+    /// sits at the line top with `h_client = line_height`. After the in-view
+    /// flip, the resulting NSRect's *top edge in screen coords* lands at the
+    /// line top — and AppKit anchors the candidate panel against that top
+    /// edge, which places the panel overlapping the typed text.
+    ///
+    /// We transform the rect into a 1-physical-pixel sliver positioned at
+    /// the line *bottom* in client coords. The flip then yields an NSRect
+    /// whose top edge in screen coords lands at the line bottom, so AppKit
+    /// drops the panel below the line. Bypassing `_phys.height` for the
+    /// returned size keeps the rect tiny — it can't extend off the view and
+    /// be clamped to view top-left by AppKit's bounds-checking, which is
+    /// what produced the earlier full-height variant's wrong placement.
     pub(super) fn ime_handle_first_rect(&self, _range: NSRange) -> NSRect {
         let id = self.ivars().window_id.get();
         let Some(rect_phys) = with_window_ime_delegate(id, |d| d.ime_caret_rect(id)).flatten()
         else {
             return NSRect::ZERO;
         };
+
+        // A degenerate cached rect (no caret tracked yet) flips to the view's
+        // top-left after `physical_client_rect_to_view_nsrect`'s flip — return
+        // ZERO so AppKit falls back to its screen-default placement instead.
+        if rect_phys.width == 0 && rect_phys.height == 0 {
+            return NSRect::ZERO;
+        }
 
         // A live window is required for the view→window→screen conversion.
         let Some(window) = self.window() else {
@@ -331,11 +352,20 @@ impl MetalView {
             return NSRect::ZERO;
         }
 
+        // Sliver at the line bottom: shift `y_client` down by the cached
+        // height and shrink `h_client` to 1 physical pixel.
+        let sliver = PhysicalRect::new(
+            rect_phys.x,
+            rect_phys.y.saturating_add(rect_phys.height as i32),
+            rect_phys.width,
+            1,
+        );
+
         // Build the caret rect in the view's own coordinate space (points,
         // bottom-left origin), then convert view → window → screen.
         let view_bounds_height_pt = self.bounds().size.height;
         let rect_in_view =
-            physical_client_rect_to_view_nsrect(rect_phys, view_bounds_height_pt, scale);
+            physical_client_rect_to_view_nsrect(sliver, view_bounds_height_pt, scale);
         let rect_in_window = self.convertRect_toView(rect_in_view, None);
         window.convertRectToScreen(rect_in_window)
     }
