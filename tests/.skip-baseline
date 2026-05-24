@@ -1,0 +1,25 @@
+# Known intentional test skips — NX-53 baseline (Wave A, 2026-05-24)
+#
+# This file pins the count of `#[ignore]`-marked tests in the workspace.
+# CI's "Lint test-skip baseline" step counts ignored tests via
+#   `cargo test --workspace --all-targets --features test-hooks -- --list`
+# and fails if the count exceeds BASELINE_COUNT below.
+#
+# To legitimately add a new ignored test:
+#   1. Bump BASELINE_COUNT in the same PR.
+#   2. Add a line under "Known skips" with `<module>::<test_name>` and a
+#      one-sentence rationale.
+#
+# To remove one: drop the line and decrement BASELINE_COUNT.
+#
+# Why this exists:
+# A 48-hour bug-mask incident in the keyboard-dispatch suite was caused by
+# tests silently `return;`ing when DefaultPlatform::new() failed in CI worker
+# threads. The skip was invisible until a manual smoke caught the regression.
+# This baseline catches the static `#[ignore]` family of skips. Runtime
+# silent-skips are a separate layer (deferred — no current offenders).
+
+BASELINE_COUNT=0
+
+# Known skips (one per line, format: <module>::<test_name>  # rationale)
+#   (none currently)

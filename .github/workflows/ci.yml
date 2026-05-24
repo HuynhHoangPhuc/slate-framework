@@ -111,6 +111,23 @@ jobs:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
+      # Skip-baseline lint: fail if the count of `#[ignore]`-marked tests
+      # drifts above the committed baseline. Prevents silent test-skip
+      # regressions (see tests/.skip-baseline for rationale + bump protocol).
+      - name: Lint test-skip baseline
+        shell: bash
+        run: |
+          count=$(cargo test --workspace --all-targets --features test-hooks -- --list 2>&1 | grep -c "ignored" || true)
+          baseline=$(grep -E '^BASELINE_COUNT=' tests/.skip-baseline | cut -d= -f2)
+          if [ -z "$baseline" ]; then
+            echo "::error::tests/.skip-baseline missing BASELINE_COUNT= line"
+            exit 1
+          fi
+          if [ "$count" -gt "$baseline" ]; then
+            echo "::error::Ignored-test count ($count) exceeds baseline ($baseline). See tests/.skip-baseline for the bump protocol."
+            exit 1
+          fi
+          echo "Ignored-test count: $count (baseline: $baseline) — OK"
       # test-hooks gates the platform dispatch + redraw suites; without it they
       # silently compile to zero tests. Enabling it makes them actually run and
       # satisfies the gated-suite sentinels.
