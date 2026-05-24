@@ -16,8 +16,9 @@ use std::sync::Arc;
 use slate_reactive::Signal;
 
 use crate::event::{
-    ElementImeCommitHandler, ElementImePreeditHandler, ElementKeyHandler, ElementTextInputHandler,
-    EventCtx, ImeCommitEvent, ImePreeditEvent, Key, KeyEvent, NamedKey, TextInputEvent,
+    self, ElementImeCommitHandler, ElementImePreeditHandler, ElementKeyHandler,
+    ElementTextInputHandler, EventCtx, ImeCommitEvent, ImePreeditEvent, Key, KeyEvent, NamedKey,
+    TextInputEvent,
 };
 use crate::ime::Preedit;
 
@@ -102,6 +103,18 @@ pub(super) fn build_key_down_handler(value: Signal<String>) -> ElementKeyHandler
             }
             Key::Named(NamedKey::ArrowLeft) | Key::Named(NamedKey::ArrowRight) => {
                 let move_right = matches!(ev.key, Key::Named(NamedKey::ArrowRight));
+                // macOS Cmd+←/→ is a visual line-edge jump — same target as
+                // Home/End. Reuse `nav::move_line_edge` so the contract stays
+                // bit-identical (clamp at edge, no cross to next visual line).
+                if event::is_line_edge_modifier(&ev.modifiers) {
+                    let layout = state_rc.borrow().last_layout.clone();
+                    if let Some(layout) = layout {
+                        let mut state = state_rc.borrow_mut();
+                        nav::move_line_edge(&mut state, &layout, move_right, shift);
+                    }
+                    cx.stop_propagation();
+                    return;
+                }
                 // Clone the cached layout (cheap Rc bump) so the run-bearing
                 // branch can read the caret's visual line while `state` is mut.
                 let layout = state_rc.borrow().last_layout.clone();

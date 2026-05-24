@@ -331,6 +331,97 @@ mod tests {
         assert_eq!(s.caret, 2);
     }
 
+    // ---- Cmd+←/→ visual line-edge contract (macOS A2) ----
+    //
+    // The handler routes `Cmd+←` / `Cmd+→` through `move_line_edge`, so these
+    // tests assert the visual-line-edge behavior the user sees on macOS. They
+    // run on every platform — the macOS gating is enforced by
+    // `event::is_line_edge_modifier` (covered in `event::tests`).
+
+    #[test]
+    fn cmd_right_single_line_jumps_to_visual_end() {
+        // First line "ab" has logical end = byte 2 (before the '\n').
+        let layout = layout_abcd();
+        let mut s = state_with("ab\ncd", 0);
+        move_line_edge(&mut s, &layout, true, false);
+        assert_eq!(s.caret, 2);
+    }
+
+    #[test]
+    fn cmd_left_single_line_jumps_to_visual_start() {
+        let layout = layout_abcd();
+        // Caret mid-line0 (byte 1); Cmd+← → byte 0.
+        let mut s = state_with("ab\ncd", 1);
+        move_line_edge(&mut s, &layout, false, false);
+        assert_eq!(s.caret, 0);
+    }
+
+    #[test]
+    fn cmd_right_wrapped_line_clamps_no_cross() {
+        // On line0, Cmd+→ lands at line0's visual end (byte 2). A second
+        // Cmd+→ from the edge is a no-op (clamp) — does NOT cross to line1.
+        // Mirrors macOS TextEdit; locked per brainstorm.
+        let layout = layout_abcd();
+        let mut s = state_with("ab\ncd", 1);
+        move_line_edge(&mut s, &layout, true, false);
+        assert_eq!(s.caret, 2, "first Cmd+→ lands at line0 end");
+        move_line_edge(&mut s, &layout, true, false);
+        assert_eq!(s.caret, 2, "second Cmd+→ at edge clamps — no cross");
+    }
+
+    #[test]
+    fn cmd_left_wrapped_line_clamps_no_cross() {
+        let layout = layout_abcd();
+        // Caret at line1 mid (byte 4); Cmd+← lands at line1 start (byte 3).
+        // Repeated Cmd+← clamps — does NOT cross to line0.
+        let mut s = state_with("ab\ncd", 4);
+        move_line_edge(&mut s, &layout, false, false);
+        assert_eq!(s.caret, 3);
+        move_line_edge(&mut s, &layout, false, false);
+        assert_eq!(s.caret, 3, "repeated Cmd+← at start clamps");
+    }
+
+    #[test]
+    fn cmd_right_mixed_bidi_lands_at_rightmost_visual_column() {
+        // line0 "abאב" mixed: visual rightmost stop = byte 2 (logical RTL
+        // start), NOT the logical line end (byte 6). End / Cmd+→ contract.
+        let layout = layout_mixed_then_ltr();
+        let mut s = state_with("abאב\ncd", 1);
+        move_line_edge(&mut s, &layout, true, false);
+        assert_eq!(s.caret, 2);
+    }
+
+    #[test]
+    fn cmd_left_mixed_bidi_lands_at_leftmost_visual_column() {
+        let layout = layout_mixed_then_ltr();
+        let mut s = state_with("abאב\ncd", 4);
+        move_line_edge(&mut s, &layout, false, false);
+        assert_eq!(s.caret, 0);
+    }
+
+    #[test]
+    fn shift_cmd_arrow_extends_selection() {
+        let layout = layout_abcd();
+        let mut s = state_with("ab\ncd", 1);
+        move_line_edge(&mut s, &layout, true, true);
+        assert_eq!(s.selection_anchor, Some(1), "anchor at pre-move caret");
+        assert_eq!(s.caret, 2);
+    }
+
+    #[test]
+    fn cmd_arrow_no_layout_lines_is_noop() {
+        // Pre-first-layout: `lines.is_empty()` short-circuits in
+        // `move_line_edge`. No panic; caret unchanged.
+        let empty = MultilineLayout {
+            lines: Vec::new(),
+            total_height_lpx: 0.0,
+            line_height_lpx: 0.0,
+        };
+        let mut s = state_with("ab", 1);
+        move_line_edge(&mut s, &empty, true, false);
+        assert_eq!(s.caret, 1);
+    }
+
     #[test]
     fn enter_inserts_newline_at_caret() {
         let mut s = state_with("ab", 1);

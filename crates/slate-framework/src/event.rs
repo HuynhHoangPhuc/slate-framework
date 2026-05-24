@@ -43,6 +43,27 @@ pub fn is_command_modifier(m: &Modifiers) -> bool {
     }
 }
 
+/// macOS visual-line-edge modifier check for `Cmd+←/→` navigation.
+///
+/// macOS convention is that `Cmd+←/→` jumps the caret to the visual line
+/// start/end (matching TextEdit / Safari). Returns `true` only when `meta`
+/// (Cmd) is held alone — Shift is allowed (extends the selection) but
+/// `ctrl` / `alt` disqualify so future Ctrl+Cmd or Option+Cmd shortcuts
+/// remain composable. Always returns `false` on non-macOS targets: the
+/// Windows / Linux arrow path stays byte-identical.
+#[inline]
+pub fn is_line_edge_modifier(m: &Modifiers) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        m.meta && !m.ctrl && !m.alt
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = m;
+        false
+    }
+}
+
 /// Handler closure type for mouse events (click, down, up, move).
 pub(crate) type MouseHandler = Arc<dyn Fn(&MouseEvent, &mut EventCtx) + Send + Sync + 'static>;
 
@@ -500,5 +521,61 @@ impl std::fmt::Debug for EventCtx<'_> {
             .field("window_id", &self.window_id)
             .field("focused", &self.focused)
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mods(shift: bool, ctrl: bool, alt: bool, meta: bool) -> Modifiers {
+        Modifiers {
+            shift,
+            ctrl,
+            alt,
+            meta,
+        }
+    }
+
+    // Expected `is_line_edge_modifier` outcome on the host target. Centralised
+    // so a future platform addition (e.g. Linux Super treated as Cmd) only
+    // needs one constant flip.
+    #[cfg(target_os = "macos")]
+    const MAC: bool = true;
+    #[cfg(not(target_os = "macos"))]
+    const MAC: bool = false;
+
+    #[test]
+    fn line_edge_modifier_meta_only_is_macos_only() {
+        assert_eq!(is_line_edge_modifier(&mods(false, false, false, true)), MAC);
+    }
+
+    #[test]
+    fn line_edge_modifier_meta_plus_shift_keeps_line_edge() {
+        // Shift extends the selection — must NOT disqualify the helper.
+        assert_eq!(is_line_edge_modifier(&mods(true, false, false, true)), MAC);
+    }
+
+    #[test]
+    fn line_edge_modifier_meta_plus_ctrl_is_false() {
+        // Reserved for future Ctrl+Cmd shortcuts (e.g. emoji picker).
+        assert!(!is_line_edge_modifier(&mods(false, true, false, true)));
+    }
+
+    #[test]
+    fn line_edge_modifier_meta_plus_alt_is_false() {
+        // Reserved for future Option+Cmd word-nav shortcuts.
+        assert!(!is_line_edge_modifier(&mods(false, false, true, true)));
+    }
+
+    #[test]
+    fn line_edge_modifier_ctrl_alone_is_false() {
+        // Windows/Linux Ctrl+← keeps the byte-identical legacy path.
+        assert!(!is_line_edge_modifier(&mods(false, true, false, false)));
+    }
+
+    #[test]
+    fn line_edge_modifier_bare_is_false() {
+        assert!(!is_line_edge_modifier(&mods(false, false, false, false)));
     }
 }
