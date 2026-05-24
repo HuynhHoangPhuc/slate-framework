@@ -1,0 +1,112 @@
+---
+source: crates/slate-framework/tests/dispatch_golden_trace.rs
+expression: trace
+---
+[
+    TraceEntry {
+        seq: 0,
+        kind: "BeginDispatch",
+        handler_on: None,
+        ctx_target: None,
+        signal: None,
+        note: Some(
+            "mouse_down:row1 (sets capture)",
+        ),
+    },
+    TraceEntry {
+        seq: 1,
+        kind: "row1_down",
+        handler_on: Some(
+            1,
+        ),
+        ctx_target: Some(
+            1,
+        ),
+        signal: None,
+        note: Some(
+            "set_capture",
+        ),
+    },
+    TraceEntry {
+        seq: 2,
+        kind: "EndDispatch",
+        handler_on: None,
+        ctx_target: None,
+        signal: Some(
+            "RequestRedraw",
+        ),
+        note: None,
+    },
+    TraceEntry {
+        seq: 3,
+        kind: "Observe",
+        handler_on: None,
+        ctx_target: None,
+        signal: None,
+        note: Some(
+            "capture=row1",
+        ),
+    },
+    TraceEntry {
+        seq: 4,
+        kind: "BeginDispatch",
+        handler_on: None,
+        ctx_target: None,
+        signal: None,
+        note: Some(
+            "mouse_move:into row2 region",
+        ),
+    },
+    TraceEntry {
+        seq: 5,
+        kind: "element_mouse_move",
+        handler_on: Some(
+            1,
+        ),
+        ctx_target: Some(
+            1,
+        ),
+        signal: None,
+        note: None,
+    },
+    TraceEntry {
+        seq: 6,
+        kind: "EndDispatch",
+        handler_on: None,
+        ctx_target: None,
+        signal: Some(
+            "RequestRedraw",
+        ),
+        note: None,
+    },
+    TraceEntry {
+        seq: 7,
+        kind: "BeginDispatch",
+        handler_on: None,
+        ctx_target: None,
+        signal: None,
+        note: Some(
+            "mouse_up:in row2 region",
+        ),
+    },
+    TraceEntry {
+        seq: 8,
+        kind: "EndDispatch",
+        handler_on: None,
+        ctx_target: None,
+        signal: Some(
+            "RequestRedraw",
+        ),
+        note: None,
+    },
+    TraceEntry {
+        seq: 9,
+        kind: "Observe",
+        handler_on: None,
+        ctx_target: None,
+        signal: None,
+        note: Some(
+            "capture=row1(sticky)",
+        ),
+    },
+]

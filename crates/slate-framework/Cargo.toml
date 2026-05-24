@@ -41,6 +41,7 @@ image.workspace = true
 trybuild = "1"
 tracing-test = "0.2"
 env_logger.workspace = true
+insta.workspace = true
 
 [features]
 default = []
@@ -73,5 +74,16 @@ required-features = ["test-hooks"]
 
 [[test]]
 name = "event_capture_and_window_id"
+harness = false
+required-features = ["test-hooks"]
+
+# Golden-trace dispatch pin. `harness = false` so its `fn main` runs on the
+# process main thread — required on macOS for `DefaultPlatform::new()` and
+# its `MainThreadMarker` use. `required-features = ["test-hooks"]` keeps the
+# build gated on the test-only `_for_test` hooks. Snapshots live next to the
+# test in `crates/slate-framework/tests/snapshots/` and are blessed via
+# `cargo insta review`.
+[[test]]
+name = "dispatch_golden_trace"
 harness = false
 required-features = ["test-hooks"]

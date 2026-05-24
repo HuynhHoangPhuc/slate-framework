@@ -1,0 +1,174 @@
+---
+source: crates/slate-framework/tests/dispatch_golden_trace.rs
+expression: trace
+---
+[
+    TraceEntry {
+        seq: 0,
+        kind: "BeginDispatch",
+        handler_on: None,
+        ctx_target: None,
+        signal: None,
+        note: Some(
+            "mouse_down:row1",
+        ),
+    },
+    TraceEntry {
+        seq: 1,
+        kind: "row1_down",
+        handler_on: Some(
+            1,
+        ),
+        ctx_target: Some(
+            1,
+        ),
+        signal: None,
+        note: None,
+    },
+    TraceEntry {
+        seq: 2,
+        kind: "EndDispatch",
+        handler_on: None,
+        ctx_target: None,
+        signal: Some(
+            "RequestRedraw",
+        ),
+        note: None,
+    },
+    TraceEntry {
+        seq: 3,
+        kind: "BeginDispatch",
+        handler_on: None,
+        ctx_target: None,
+        signal: None,
+        note: Some(
+            "mouse_up:row1",
+        ),
+    },
+    TraceEntry {
+        seq: 4,
+        kind: "EndDispatch",
+        handler_on: None,
+        ctx_target: None,
+        signal: Some(
+            "RequestRedraw",
+        ),
+        note: None,
+    },
+    TraceEntry {
+        seq: 5,
+        kind: "BeginDispatch",
+        handler_on: None,
+        ctx_target: None,
+        signal: None,
+        note: Some(
+            "mouse_down:row2",
+        ),
+    },
+    TraceEntry {
+        seq: 6,
+        kind: "row2_down",
+        handler_on: Some(
+            2,
+        ),
+        ctx_target: Some(
+            2,
+        ),
+        signal: None,
+        note: None,
+    },
+    TraceEntry {
+        seq: 7,
+        kind: "EndDispatch",
+        handler_on: None,
+        ctx_target: None,
+        signal: Some(
+            "RequestRedraw",
+        ),
+        note: None,
+    },
+    TraceEntry {
+        seq: 8,
+        kind: "BeginDispatch",
+        handler_on: None,
+        ctx_target: None,
+        signal: None,
+        note: Some(
+            "mouse_up:row2",
+        ),
+    },
+    TraceEntry {
+        seq: 9,
+        kind: "EndDispatch",
+        handler_on: None,
+        ctx_target: None,
+        signal: Some(
+            "RequestRedraw",
+        ),
+        note: None,
+    },
+    TraceEntry {
+        seq: 10,
+        kind: "BeginDispatch",
+        handler_on: None,
+        ctx_target: None,
+        signal: None,
+        note: Some(
+            "ime_preedit:に on row2",
+        ),
+    },
+    TraceEntry {
+        seq: 11,
+        kind: "element_ime_preedit",
+        handler_on: Some(
+            2,
+        ),
+        ctx_target: Some(
+            2,
+        ),
+        signal: None,
+        note: None,
+    },
+    TraceEntry {
+        seq: 12,
+        kind: "EndDispatch",
+        handler_on: None,
+        ctx_target: None,
+        signal: Some(
+            "RequestRedraw",
+        ),
+        note: None,
+    },
+    TraceEntry {
+        seq: 13,
+        kind: "BeginDispatch",
+        handler_on: None,
+        ctx_target: None,
+        signal: None,
+        note: Some(
+            "ime_commit:日 on row2",
+        ),
+    },
+    TraceEntry {
+        seq: 14,
+        kind: "element_ime_commit",
+        handler_on: Some(
+            2,
+        ),
+        ctx_target: Some(
+            2,
+        ),
+        signal: None,
+        note: None,
+    },
+    TraceEntry {
+        seq: 15,
+        kind: "EndDispatch",
+        handler_on: None,
+        ctx_target: None,
+        signal: Some(
+            "RequestRedraw",
+        ),
+        note: None,
+    },
+]

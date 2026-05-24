@@ -103,6 +103,9 @@ windows = { version = "0.62", features = [
 # Visual regression test dependencies (dev-only)
 image = "0.25"
 image-compare = "0.5"
+# Snapshot testing (dev-only). Used to pin ordered dispatch traces so
+# refactors that re-shape AppState surface a diff instead of silent drift.
+insta = { version = "1.47", features = ["filters"] }
 
 [profile.release]
 lto = "thin"

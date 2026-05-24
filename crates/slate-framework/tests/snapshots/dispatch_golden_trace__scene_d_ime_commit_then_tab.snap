@@ -1,0 +1,114 @@
+---
+source: crates/slate-framework/tests/dispatch_golden_trace.rs
+expression: trace
+---
+[
+    TraceEntry {
+        seq: 0,
+        kind: "BeginDispatch",
+        handler_on: None,
+        ctx_target: None,
+        signal: None,
+        note: Some(
+            "ime_preedit:あ",
+        ),
+    },
+    TraceEntry {
+        seq: 1,
+        kind: "element_ime_preedit",
+        handler_on: Some(
+            1,
+        ),
+        ctx_target: Some(
+            1,
+        ),
+        signal: None,
+        note: None,
+    },
+    TraceEntry {
+        seq: 2,
+        kind: "EndDispatch",
+        handler_on: None,
+        ctx_target: None,
+        signal: Some(
+            "RequestRedraw",
+        ),
+        note: None,
+    },
+    TraceEntry {
+        seq: 3,
+        kind: "BeginDispatch",
+        handler_on: None,
+        ctx_target: None,
+        signal: None,
+        note: Some(
+            "ime_commit:愛 (focus owner active)",
+        ),
+    },
+    TraceEntry {
+        seq: 4,
+        kind: "element_ime_commit",
+        handler_on: Some(
+            1,
+        ),
+        ctx_target: Some(
+            1,
+        ),
+        signal: None,
+        note: None,
+    },
+    TraceEntry {
+        seq: 5,
+        kind: "EndDispatch",
+        handler_on: None,
+        ctx_target: None,
+        signal: Some(
+            "RequestRedraw",
+        ),
+        note: None,
+    },
+    TraceEntry {
+        seq: 6,
+        kind: "BeginDispatch",
+        handler_on: None,
+        ctx_target: None,
+        signal: None,
+        note: Some(
+            "key:Tab (post-commit)",
+        ),
+    },
+    TraceEntry {
+        seq: 7,
+        kind: "element_key_down",
+        handler_on: Some(
+            1,
+        ),
+        ctx_target: Some(
+            1,
+        ),
+        signal: None,
+        note: Some(
+            "Tab",
+        ),
+    },
+    TraceEntry {
+        seq: 8,
+        kind: "app_key_down",
+        handler_on: None,
+        ctx_target: None,
+        signal: None,
+        note: Some(
+            "Tab",
+        ),
+    },
+    TraceEntry {
+        seq: 9,
+        kind: "EndDispatch",
+        handler_on: None,
+        ctx_target: None,
+        signal: Some(
+            "RequestRedraw",
+        ),
+        note: None,
+    },
+]
