@@ -1,5 +1,5 @@
-//! Throwaway spike (Phase 3 step 1): pin down etagere 0.2.4 API surface
-//! before writing atlas.rs. Confirms:
+//! Throwaway spike: pin down etagere 0.2.4 API surface before writing atlas.rs.
+//! Confirms:
 //! - `size2` import path
 //! - `Allocation { id, rectangle }` field names
 //! - `Option<Allocation>` return shape

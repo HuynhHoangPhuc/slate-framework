@@ -1,4 +1,4 @@
-//! FocusRegistry data-layer unit tests (Phase 9b Phase 1).
+//! FocusRegistry data-layer unit tests.
 //!
 //! Cross-platform — no platform deps. Covers tree-order traversal,
 //! `tab_index`-driven hoisting, negative-`tab_index` exclusion from Tab cycle

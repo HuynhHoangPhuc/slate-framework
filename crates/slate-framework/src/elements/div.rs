@@ -50,7 +50,7 @@ pub struct Div {
     /// Stable ElementId allocated during prepaint (available after prepaint).
     last_id: Option<ElementId>,
     // -------------------------------------------------------------------------
-    // Event handlers (Phase 5a)
+    // Event handlers
     // -------------------------------------------------------------------------
     /// Handler for synthesized click events (down+up on same target).
     pub(crate) on_click: Option<MouseHandler>,
@@ -69,7 +69,7 @@ pub struct Div {
     /// Handler for pointer leave events.
     pub(crate) on_pointer_leave: Option<PointerHandler>,
     // -------------------------------------------------------------------------
-    // Focus configuration (Phase 9b)
+    // Focus configuration
     // -------------------------------------------------------------------------
     /// True if this element opts in to keyboard focus (registers with `FocusRegistry`).
     pub(crate) focusable: bool,
@@ -79,7 +79,7 @@ pub struct Div {
     /// Whether the framework-provided focus ring is painted when focused.
     pub(crate) focus_ring: bool,
     // -------------------------------------------------------------------------
-    // Per-element keyboard handlers (Phase 9b)
+    // Per-element keyboard handlers
     // -------------------------------------------------------------------------
     /// Handler for KeyDown events while this element is on the focused chain.
     pub(crate) on_key_down: Option<ElementKeyHandler>,
@@ -88,7 +88,7 @@ pub struct Div {
     /// Handler for composed text input while this element is on the focused chain.
     pub(crate) on_text_input: Option<ElementTextInputHandler>,
     // -------------------------------------------------------------------------
-    // IME configuration + handlers (Phase 9c)
+    // IME configuration + handlers
     // -------------------------------------------------------------------------
     /// True if this element opts in to IME composition. The framework
     /// registers an `ImeState` entry each prepaint when this is set; OS
@@ -245,7 +245,7 @@ impl Div {
     }
 
     // -------------------------------------------------------------------------
-    // Event handler builders (Phase 5a)
+    // Event handler builders
     // -------------------------------------------------------------------------
 
     /// Register a click handler (fires when mouse down+up lands on same target).
@@ -348,7 +348,7 @@ impl Div {
     }
 
     // -------------------------------------------------------------------------
-    // Focus configuration builders (Phase 9b)
+    // Focus configuration builders
     // -------------------------------------------------------------------------
 
     /// Opt this element in to keyboard focus.
@@ -384,7 +384,7 @@ impl Div {
     }
 
     // -------------------------------------------------------------------------
-    // Per-element keyboard handler builders (Phase 9b)
+    // Per-element keyboard handler builders
     // -------------------------------------------------------------------------
 
     /// Register a `KeyDown` handler that fires while this element is on the
@@ -515,7 +515,7 @@ impl Element for Div {
         let element_id = cx.allocate_id::<Div>();
         self.last_id = Some(element_id);
 
-        // Register event handlers for dispatch (Phase 5a)
+        // Register event handlers for dispatch
         cx.register_handlers(
             element_id,
             Handlers {
@@ -530,7 +530,7 @@ impl Element for Div {
             },
         );
 
-        // Phase 9b: register per-element keyboard handlers + focusable entry.
+        // Register per-element keyboard handlers + focusable entry.
         cx.register_key_handlers(
             element_id,
             KeyHandlers {
@@ -540,7 +540,7 @@ impl Element for Div {
             },
         );
 
-        // Phase 9c: register IME state + handlers when the element opts in.
+        // Register IME state + handlers when the element opts in.
         if self.ime_capable {
             cx.register_ime_state(element_id);
             cx.register_ime_handlers(

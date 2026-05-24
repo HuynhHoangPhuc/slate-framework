@@ -1,4 +1,4 @@
-//! Per-element focused-chain keyboard dispatch tests (Phase 9b).
+//! Per-element focused-chain keyboard dispatch tests.
 //!
 //! Windows-only for the same reason as `keyboard_dispatch.rs`: `DefaultPlatform`
 //! cannot construct off the main thread on macOS, and `cargo test` runs each
@@ -292,7 +292,7 @@ fn tab_key_with_stop_propagation_suppresses_default_shift() {
 }
 
 // ---------------------------------------------------------------------------
-// Mouse-down focus semantics (D6 reversal — clear focus on background-click)
+// Mouse-down focus semantics (clear focus on background-click)
 // ---------------------------------------------------------------------------
 
 /// Helper: install one hit region covering the given rect for `id`. Resets

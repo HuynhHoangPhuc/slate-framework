@@ -135,9 +135,9 @@ impl MouseHandlers {
 }
 
 /// Per-element keyboard handler bundle. Mirrors [`Handlers`] for mouse; stored
-/// in `AppState::key_handler_map` (Phase 3) and looked up during the focused-chain
+/// in `AppState::key_handler_map` and looked up during the focused-chain
 /// bubble dispatch.
-#[allow(dead_code)] // Populated by Div::prepaint and consumed by AppState in Phase 3.
+#[allow(dead_code)] // Populated by Div::prepaint and consumed by AppState dispatch.
 #[derive(Clone, Default)]
 #[doc(hidden)]
 pub struct KeyHandlers {
@@ -147,7 +147,7 @@ pub struct KeyHandlers {
 }
 
 impl KeyHandlers {
-    #[allow(dead_code)] // Used by AppState::dispatch_key_* in Phase 3 to skip empty bundles.
+    #[allow(dead_code)] // Used by AppState::dispatch_key_* to skip empty bundles.
     pub fn has_any(&self) -> bool {
         self.on_key_down.is_some() || self.on_key_up.is_some() || self.on_text_input.is_some()
     }
@@ -245,8 +245,8 @@ pub struct PointerEvent {
 /// Closure type for App-level `KeyDown` / `KeyUp` handlers. Not `Send` —
 /// keyboard dispatch runs on the UI thread.
 ///
-/// Phase 9b: signature gained `&mut EventCtx` for parity with per-element
-/// keyboard handlers — App-level handlers can now call `cx.stop_propagation()`,
+/// Signature accepts `&mut EventCtx` for parity with per-element keyboard
+/// handlers — App-level handlers can call `cx.stop_propagation()`,
 /// `cx.request_focus(id)`, and `cx.focused_element()`.
 pub type KeyHandler = Box<dyn FnMut(&KeyEvent, &mut EventCtx)>;
 
@@ -387,13 +387,13 @@ pub struct EventCtx<'a> {
     pending_capture_op: &'a mut Option<PendingCaptureOp>,
     window_id: WindowId,
     focused: Option<ElementId>,
-    /// Element this handler is bound to (Phase 9c). `None` for App-level and
-    /// non-element dispatch sites; `Some(id)` when the dispatch loop is in
-    /// per-element bubble mode.
+    /// Element this handler is bound to. `None` for App-level and non-element
+    /// dispatch sites; `Some(id)` when the dispatch loop is in per-element
+    /// bubble mode.
     element_id: Option<ElementId>,
-    /// Reference to the framework IME registry (Phase 9c). `None` outside of
-    /// IME dispatch; per-element IME handlers receive `Some(_)` so they can
-    /// query/mutate their own `ImeState` via [`EventCtx::ime_state`].
+    /// Reference to the framework IME registry. `None` outside of IME dispatch;
+    /// per-element IME handlers receive `Some(_)` so they can query/mutate
+    /// their own `ImeState` via [`EventCtx::ime_state`].
     ime_registry: Option<&'a RefCell<ImeRegistry>>,
 }
 
@@ -419,7 +419,7 @@ impl<'a> EventCtx<'a> {
         }
     }
 
-    /// Attach the per-element id + IME registry reference (Phase 9c).
+    /// Attach the per-element id + IME registry reference.
     /// Called by IME dispatch loops on the EventCtx they construct so
     /// handlers can resolve their own `ImeState`.
     pub(crate) fn with_ime(
@@ -499,7 +499,7 @@ impl<'a> EventCtx<'a> {
 
     /// Take the queued focus op, leaving `None` behind. Crate-private — used
     /// by AppState to apply the op after a handler chain completes.
-    #[allow(dead_code)] // Drained by AppState in Phase 3 after dispatch chain unwinds.
+    #[allow(dead_code)] // Drained by AppState after dispatch chain unwinds.
     pub(crate) fn take_pending_focus_op(&mut self) -> Option<PendingFocusOp> {
         self.pending_focus_op.take()
     }

@@ -4,7 +4,7 @@
 //! `Bgra8UnormSrgb` texture with `srgb_u8_to_linear_premul([255, 0, 0, 128])`
 //! and asserts the center pixel reads back as roughly `(187, 0, 0, 128)`.
 //!
-//! Math (matches `phase-01-scene-primitive-types.md` step 5):
+//! Math:
 //!   linear_premul = (0.502, 0, 0, 0.502)
 //!   blend over transparent dst (One/OneMinusSrcAlpha) → (0.502, 0, 0, 0.502)
 //!   sRGB encode R: linear_to_srgb(0.502) ≈ 0.737 → ≈188 byte

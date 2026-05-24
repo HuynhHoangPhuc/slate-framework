@@ -3,7 +3,7 @@
 //! This crate provides platform-native text rendering via CoreText (macOS) and
 //! DirectWrite (Windows), feeding glyphs into slate-renderer's GlyphPipeline.
 //!
-//! # Phase 2b Capabilities
+//! # Capabilities
 //!
 //! - Single-line and multi-line text with greedy word wrap
 //! - Font fallback chains with system font enumeration

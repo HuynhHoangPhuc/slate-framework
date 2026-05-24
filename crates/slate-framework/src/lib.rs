@@ -4,7 +4,7 @@
 //! `slate-platform` (windowing), `slate-renderer` (GPU rendering), and
 //! `slate-text` (text shaping/rasterization).
 //!
-//! # Phase 3 Capabilities
+//! # Capabilities
 //!
 //! - Three-phase Element lifecycle (request_layout/prepaint/paint)
 //! - Taffy-based Flexbox/Grid layout
@@ -31,7 +31,7 @@ pub mod app_state;
 pub(crate) mod app_state;
 
 // Re-export device-loss reason classification so integration tests can
-// match on it without enabling the `test-hooks` feature (Phase 2).
+// match on it without enabling the `test-hooks` feature.
 pub use app_state::DeviceLossReason;
 pub mod color;
 pub mod context;
@@ -89,7 +89,7 @@ pub mod reactive {
     pub use slate_reactive::{Effect, Memo, ReactiveOwner, Signal};
 }
 
-// Re-export smol::Timer for async timing (Phase 5: F1)
+// Re-export smol::Timer for async timing.
 pub use context::{LayoutCtx, PaintCtx, PrepaintCtx};
 pub use element::{AnyElement, Element, IntoElement};
 pub use elements::{

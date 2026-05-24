@@ -12,7 +12,7 @@
 //! handler's borrow: the `'static`-cast pointer is cleared before `run` returns,
 //! so the raw pointer can never outlive the closure.
 //!
-//! # Arc ownership protocol (C1 / C2 fix)
+//! # Arc ownership protocol
 //! The user receives `Arc<WinWindow>` (which wraps `Arc<WinWindowInner>`). The OS
 //! holds a `*const WinWindowInner` in `GWLP_USERDATA`. At `WM_NCCREATE` we call
 //! `Arc::increment_strong_count` to give the OS a logical Arc reference. At
@@ -51,10 +51,10 @@ thread_local! {
 
 pub(crate) const SIZE_MOVE_TIMER_ID: usize = 0x5_1A_7E;
 
-/// Timer id reserved by `Window::schedule_redraw_at` (Phase 10a.6). A single
-/// id per window so a second `schedule_redraw_at` call REPLACES the in-flight
-/// timer rather than stacking — matches the documented "no double-fire"
-/// contract on the trait method.
+/// Timer id reserved by `Window::schedule_redraw_at`. A single id per window
+/// so a second `schedule_redraw_at` call REPLACES the in-flight timer rather
+/// than stacking — matches the documented "no double-fire" contract on the
+/// trait method.
 pub(crate) const REDRAW_TIMER_ID: usize = 0x5_1A_7F;
 
 /// Custom message for wake events from background threads.

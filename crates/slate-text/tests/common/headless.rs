@@ -1,7 +1,7 @@
 //! Headless wgpu device factory for visual regression tests.
 //!
 //! Duplicated from slate-renderer/tests/common/mod.rs to avoid cross-crate
-//! test dependency. See Phase 1 plan for rationale.
+//! test dependency; keeping them separate prevents a dev-dependency cycle.
 
 use wgpu::{
     Backends, Device, DeviceDescriptor, ExperimentalFeatures, Features, Instance,

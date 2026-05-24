@@ -92,30 +92,30 @@ pub struct HeadlessApp {
     scene: Scene,
     executor: Executor,
 
-    // Phase 5: Reactive runtime for headless tests
+    // Reactive runtime for headless tests
     runtime: Arc<Runtime>,
     observer_id: ObserverId,
 
-    // Phase 4: StateRegistry for element-level reactive state
+    // StateRegistry for element-level reactive state
     state_registry: StateRegistry,
 
-    // Phase 6: TextShapingCache for text shaping optimization
+    // TextShapingCache for text shaping optimization
     text_shaping_cache: crate::paint_cache::TextShapingCache,
 
-    // Phase 2: Image cache for uploaded images
+    // Image cache for uploaded images
     image_cache: ImageCache,
 
-    // Phase 5a: Event handler collection (for headless testing parity)
+    // Event handler collection (for headless testing parity)
     handler_map: HashMap<ElementId, Handlers>,
     mouse_handler_map: HashMap<ElementId, MouseHandlers>,
     parent_map: HashMap<ElementId, ElementId>,
 
-    // Phase 9b: keyboard + focus state collected each prepaint (headless parity).
+    // Keyboard + focus state collected each prepaint (headless parity).
     key_handler_map: HashMap<ElementId, KeyHandlers>,
     focus_registry: FocusRegistry,
     focus_bounds: HashMap<ElementId, FocusBounds>,
 
-    // Phase 9c: IME state collected each prepaint (headless parity).
+    // IME state collected each prepaint (headless parity).
     ime_registry: RefCell<ImeRegistry>,
     ime_handler_map: HashMap<ElementId, ImeHandlers>,
     ime_registered_ids: HashSet<ElementId>,
@@ -260,24 +260,24 @@ impl HeadlessApp {
         let redraw_requester = RedrawRequester::new(|| {}); // No-op for headless
         let executor = Executor::new(redraw_requester);
 
-        // Phase 5: Runtime for reactive headless tests (no redraw wiring needed)
+        // Runtime for reactive headless tests (no redraw wiring needed)
         let runtime = Runtime::new();
         let observer_id = runtime.next_observer_id();
 
-        // Phase 4: StateRegistry for element-level reactive state
+        // StateRegistry for element-level reactive state
         let state_registry = StateRegistry::new(runtime.clone());
 
-        // Phase 6: TextShapingCache for text shaping optimization
+        // TextShapingCache for text shaping optimization
         let text_shaping_cache = crate::paint_cache::TextShapingCache::new();
 
-        // Phase 5a: Event handler collection (for headless testing parity)
+        // Event handler collection (for headless testing parity)
         let handler_map = HashMap::new();
         let parent_map = HashMap::new();
         let key_handler_map = HashMap::new();
         let focus_registry = FocusRegistry::new();
         let focus_bounds = HashMap::new();
 
-        // Phase 2: Image cache
+        // Image cache
         let image_cache = ImageCache::new();
 
         Ok(Self {
@@ -331,7 +331,7 @@ impl HeadlessApp {
 
     /// Render an element tree and return the result as an RGBA image.
     pub fn render(&mut self, mut root: AnyElement) -> Result<RgbaImage, HeadlessError> {
-        // Phase 5: Drain effects before render
+        // Drain effects before render
         self.runtime.drain_effects();
 
         let w = self.width;
@@ -411,11 +411,11 @@ impl HeadlessApp {
             );
         }
 
-        // Phase 4: Advance frame counter and GC stale state slots
+        // Advance frame counter and GC stale state slots
         self.state_registry.advance_frame();
         self.state_registry.gc();
 
-        // Phase 6: Advance frame counter and GC stale text shaping cache
+        // Advance frame counter and GC stale text shaping cache
         self.text_shaping_cache.advance_frame();
         self.text_shaping_cache.gc();
 
@@ -437,7 +437,7 @@ impl HeadlessApp {
             );
             root.paint(root_bounds, &mut cx);
         }
-        // Phase 9c: drop entries for unmounted ime-capable elements.
+        // Drop entries for unmounted ime-capable elements.
         self.ime_registry
             .borrow_mut()
             .prune_missing(&self.ime_registered_ids);
@@ -611,7 +611,7 @@ impl HeadlessApp {
     /// let img2 = app.render_view(&mut view)?;
     /// ```
     pub fn render_view<V: View>(&mut self, view: &mut V) -> Result<RgbaImage, HeadlessError> {
-        // Phase 5: Build element tree inside observer scope for reactive subscriptions
+        // Build element tree inside observer scope for reactive subscriptions
         let mut render_cx = crate::RenderCx::new(slate_platform::WindowId(0));
         let root =
             slate_reactive::with_observer(self.observer_id, || view.render(&mut render_cx));
@@ -619,7 +619,7 @@ impl HeadlessApp {
     }
 
     // =========================================================================
-    // Phase 6: Test helpers for TextShapingCache metrics
+    // Test helpers for TextShapingCache metrics
     // =========================================================================
 
     /// Get text shaping cache hit count (for testing).
@@ -643,7 +643,7 @@ impl HeadlessApp {
     }
 
     // =========================================================================
-    // Phase 9c: IME test hook
+    // IME test hook
     // =========================================================================
 
     /// Inject an `ImeState` for `id` directly into the headless IME registry,

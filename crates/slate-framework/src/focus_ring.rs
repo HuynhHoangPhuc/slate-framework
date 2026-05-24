@@ -1,4 +1,4 @@
-//! Framework-provided focus ring overlay (Phase 9b).
+//! Framework-provided focus ring overlay.
 //!
 //! Emitted into the scene at the end of the paint pass so it overlays element
 //! content. Implemented as four thin filled rectangles (top / right / bottom /

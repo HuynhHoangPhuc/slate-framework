@@ -32,7 +32,7 @@ fn decode_position(view: &MetalView, event: &NSEvent) -> (f32, f32) {
     let bounds_height = bounds.size.height as f32;
 
     let view_pt = view.convertPoint_fromView(loc_in_window, None);
-    // Post-Phase-3: coords are already logical from NSView; just flip Y.
+    // NSView returns logical (point) coordinates; just flip Y to top-left origin.
     let x = view_pt.x as f32;
     let y = bounds_height - view_pt.y as f32;
     (x, y)
@@ -40,7 +40,7 @@ fn decode_position(view: &MetalView, event: &NSEvent) -> (f32, f32) {
 
 /// Pure decode_position logic for unit testing.
 /// Takes (x, y) in window coords (Y-up), bounds_height, and scale.
-/// Post-Phase-3: scale is ignored (coords are already logical from NSView).
+/// Scale is ignored because NSView already returns logical (point) coordinates.
 #[cfg(test)]
 pub(crate) fn decode_position_pure(
     loc_in_window: (f32, f32),
@@ -74,7 +74,7 @@ fn decode_button(button_number: isize) -> Option<MouseButton> {
 }
 
 // ---------------------------------------------------------------------------
-// Keyboard event decode helpers (Phase 9a)
+// Keyboard event decode helpers
 // ---------------------------------------------------------------------------
 
 /// Map a [`KeyCode`] to the matching [`NamedKey`] when the key has no
@@ -200,7 +200,7 @@ pub struct MetalViewIvars {
     /// the setFrameSize: sync-dispatch path: programmatic frame changes still
     /// flow through windowDidResize: rather than the sync-present path.
     pub(crate) live_resize: Cell<bool>,
-    /// Previous modifier flags for flagsChanged: diff (Phase 9a).
+    /// Previous modifier flags for `flagsChanged:` diff.
     pub(crate) prev_modifier_flags: Cell<NSEventModifierFlags>,
     /// True between the first `setMarkedText:` of a composition session and
     /// the matching `insertText:` / `unmarkText`. Drives the IME state
@@ -208,7 +208,7 @@ pub struct MetalViewIvars {
     /// typing (AppKit clears marked text BEFORE `insertText:` on commit,
     /// so `hasMarkedText` is unreliable at that point).
     pub(crate) was_composing: Cell<bool>,
-    /// C14 — IME-first key routing while composing.
+    /// IME-first key routing while composing.
     ///
     /// When `keyDown:` fires *during* a composition, we must NOT pre-dispatch
     /// `Event::KeyDown` (it would let the framework act on Tab/etc. before
@@ -223,7 +223,7 @@ pub struct MetalViewIvars {
     pub(crate) pending_keydown: RefCell<Option<PendingKey>>,
 }
 
-/// C14 — decoded key info stashed by `keyDown:` while composing, dispatched
+/// Decoded key info stashed by `keyDown:` while composing, dispatched
 /// by `doCommandBySelector:` if the IME refused the key. See
 /// [`MetalViewIvars::pending_keydown`].
 pub(crate) struct PendingKey {
@@ -334,7 +334,7 @@ define_class!(
         }
 
         // -----------------------------------------------------------------------
-        // Mouse event selectors (Phase 5a)
+        // Mouse event selectors
         // -----------------------------------------------------------------------
 
         #[unsafe(method(mouseDown:))]
@@ -532,17 +532,17 @@ define_class!(
         }
 
         // -----------------------------------------------------------------------
-        // Keyboard event selectors (Phase 9a)
+        // Keyboard event selectors
         // -----------------------------------------------------------------------
 
         /// `keyDown:` — physical key press.
         ///
-        /// Phase 9c: emit `Event::KeyDown` with the keymap-decoded `Key`
-        /// (handlers see Named keys like Enter/Backspace/Arrow), then
-        /// hand the event to `-[NSResponder interpretKeyEvents:]` so
-        /// AppKit can route it through the IME protocol methods below
-        /// (`insertText:` for non-IME ASCII / emoji-picker output;
-        /// `setMarkedText:` / `insertText:` for IME composition).
+        /// Emits `Event::KeyDown` with the keymap-decoded `Key` (handlers see
+        /// Named keys like Enter/Backspace/Arrow), then hands the event to
+        /// `-[NSResponder interpretKeyEvents:]` so AppKit can route it through
+        /// the IME protocol methods below (`insertText:` for non-IME ASCII /
+        /// emoji-picker output; `setMarkedText:` / `insertText:` for IME
+        /// composition).
         ///
         /// `Event::TextInput` is NOT emitted here — it now flows from
         /// `insertText:` when `was_composing == false`, which preserves
@@ -566,7 +566,7 @@ define_class!(
                     .unwrap_or_default();
                 let key = decode_key(code, &chars);
                 let _ = is_visible_text; // retained for keyUp; suppress unused-fn warning here.
-                // C14: IME-first routing while composing. If a composition is
+                // IME-first routing while composing. If a composition is
                 // already live (`was_composing == true`), do NOT pre-dispatch
                 // `Event::KeyDown` — the IME may consume the key for
                 // composition purposes (e.g. Pinyin Tab cycles tone marks),
@@ -693,7 +693,7 @@ define_class!(
 
         #[unsafe(method(doCommandBySelector:))]
         fn do_command_by_selector(&self, _selector: Sel) {
-            // C14: AppKit calls this when the IME refused the keystroke.
+            // AppKit calls this when the IME refused the keystroke.
             // - Composing path (`keyDown:` deferred the `KeyDown` dispatch):
             //   emit the stashed `Event::KeyDown` now so navigation /
             //   Escape / IMEs-that-pass-Tab-through still reach the

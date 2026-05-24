@@ -1,6 +1,6 @@
 //! Integration tests for TextShapingCache hit/miss behavior.
 //!
-//! Phase 6 (D10): Validates that the text shaping cache correctly:
+//! Validates that the text shaping cache correctly:
 //! - Misses on first render (shape closure invoked)
 //! - Hits on second render with unchanged content/style/bounds (shape closure NOT invoked)
 //! - Misses after content change (shape closure invoked)

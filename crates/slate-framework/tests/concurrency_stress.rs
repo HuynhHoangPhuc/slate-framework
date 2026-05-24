@@ -1,4 +1,4 @@
-//! Concurrency stress tests for Phase 4 reactive system.
+//! Concurrency stress tests for the reactive system.
 //!
 //! Run in release mode 10× for flake detection:
 //! ```sh

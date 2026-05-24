@@ -1,11 +1,11 @@
 //! IME state registry + per-element composition state.
 //!
-//! Phase 9c. Mirrors the [`FocusRegistry`](crate::focus::FocusRegistry) lifecycle:
+//! Mirrors the [`FocusRegistry`](crate::focus::FocusRegistry) lifecycle:
 //! cleared at the start of every prepaint, re-registered per ime-capable
 //! element during the prepaint walk, then [`prune_missing`](ImeRegistry::prune_missing)
 //! collapses any state belonging to unmounted elements.
 //!
-//! # Cache-then-query (ADR-001 amendment)
+//! # Cache-then-query
 //!
 //! The platform `WindowImeDelegate` query channel does NOT traverse this
 //! registry directly. Instead, `AppState` republishes a snapshot

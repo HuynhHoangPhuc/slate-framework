@@ -108,7 +108,7 @@ pub trait Window: HasWindowHandle + HasDisplayHandle + 'static {
     /// caller arms one timer for the next desired tick, then re-arms on
     /// the redraw it triggered. Single-shot semantics avoid leaking a
     /// repeating timer when the focused element changes or the window
-    /// loses focus mid-animation (Phase 10a.6 charter, OQ3 resolution).
+    /// loses focus mid-animation.
     ///
     /// `deadline` in the past still fires — it is clamped up to the
     /// platform's minimum timer resolution (Win32 `USER_TIMER_MINIMUM` =
@@ -343,7 +343,7 @@ pub enum Event {
     /// Sent immediately before `run` returns.
     Exiting,
     // -------------------------------------------------------------------------
-    // Mouse events (Phase 5a)
+    // Mouse events
     // -------------------------------------------------------------------------
     MouseDown {
         window: WindowId,
@@ -384,7 +384,7 @@ pub enum Event {
         window: WindowId,
     },
     // -------------------------------------------------------------------------
-    // Keyboard events (Phase 9a)
+    // Keyboard events
     // -------------------------------------------------------------------------
     /// Physical key pressed. Carries both the layout-independent [`KeyCode`]
     /// and the logical [`Key`] value.
@@ -406,13 +406,13 @@ pub enum Event {
         modifiers: Modifiers,
     },
     /// Composed text from a single keypress (or surrogate pair on Windows).
-    /// IME pre-edit not yet routed here; deferred to Phase 9c.
+    /// IME pre-edit is routed via `ImePreedit` / `ImeCommit` / `ImeEnabled` / `ImeDisabled`.
     TextInput {
         window: WindowId,
         text: String,
     },
     // -------------------------------------------------------------------------
-    // Keyboard IME events (Phase 9c)
+    // Keyboard IME events
     // -------------------------------------------------------------------------
     /// IME composition session started. Fires exactly once per session at
     /// the first `setMarkedText:` (macOS, synthesised from marked-range
@@ -447,7 +447,7 @@ pub enum Event {
         window: WindowId,
     },
     // -------------------------------------------------------------------------
-    // Device recovery events (Phase 5)
+    // Device recovery events
     // -------------------------------------------------------------------------
     /// GPU device was lost (driver reset, TDR, adapter change).
     /// If `fatal: true`, recovery failed after max attempts - app should close window.

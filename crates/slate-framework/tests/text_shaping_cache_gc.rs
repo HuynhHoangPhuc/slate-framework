@@ -1,6 +1,6 @@
 //! Integration tests for TextShapingCache garbage collection.
 //!
-//! Phase 6 (D10): Validates that cache entries not accessed for 2+ consecutive
+//! Validates that cache entries not accessed for 2+ consecutive
 //! frames are garbage collected.
 
 use slate_framework::{AnyElement, Div, HeadlessApp, Text};

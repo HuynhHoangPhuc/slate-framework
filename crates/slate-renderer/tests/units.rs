@@ -1,9 +1,9 @@
-//! Phase 1 tests for the `Lpx` newtype.
+//! Tests for the `Lpx` newtype.
 //!
-//! These tests are written first (TDD) and lock in the contract:
+//! Locks in the contract:
 //! - `Lpx` is `#[repr(transparent)]` over `f32` with identical size/alignment.
 //! - `bytemuck::cast_slice::<Lpx, f32>` round-trips bit-identically (required
-//!   for Phase 2's `*Instance.rect: [Lpx; 4]` Pod casts).
+//!   for `*Instance.rect: [Lpx; 4]` Pod casts in instance buffers).
 //! - Arithmetic ops compose cleanly without round-trip through raw `f32`.
 //! - `Lpx -> f32` is a cheap unwrap; the reverse direction is intentionally
 //!   *absent* to prevent the foot-gun that the type exists to fix.

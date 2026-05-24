@@ -1,9 +1,9 @@
-//! Smoke test for `Window::schedule_redraw_at` (Phase 10a.6).
+//! Smoke test for `Window::schedule_redraw_at`.
 //!
 //! Windows-gated because only `WinWindow` exposes the
 //! `redraw_timer_armed_for_test` hook today. macOS uses a generation-counter
 //! design (no flag to observe); its round-trip is covered by operator testing
-//! against the eventual caret-blink driver in 10b.4.
+//! against the caret-blink driver.
 
 #![cfg(all(target_os = "windows", feature = "test-hooks"))]
 

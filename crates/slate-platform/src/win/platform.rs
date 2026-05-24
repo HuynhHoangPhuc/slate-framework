@@ -42,7 +42,7 @@ impl Platform for WinPlatform {
     type Window = WinWindow;
 
     fn new() -> Self {
-        // H6 fix: enable per-monitor v2 DPI awareness once per process.
+        // Enable per-monitor v2 DPI awareness once per process.
         // SAFETY: Always safe to call; failure (already set) is non-fatal.
         let _ =
             unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
@@ -52,7 +52,7 @@ impl Platform for WinPlatform {
             .expect("GetModuleHandleW failed")
             .into();
 
-        // H3 fix: register window class; idempotent under ERROR_CLASS_ALREADY_EXISTS.
+        // Register window class; idempotent under ERROR_CLASS_ALREADY_EXISTS.
         // SAFETY: All WNDCLASSEXW fields are valid Win32 values.
         let cursor = unsafe { LoadCursorW(None, IDC_ARROW) }.expect("LoadCursorW failed");
 

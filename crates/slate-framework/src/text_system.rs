@@ -50,7 +50,7 @@ pub struct TextSystem {
 }
 
 // !Send is enforced by PhantomData<*const ()> in the struct.
-// Compile-fail test for verification: tests/compile-fail/text_system_send.rs (Phase 3+)
+// Compile-fail test for verification: tests/compile-fail/text_system_send.rs
 
 impl TextSystem {
     /// Create a new TextSystem for the current platform.
@@ -220,11 +220,11 @@ impl PlatformFont {
     }
 }
 
-// Note: !Send verification via compile-fail test planned for Phase 3+.
+// Note: !Send verification via compile-fail test; see tests/compile-fail/text_system_send.rs.
 // PhantomData<*const ()> marker enforces !Send at compile time.
 
 // ---------------------------------------------------------------------------
-// Phase 4: RendererObserver implementation for cache invalidation
+// RendererObserver implementation for cache invalidation
 // ---------------------------------------------------------------------------
 
 /// Observer that clears GlyphCache CPU state on device recreation.

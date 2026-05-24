@@ -1,11 +1,11 @@
-//! Atlas-sampled glyph pipeline (Phase 5).
+//! Atlas-sampled glyph pipeline.
 //!
 //! Renders every [`GlyphInstance`] from a [`crate::Scene`] in a single
 //! `draw(0..6, 0..N)` call, sampling from the shared R8 alpha atlas
 //! ([`crate::atlas::Atlas`] in `Format::R8Unorm`) tinted by per-instance
 //! premultiplied ink color.
 //!
-//! # Two-phase API (red-team P0-2)
+//! # Two-phase API
 //!
 //! Same shape as [`crate::ImagePipeline`] / [`crate::InstancedRectPipeline`]:
 //!
@@ -16,11 +16,11 @@
 //!
 //! # Atlas binding
 //!
-//! Pipeline does NOT own the atlas. Phase 7 `Renderer` owns one shared glyph
-//! atlas; the pipeline holds a `BindGroup` referencing the atlas's texture
-//! view plus a linear sampler. When the atlas re-allocates the underlying
-//! texture, the renderer must call [`rebuild_atlas_bg`] with the new `Atlas`
-//! so the bind group stays valid.
+//! Pipeline does NOT own the atlas. `Renderer` owns one shared glyph atlas;
+//! the pipeline holds a `BindGroup` referencing the atlas's texture view plus
+//! a linear sampler. When the atlas re-allocates the underlying texture, the
+//! renderer must call [`rebuild_atlas_bg`] with the new `Atlas` so the bind
+//! group stays valid.
 //!
 //! # Color contract
 //!
@@ -121,8 +121,8 @@ impl GlyphPipeline {
         viewport_bgl: &BindGroupLayout,
         glyph_atlas: &Atlas,
     ) -> Self {
-        // Phase 1 contract: surface must be sRGB so hw handles linear→sRGB
-        // encoding. Glyph atlas itself is linear R8 — separate concern.
+        // Surface must be sRGB so hw handles linear→sRGB encoding.
+        // Glyph atlas itself is linear R8 — separate concern.
         assert!(
             matches!(
                 surface_format,
@@ -191,7 +191,7 @@ impl GlyphPipeline {
                 entry_point: Some("fs_main"),
                 targets: &[Some(ColorTargetState {
                     format: surface_format,
-                    // Phase 1 premultiplied contract.
+                    // Premultiplied-alpha blend: One/OneMinusSrcAlpha on both color and alpha.
                     blend: Some(BlendState {
                         color: BlendComponent {
                             src_factor: BlendFactor::One,
@@ -239,7 +239,7 @@ impl GlyphPipeline {
     }
 
     /// Rebuild the atlas bind group from a new `Atlas`. Call this when the
-    /// atlas re-allocates its underlying texture (Phase 7+ atlas growth).
+    /// atlas re-allocates its underlying texture (e.g. on atlas growth).
     /// Panics if `glyph_atlas` has the wrong format (must be `R8Unorm`).
     pub fn rebuild_atlas_bg(&mut self, device: &Device, glyph_atlas: &Atlas) {
         assert_eq!(
@@ -373,8 +373,8 @@ pub fn allocate_glyph(
         max: PAGE_SIZE,
     })?;
     let alloc = atlas.allocate(padded_w, padded_h)?;
-    // 1-texel inset in normalized coords. Query the atlas so Phase 2
-    // multi-page atlases (potentially different page sizes) stay correct.
+    // 1-texel inset in normalized coords. Query the atlas so future multi-page
+    // atlases with differing page sizes stay correct.
     let texel = atlas.texel_size_uv();
     Ok(AtlasAllocation {
         uv_rect: [

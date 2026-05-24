@@ -1,6 +1,6 @@
-//! Headless integration tests for [`slate_renderer::GlyphPipeline`] (Phase 5).
+//! Headless integration tests for [`slate_renderer::GlyphPipeline`].
 //!
-//! Covers (per phase-05 step 5):
+//! Covers:
 //!   - Mask render: 16×16 fully-opaque alpha patch tinted premultiplied red
 //!     → red center pixel.
 //!   - Premultiplied tint × half-alpha mask: 16×16 alpha=128 patch + premul
@@ -397,10 +397,9 @@ fn gutter_blocks_neighbor_bleed_at_render_time() {
 
 #[test]
 fn ten_glyphs_in_one_draw_render_correct_centers() {
-    // Red-team M1 / phase-05 success criterion: prove `draw(0..6, 0..N)`
-    // for N>1 actually walks per-instance attributes correctly. A bug in
-    // INSTANCE_ATTRS stride or a misread of `Uint32` at offset 48 only
-    // surfaces when the GPU fetches instance ≥1.
+    // Prove `draw(0..6, 0..N)` for N>1 actually walks per-instance attributes
+    // correctly. A bug in INSTANCE_ATTRS stride or a misread of `Uint32` at
+    // offset 48 only surfaces when the GPU fetches instance ≥1.
     let Some((device, queue)) = common::make_headless_device() else {
         eprintln!("glyph_pipeline: no GPU adapter — skipping");
         return;
@@ -470,12 +469,12 @@ fn ten_glyphs_in_one_draw_render_correct_centers() {
 fn sub_pixel_variant_does_not_affect_phase1_output() {
     // Direct proof that `sub_pixel_variant` (location 4) is read end-to-end:
     // render the same glyph twice with variant=0 vs variant=3 and assert byte-
-    // identical output. In Phase 1 the fragment shader's variant term is
-    // anchored as `+ vec4(0.0) * f32(variant)` so naga can't strip the
-    // location read across DX12/Metal/Vulkan/SPIR-V. If a future refactor
-    // dropped the anchor, naga would prune the attribute, the pipeline would
-    // fail validation, AND this test would catch a behavioral divergence
-    // *before* Phase 2's subpixel-AA path turns variant into a real input.
+    // identical output. The fragment shader's variant term is anchored as
+    // `+ vec4(0.0) * f32(variant)` so naga can't strip the location read
+    // across DX12/Metal/Vulkan/SPIR-V. If a future refactor dropped the
+    // anchor, naga would prune the attribute, the pipeline would fail
+    // validation, AND this test would catch a behavioral divergence before any
+    // subpixel-AA path turns variant into a real input.
     let Some((device, queue)) = common::make_headless_device() else {
         eprintln!("glyph_pipeline: no GPU adapter — skipping");
         return;
@@ -519,8 +518,8 @@ fn sub_pixel_variant_does_not_affect_phase1_output() {
 
     assert_eq!(
         buf_v0, buf_v3,
-        "Phase 1 output must be invariant to sub_pixel_variant; if this fires \
-         either the location-4 anchor was removed or Phase 2 semantics leaked \
-         into the shader",
+        "output must be invariant to sub_pixel_variant; if this fires \
+         either the location-4 anchor was removed or subpixel-AA semantics \
+         leaked into the shader",
     );
 }

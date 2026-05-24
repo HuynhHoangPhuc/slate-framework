@@ -1,14 +1,14 @@
 //! Text shaping cache for paint optimization.
 //!
-//! Phase 6 (D10): Cache pre-atlas `Vec<ShapedGlyph>` per Text element to skip
+//! Caches pre-atlas `Vec<ShapedGlyph>` per Text element to skip
 //! cosmic-text shaping (~70% of paint cost) when content/style/bounds unchanged.
 //!
 //! # Architecture
 //!
 //! - **TextShapingCache**: per-frame cache keyed by `(ElementId, input_hash)`
 //! - **CachedTextShape**: stores `Vec<ShapedGlyph>` (pre-atlas) + metadata
-//! - Atlas resolution happens at replay — eviction-safe (F5)
-//! - Leaf-only caching (F4 Strategy L): only Text is cached; Div returns 0 → never cached
+//! - Atlas resolution happens at replay — eviction-safe (re-resolved per paint, no stale refs)
+//! - Leaf-only caching: only Text is cached; Div returns 0 → never cached
 //!
 //! # Post-v1 Expansion
 //!
@@ -38,8 +38,8 @@ const PER_ELEMENT_SIZE_CAP: usize = 64 * 1024;
 /// Cache for pre-atlas shaped text to skip shaping on unchanged Text elements.
 ///
 /// Keyed by `(ElementId, input_hash)`. On cache hit, returns the stored
-/// `Vec<ShapedLine>` (pre-atlas). Caller re-resolves atlas slots at paint time
-/// (F5: atlas-eviction-safe).
+/// `Vec<ShapedLine>` (pre-atlas). Caller re-resolves atlas slots at paint time;
+/// pre-atlas storage makes entries safe across atlas evictions.
 ///
 /// # GC Semantics
 ///
@@ -332,7 +332,7 @@ impl Default for TextShapingCache {
 }
 
 // =============================================================================
-// Hash Helpers (F2: f32 quantization for Bounds/Color)
+// Hash Helpers (f32 quantized to avoid float hash instability)
 // =============================================================================
 
 /// Quantize f32 to 1/256-px and hash.
@@ -369,7 +369,7 @@ pub fn hash_color<H: Hasher>(color: &[f32; 4], h: &mut H) {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 4: RendererObserver implementation for cache invalidation
+// RendererObserver implementation for cache invalidation
 // ---------------------------------------------------------------------------
 
 /// Observer that clears TextShapingCache on device recreation.

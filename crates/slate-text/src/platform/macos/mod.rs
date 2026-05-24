@@ -152,7 +152,7 @@ impl Font for CoreTextFont {
 impl TextBackend for CoreTextBackend {
     type Font = CoreTextFont;
 
-    /// System-font lookup is deferred to Phase 2b.
+    /// System-font lookup is not yet implemented; returns `FontNotFound` for all family names.
     fn load_font(
         &mut self,
         family: &str,

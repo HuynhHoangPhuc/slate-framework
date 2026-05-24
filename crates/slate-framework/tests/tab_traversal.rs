@@ -1,4 +1,4 @@
-//! Tab traversal + focusability semantics tests (Phase 9b).
+//! Tab traversal + focusability semantics tests.
 //!
 //! Cross-platform — exercises `FocusRegistry` directly. Tab traversal is a
 //! pure-data operation; the dispatch wiring (Tab default shift, mouse-down

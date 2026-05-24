@@ -1,4 +1,4 @@
-//! Headless integration tests for [`slate_renderer::ShadowPipeline`] (Phase 6).
+//! Headless integration tests for [`slate_renderer::ShadowPipeline`].
 //!
 //! Covers:
 //!   - Single shadow renders non-zero alpha at center and near-zero at ±3σ edge.

@@ -1,4 +1,4 @@
-//! Integration tests for TextField mouse handlers (Phase 10a.5).
+//! Integration tests for TextField mouse handlers.
 //!
 //! Mirrors the production handler logic against `AppState` dispatch to lock in
 //! click-to-position + drag-select state transitions. The byte-x math is

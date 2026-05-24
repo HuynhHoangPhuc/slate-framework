@@ -40,7 +40,6 @@ use crate::WindowId;
 /// Physical pixel dimensions of a window's drawable surface.
 ///
 /// Distinct from logical size (which is divided by scale factor).
-/// Phase 4 dispatch sites pass the post-DPI physical extent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
 pub struct PhysicalSize {
     pub width: u32,
@@ -154,7 +153,7 @@ pub trait WindowRenderDelegate {
 /// (macOS `NSTextInputClient` methods on `MetalView`, Windows `WM_IME_*`
 /// arms in `wnd_proc_trampoline`) **during composition**.
 ///
-/// # ADR-001 amendment (cache-then-query, Phase 9c)
+/// # Cache-then-query contract
 ///
 /// Implementers MUST read all four query methods from a pre-published
 /// snapshot (e.g. `AppState.cached_ime_query: RefCell<CachedImeQuery>`)

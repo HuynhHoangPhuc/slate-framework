@@ -1,4 +1,4 @@
-//! Integration tests for `AppState::dispatch_ime_*` (Phase 9c).
+//! Integration tests for `AppState::dispatch_ime_*`.
 //!
 //! Verifies that IME preedit / commit / lifecycle events route through the
 //! dispatch methods into registered handlers, return the expected `AppSignal`,

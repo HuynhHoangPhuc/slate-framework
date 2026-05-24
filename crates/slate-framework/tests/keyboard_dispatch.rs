@@ -1,4 +1,4 @@
-//! Headless tests for `AppState::dispatch_key_*` (Phase 9a).
+//! Headless tests for `AppState::dispatch_key_*`.
 //!
 //! Verifies that synthetic KeyDown / KeyUp / TextInput events route through
 //! the dispatch methods into registered handlers, return the expected
@@ -205,9 +205,9 @@ fn dispatch_does_not_request_redraw_when_no_handlers() {
 
 #[test]
 fn keyboard_dispatch_unaffected_by_ime_registry() {
-    // Phase 9c back-compat sweep: with NO ime-capable elements registered,
-    // the 9a/9b keyboard dispatch path is identical in behaviour. Verifies
-    // that Phase 9c additions did not regress 9a/9b code paths.
+    // Back-compat sweep: with NO ime-capable elements registered, the
+    // keyboard dispatch path is identical in behaviour. Verifies that IME
+    // additions did not regress existing keyboard dispatch code paths.
     let fired = Rc::new(Cell::new(0u32));
     let f = fired.clone();
     let state = make_state();

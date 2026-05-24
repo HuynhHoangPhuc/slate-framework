@@ -1,7 +1,7 @@
 //! Font loading for DirectWrite backend.
 //!
 //! Uses IDWriteInMemoryFontFileLoader (DirectWrite 5+) to load fonts from static byte slices.
-//! System font lookup deferred to Phase 2b.
+//! System font lookup by family name is not yet implemented.
 
 use crate::{FontHandle, FontMetrics, TextError};
 use log::debug;

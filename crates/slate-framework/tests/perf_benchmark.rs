@@ -1,4 +1,4 @@
-//! Performance benchmarks for Phase 4 reactive system.
+//! Performance benchmarks for the reactive system.
 //!
 //! Measures frame times and cache hit rates against success criteria:
 //! - Idle frame ≤ 1.5 ms

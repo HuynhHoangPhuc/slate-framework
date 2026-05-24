@@ -49,10 +49,11 @@ pub trait TextBackend {
     /// * `size_lpx` - Font size in logical pixels
     /// * `scale` - Display scale factor (e.g., 2.0 for Retina)
     ///
-    /// # Phase 2a Note
+    /// # System Font Support
     ///
-    /// System font lookup is deferred to Phase 2b. Implementations may return
-    /// `TextError::FontNotFound` for all family lookups in Phase 2a.
+    /// System font lookup is not yet implemented. Implementations may return
+    /// `TextError::FontNotFound` for all family lookups until system font
+    /// enumeration is wired up.
     fn load_font(
         &mut self,
         family: &str,
@@ -61,8 +62,6 @@ pub trait TextBackend {
     ) -> Result<Self::Font, TextError>;
 
     /// Load a font from raw TTF/OTF bytes.
-    ///
-    /// This is the primary path for Phase 2a using the bundled DejaVu Sans font.
     ///
     /// # Arguments
     ///

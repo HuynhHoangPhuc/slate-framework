@@ -1,7 +1,7 @@
 //! Font loading for CoreText backend.
 //!
 //! Loads fonts from static byte slices using `CTFontManagerCreateFontDescriptorFromData`.
-//! System font lookup is deferred to Phase 2b.
+//! System font lookup by family name is not yet implemented.
 
 use crate::error::TextError;
 use crate::types::FontMetrics;

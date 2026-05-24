@@ -1,6 +1,6 @@
-//! Headless integration tests for [`slate_renderer::ImagePipeline`] (Phase 4).
+//! Headless integration tests for [`slate_renderer::ImagePipeline`].
 //!
-//! Covers (per phase-04 step 4):
+//! Covers:
 //!   - sRGB roundtrip: 4×4 opaque-red atlas patch sampled by an instance
 //!     covering the viewport renders red at the center pixel.
 //!   - Tint multiplication: same patch with green premul tint renders black.
@@ -225,8 +225,8 @@ fn premul_half_alpha_red_patch_matches_smoke() {
     drop(atlas);
 
     // Compute expected sRGB-encoded R from the actual color helpers instead
-    // of hardcoding 187/188 (red-team P1-5: avoid drift if a future driver
-    // changes rounding by 1 LSB or the helpers retune).
+    // of hardcoding 187/188 — avoids drift if a future driver changes
+    // rounding by 1 LSB or the helpers retune.
     let alpha_linear = 128_f32 / 255.0;
     let r_premul_linear = 1.0 * alpha_linear;
     let r_srgb = (linear_to_srgb_channel(r_premul_linear) * 255.0).round() as u8;
@@ -304,7 +304,7 @@ fn capacity_grows_monotonically() {
 
 #[test]
 fn non_uniform_patch_preserves_orientation() {
-    // Red-team P0-2 / P2-10: a uniform 4×4 red patch can't detect a uv flip.
+    // A uniform 4×4 red patch can't detect a uv flip.
     // Top half red, bottom half blue → after sampling at top vs bottom of the
     // viewport-covering rect, top should read red, bottom should read blue.
     let Some((device, queue)) = common::make_headless_device() else {
@@ -349,9 +349,9 @@ fn non_uniform_patch_preserves_orientation() {
     );
     drop(atlas);
 
-    // Sample interior texel centers to avoid the atlas-edge bleed (red-team
-    // P0-1 — gutter is deferred to Phase 5 per plan risk row). With a 32-px
-    // rect over a 4-row patch, texel centers land at viewport y ∈ {4,12,20,28}.
+    // Sample interior texel centers to avoid atlas-edge bleed (the gutter
+    // added by allocate_image/allocate_glyph guards against this in production).
+    // With a 32-px rect over a 4-row patch, texel centers land at viewport y ∈ {4,12,20,28}.
     // y=4 is row 0 (red, full); y=20 is the row-2/3 midpoint (both blue, full).
     common::assert_pixel(&buf, w, w / 2, 4, [255, 0, 0, 255], 2);
     common::assert_pixel(&buf, w, w / 2, 20, [0, 0, 255, 255], 2);
@@ -359,8 +359,8 @@ fn non_uniform_patch_preserves_orientation() {
 
 #[test]
 fn multi_layer_disjoint_ranges_in_single_pass() {
-    // Phase 2 parity: prepare all instances once, record disjoint sub-ranges
-    // for "layers" 0 and 1 inside a single pass.
+    // Prepare all instances once, record disjoint sub-ranges for "layers" 0
+    // and 1 inside a single pass.
     let Some((device, queue)) = common::make_headless_device() else {
         eprintln!("image_pipeline: no GPU adapter — skipping");
         return;
@@ -424,7 +424,7 @@ fn multi_layer_disjoint_ranges_in_single_pass() {
 #[test]
 fn rebuild_atlas_bg_does_not_break_subsequent_draws() {
     // Smoke test: after rebuild_atlas_bg with the same texture view, the
-    // pipeline still draws correctly. Phase 7 will swap views on atlas growth;
+    // pipeline still draws correctly. The renderer swaps views on atlas growth;
     // this guards the API path even if the underlying texture is unchanged.
     let Some((device, queue)) = common::make_headless_device() else {
         eprintln!("image_pipeline: no GPU adapter — skipping");

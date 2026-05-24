@@ -1,6 +1,6 @@
 //! Async executor for UI-thread and background tasks.
 //!
-//! Split executor design per red-team Finding 5:
+//! Split executor design:
 //! - `ForegroundExecutor` — `!Send`, runs on the UI thread
 //! - `BackgroundExecutor` — `Send + Sync + Clone`, runs on a thread pool
 //!

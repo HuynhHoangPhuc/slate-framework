@@ -1,5 +1,4 @@
-//! Headless integration tests for [`slate_renderer::InstancedRectPipeline`]
-//! (Phase 2).
+//! Headless integration tests for [`slate_renderer::InstancedRectPipeline`].
 //!
 //! Covers:
 //!   - 100 rects rendered in one `draw` call produce expected center-pixel
@@ -7,8 +6,7 @@
 //!   - Instance buffer grows monotonically across `prepare` calls and never
 //!     shrinks below high-water mark.
 //!   - The two-phase `prepare → begin_render_pass → record` sequence
-//!     compiles and runs cleanly (red-team P0-2 regression check — covered
-//!     implicitly by the first test).
+//!     compiles and runs cleanly (covered implicitly by the first test).
 
 mod common;
 

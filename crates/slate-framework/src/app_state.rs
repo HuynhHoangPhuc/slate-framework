@@ -12,7 +12,7 @@
 //! Each borrow is released before the next begins. Do NOT hold multiple borrows
 //! simultaneously unless they are proven non-conflicting.
 
-#![allow(dead_code)] // Phase 1: some methods unused until later phases wire them
+#![allow(dead_code)] // Some methods unused until callers in later layers wire them
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -51,7 +51,7 @@ use crate::text_system::{TextSystem, TextSystemObserver};
 use crate::types::{AccessibilityNode, ElementId, Point, Size};
 use crate::view::View;
 
-// Recovery state machine constants (Phase 3).
+// Recovery state machine constants.
 // Test-fast overrides (test-hooks feature) shrink each cycle to ~tens of ms so
 // integration tests can exercise multiple recovery cycles inside a 5-second
 // wall-clock budget without burning CPU on cooldown sleeps.
@@ -70,7 +70,7 @@ pub(crate) const RECOVERY_BACKOFF_BASE_MS: u64 = 10;
 pub(crate) const RECOVERY_BACKOFF_STEP_MS: u64 = 10;
 pub(crate) const RECOVERY_FLAP_GUARD_SECS: u64 = 5;
 
-// Phase 4 (H3): minimum spacing between adapter-LUID probes in `dispatch_redraw`.
+// Minimum spacing between adapter-LUID probes in `dispatch_redraw`.
 // During a cross-monitor drag the window can cross the boundary many times in
 // quick succession; probing every redraw would mark device-lost repeatedly and
 // thrash the recovery state machine. 100ms is short enough to feel instant on
@@ -96,13 +96,13 @@ pub enum DeviceLossReason {
     WgpuCallback,
 }
 
-/// Recovery state machine for device-lost handling (Phase 3).
+/// Recovery state machine for device-lost handling.
 ///
 /// Replaces the old 3-shot immediate retry with a zed-validated pattern:
 /// 350ms cooldown, 5-attempt backoff, and skip_draws gating.
 ///
 /// Each non-terminal active variant carries the `DeviceLossReason` so the
-/// flap-guard predicate can apply reason-aware semantics (Phase 2 — L1).
+/// flap-guard predicate can apply reason-aware semantics.
 #[derive(Debug, Clone)]
 pub enum RecoveryState {
     /// Device is healthy, no recovery in progress.
@@ -112,8 +112,8 @@ pub enum RecoveryState {
         detected_at: Instant,
         reason: DeviceLossReason,
     },
-    /// Loss occurred during the WM_ENTERSIZEMOVE..WM_EXITSIZEMOVE modal loop
-    /// (Phase 3 — L2). Recovery is deferred until the modal loop exits, so a
+    /// Loss occurred during the WM_ENTERSIZEMOVE..WM_EXITSIZEMOVE modal loop.
+    /// Recovery is deferred until the modal loop exits, so a
     /// drag that crosses adapters multiple times in a single gesture collapses
     /// into one recovery cycle. Exits to `CooldownGate` on `on_size_move_end`.
     DeferredUntilStable {
@@ -236,7 +236,7 @@ pub struct AppState<V: View> {
     pub(crate) state_registry: RefCell<StateRegistry>,
     pub text_shaping_cache: Rc<RefCell<TextShapingCache>>,
 
-    // Phase 4: Device-lost cache invalidation observers (held as Rc to keep alive)
+    // Device-lost cache invalidation observers (held as Rc to keep alive)
     pub text_system_observer: Rc<TextSystemObserver>,
     pub text_shaping_cache_observer: Rc<TextShapingCacheObserver>,
 
@@ -251,27 +251,26 @@ pub struct AppState<V: View> {
     // Window reference for size queries
     pub window: Arc<DefaultWindow>,
 
-    // Device-lost recovery state machine (Phase 3)
+    // Device-lost recovery state machine
     pub recovery_state: RefCell<RecoveryState>,
-    /// One-frame present suppression after recovery (Phase 3).
+    /// One-frame present suppression after recovery.
     pub skip_draws: Cell<bool>,
-    /// Post-recovery flap clock (Phase 3). Stamped on every successful
-    /// recovery regardless of reason. Retained for log continuity and
-    /// downstream consumers; the reason-aware predicate now uses
-    /// `last_wgpu_callback_loss_at` (Phase 2).
+    /// Post-recovery flap clock. Stamped on every successful recovery
+    /// regardless of reason. Retained for log continuity and downstream
+    /// consumers; the reason-aware predicate uses `last_wgpu_callback_loss_at`.
     pub last_successful_recovery_at: Cell<Option<Instant>>,
-    /// WgpuCallback inter-loss clock (Phase 2 — L1). Stamped on each
-    /// `WgpuCallback` classification edge. Drives the reason-aware flap
-    /// guard: 2× `WgpuCallback` within `RECOVERY_FLAP_GUARD_SECS` → `GiveUp`.
+    /// WgpuCallback inter-loss clock. Stamped on each `WgpuCallback`
+    /// classification edge. Drives the reason-aware flap guard: 2×
+    /// `WgpuCallback` within `RECOVERY_FLAP_GUARD_SECS` → `GiveUp`.
     /// `LuidMigration` losses do not stamp or read this clock.
     pub last_wgpu_callback_loss_at: Cell<Option<Instant>>,
-    /// Phase 4 (H3): timestamp of the last adapter-LUID probe. Skip the probe
-    /// for `ADAPTER_PROBE_MIN_INTERVAL_MS` after the previous one so a
+    /// Timestamp of the last adapter-LUID probe. Skip the probe for
+    /// `ADAPTER_PROBE_MIN_INTERVAL_MS` after the previous one so a
     /// cross-monitor drag that straddles the seam for multiple frames does
     /// not repeatedly fire `mark_device_lost`.
     pub last_adapter_check_at: Cell<Option<Instant>>,
 
-    // Renderer generation signal (Phase 1): increments on each successful device rebuild.
+    // Renderer generation signal: increments on each successful device rebuild.
     // Reactive consumers can subscribe to this to detect device recreation.
     pub renderer_generation: Signal<u64>,
 
@@ -292,29 +291,29 @@ pub struct AppState<V: View> {
     // same PhysicalSize twice in a tick (e.g. logical→backing rounding).
     pub last_resize_size: Cell<Option<PhysicalSize>>,
 
-    // App-level keyboard handlers (Phase 9a). Per-element key handlers ship
-    // separately in Phase 9b; these remain the permanent home for global
+    // App-level keyboard handlers. Per-element key handlers are looked up by
+    // ElementId during dispatch; these remain the permanent home for global
     // shortcuts. Vecs preserve registration order; multiple handlers compose.
     on_key_down: RefCell<Vec<KeyHandler>>,
     on_key_up: RefCell<Vec<KeyHandler>>,
     on_text_input: RefCell<Vec<TextInputHandler>>,
 
-    // Per-element keyboard handlers (Phase 9b). Looked up by ElementId during
+    // Per-element keyboard handlers. Looked up by ElementId during
     // the focused-chain bubble dispatch. Mirrors `handler_map` for mouse.
     pub(crate) key_handler_map: RefCell<HashMap<ElementId, KeyHandlers>>,
 
-    // Focus registry (Phase 9b). `Rc<RefCell<_>>` so `AppContext` can hold a
-    // clone for the outside-handler focus API. Repopulated each prepaint via
-    // `clear` + `register` calls; `prune_missing` after the walk auto-clears
-    // focus if the previously-focused element was unmounted.
+    // Focus registry. `Rc<RefCell<_>>` so `AppContext` can hold a clone for
+    // the outside-handler focus API. Repopulated each prepaint via `clear` +
+    // `register` calls; `prune_missing` after the walk auto-clears focus if
+    // the previously-focused element was unmounted.
     pub(crate) focus_registry: Rc<RefCell<FocusRegistry>>,
 
-    // Painted bounds of focusable elements (Phase 9b focus ring). Populated
-    // during prepaint, consumed once per paint pass when emitting the focus
-    // ring overlay. Sparse — only focusable elements contribute entries.
+    // Painted bounds of focusable elements (used by the focus ring overlay).
+    // Populated during prepaint, consumed once per paint pass. Sparse —
+    // only focusable elements contribute entries.
     pub(crate) focus_bounds: RefCell<HashMap<ElementId, crate::focus_ring::FocusBounds>>,
 
-    // -- Phase 9c IME state ---------------------------------------------------
+    // -- IME state ------------------------------------------------------------
     /// Per-frame IME state registry. Cleared at the start of every prepaint;
     /// `prune_missing` after the walk drops state for unmounted elements.
     pub(crate) ime_registry: RefCell<ImeRegistry>,
@@ -361,7 +360,7 @@ impl<V: View> AppState<V> {
         let view_observer_id = runtime.next_observer_id();
         let state_registry = StateRegistry::new(runtime.clone());
 
-        // Create Rc-wrapped caches for observer weak references (Phase 4)
+        // Create Rc-wrapped caches for observer weak references
         let text_system = Rc::new(RefCell::new(None));
         let text_shaping_cache = Rc::new(RefCell::new(TextShapingCache::new()));
 
@@ -371,7 +370,7 @@ impl<V: View> AppState<V> {
             &text_shaping_cache,
         )));
 
-        // Image cache + observer (Phase 2)
+        // Image cache + observer
         let image_cache = Rc::new(RefCell::new(ImageCache::new()));
         let image_system_observer = Rc::new(ImageSystemObserver::new(Rc::downgrade(&image_cache)));
 
@@ -442,8 +441,8 @@ impl<V: View> AppState<V> {
     }
 
     /// Apply a queued focus op (drained from an `EventCtx` after the handler
-    /// chain unwinds). No-op when `op` is `None`. Phase 2 surface; Phase 3
-    /// wires per-element key dispatch through this same drain point.
+    /// chain unwinds). No-op when `op` is `None`. Per-element key dispatch
+    /// also drains through this same apply point after each handler chain.
     pub(crate) fn apply_pending_focus_op(&self, op: Option<PendingFocusOp>) {
         let Some(op) = op else { return };
         let mut reg = self.focus_registry.borrow_mut();
@@ -554,7 +553,7 @@ impl<V: View> AppState<V> {
 
         log::info!("renderer and text system ready");
 
-        // 3. Register cache invalidation observers (Phase 4 + Phase 2)
+        // 3. Register cache invalidation observers
         renderer.register_observer(
             Rc::downgrade(&self.text_system_observer) as std::rc::Weak<dyn RendererObserver>
         );
@@ -665,7 +664,7 @@ impl<V: View> AppState<V> {
             }
         }
 
-        // Phase 3: State machine-driven device-lost recovery
+        // State machine-driven device-lost recovery
         let device_lost = {
             let r = self.renderer.borrow();
             r.as_ref().map(|r| r.is_device_lost()).unwrap_or(false)
@@ -688,7 +687,7 @@ impl<V: View> AppState<V> {
                 let reason = self.classify_loss_reason();
                 let now = Instant::now();
 
-                // L2 deferral: loss arrived during the modal size/move loop.
+                // Deferral: loss arrived during the modal size/move loop.
                 // Park in `DeferredUntilStable` — `on_size_move_end` will
                 // transition us into `CooldownGate` once the user releases.
                 // No render, no retry while deferred.
@@ -770,7 +769,7 @@ impl<V: View> AppState<V> {
                 return self.execute_recovery_step();
             }
             RecoveryState::DeferredUntilStable { reason, .. } => {
-                // L2: still inside modal size/move loop. Re-run the L1
+                // Still inside modal size/move loop. Re-apply the reason-
                 // upgrade rule so a `WgpuCallback` arriving mid-drag pins
                 // the stored reason to the real fault, then skip render.
                 // `on_size_move_end` transitions us out into CooldownGate.
@@ -799,7 +798,7 @@ impl<V: View> AppState<V> {
     }
 
     /// Classify the origin of a device-loss event by consuming the renderer's
-    /// wgpu-callback signal (Phase 2 — L1).
+    /// wgpu-callback signal.
     ///
     /// Returns `WgpuCallback` if wgpu's lost-callback fired since the last
     /// consume; otherwise `LuidMigration` (the loss was synthesized by the
@@ -820,7 +819,7 @@ impl<V: View> AppState<V> {
 
     /// Re-check the wgpu-callback signal during an in-flight recovery cycle
     /// and upgrade the carried reason to `WgpuCallback` if it has fired since
-    /// classification (Phase 2 — L1 upgrade rule).
+    /// initial classification.
     ///
     /// A `WgpuCallback` event arriving after a `LuidMigration` classification
     /// indicates the cross-monitor drag *also* tripped a real driver fault;
@@ -843,7 +842,7 @@ impl<V: View> AppState<V> {
         }
     }
 
-    /// Execute one step of the recovery retry loop (Phase 3).
+    /// Execute one step of the recovery retry loop.
     ///
     /// Called when `RecoveryState::Retrying`. Handles backoff sleep, renderer
     /// recreation, observer firing, and state transitions.
@@ -909,8 +908,8 @@ impl<V: View> AppState<V> {
                     .unwrap_or(0);
                 self.renderer_generation.set(renderer_gen);
 
-                // Phase 4 (H3): cross-monitor recovery just re-picked the adapter
-                // for the window's CURRENT monitor. Stamp the probe clock so the
+                // Cross-monitor recovery just re-picked the adapter for the
+                // window's CURRENT monitor. Stamp the probe clock so the
                 // 100ms throttle in `dispatch_redraw` doesn't immediately re-probe
                 // before the OS-level adapter state has settled.
                 self.last_adapter_check_at.set(Some(Instant::now()));
@@ -975,7 +974,7 @@ impl<V: View> AppState<V> {
             return;
         }
 
-        // Phase 3: skip_draws gate - suppress one frame after recovery
+        // skip_draws gate - suppress one frame after recovery
         if self.skip_draws.get() {
             log::debug!(target: "slate::device_lost", "skip_draws active — present suppressed");
             self.skip_draws.set(false);
@@ -1059,7 +1058,7 @@ impl<V: View> AppState<V> {
             fb.clear();
             ihm.clear();
             iri.clear();
-            // Phase 9c: clear the dirty bit; entries are pruned after the walk
+            // Clear the dirty bit; entries are pruned after the walk
             // using `ime_registered_ids` so per-element `Rc<RefCell<ImeState>>`
             // handles survive across frames for surviving elements.
             self.ime_registry.borrow_mut().clear();
@@ -1099,9 +1098,9 @@ impl<V: View> AppState<V> {
                 cx.a11y_stack.len()
             );
 
-            // Phase 9b: clear focus if the focused element was unmounted this frame.
+            // Clear focus if the focused element was unmounted this frame.
             fr.prune_missing();
-            // Phase 9c: drop ime entries for unmounted elements.
+            // Drop IME entries for unmounted elements.
             self.ime_registry.borrow_mut().prune_missing(&iri);
 
             // Auto-release mouse capture if the captured element was unmounted
@@ -1146,12 +1145,12 @@ impl<V: View> AppState<V> {
 
             root.paint(root_bounds, &mut cx);
 
-            // Phase 9c: refresh the IME query cache after every paint so the
-            // platform delegate sees the freshly-painted `caret_client_rect`.
+            // Refresh the IME query cache after every paint so the platform
+            // delegate sees the freshly-painted `caret_client_rect`.
             // NLL drops `cx`'s borrows here since it's not used past this point.
             self.republish_ime_cache();
 
-            // Phase 9b: focus ring overlay — emitted last so it sits on top of
+            // Focus ring overlay — emitted last so it sits on top of
             // element content. Only painted when the focused element opted into
             // a visible ring via `focus_ring(true)` (default for `focusable`).
             let focused = self.focus_registry.borrow().focused();
@@ -1265,7 +1264,7 @@ impl<V: View> AppState<V> {
     }
 
     // -----------------------------------------------------------------------
-    // Mouse event dispatch methods (Phase 2)
+    // Mouse event dispatch methods
     // -----------------------------------------------------------------------
 
     /// Dispatch MouseDown event.
@@ -1370,7 +1369,7 @@ impl<V: View> AppState<V> {
 
             // Invoke handlers (borrows released).
             // `pending_focus_op` accumulates focus requests across the chain
-            // (last-write-wins); Phase 3 drains and applies after the loop.
+            // (last-write-wins); drained and applied after the loop.
             let mut stopped = false;
             let mut pending_focus_op: Option<PendingFocusOp> = None;
             let mut pending_capture_op: Option<PendingCaptureOp> = None;
@@ -1753,7 +1752,7 @@ impl<V: View> AppState<V> {
     /// loses focus, modal popup steals it, SetCapture stolen by a sibling).
     /// Any `ImeState.dragging` flag set by `mouse_down` must be cleared here
     /// — otherwise the next `mouse_move` over that element would silently
-    /// re-extend the selection without a preceding mouse_down (Phase 10a.5).
+    /// re-extend the selection without a preceding mouse_down.
     pub(crate) fn dispatch_capture_lost(&self) -> AppSignal {
         *self.capture_target.borrow_mut() = None;
         *self.explicit_capture.borrow_mut() = false;
@@ -1763,7 +1762,7 @@ impl<V: View> AppState<V> {
     }
 
     // -----------------------------------------------------------------------
-    // Keyboard event dispatch methods (Phase 9a)
+    // Keyboard event dispatch methods
     //
     // Mirrors the mouse-dispatch pattern: build the framework event payload,
     // walk the registered handler vec, return `RequestRedraw` when any handler
@@ -1872,10 +1871,10 @@ impl<V: View> AppState<V> {
         self.apply_pending_focus_op(pending_focus_op);
         self.apply_pending_capture_op(pending_capture_op);
 
-        // Phase 9c: Tab during active composition must synthetically commit
-        // the preedit on the *still-focused* element before the focus shift.
-        // Enqueue + drain pattern (mutating IME state inline would conflict
-        // with the borrow that `focus_registry` will take a few lines down).
+        // Tab during active composition must synthetically commit the preedit
+        // on the *still-focused* element before the focus shift. Enqueue +
+        // drain pattern (mutating IME state inline would conflict with the
+        // borrow that `focus_registry` will take a few lines down).
         if !stopped
             && matches!(event.key, Key::Named(NamedKey::Tab))
             && let Some(focused) = self.focus_registry.borrow().focused()
@@ -1896,7 +1895,7 @@ impl<V: View> AppState<V> {
             }
         }
 
-        // Phase 9b: Tab / Shift+Tab default focus shift. Suppressed when any
+        // Tab / Shift+Tab default focus shift. Suppressed when any
         // handler in the chain called `cx.stop_propagation()`. Authors who
         // want Tab to insert a tab character (text input) intercept here.
         if !stopped && matches!(event.key, Key::Named(NamedKey::Tab)) {
@@ -2055,7 +2054,7 @@ impl<V: View> AppState<V> {
     }
 
     // -----------------------------------------------------------------------
-    // IME event dispatch (Phase 9c)
+    // IME event dispatch
     //
     // All four dispatchers share the focused-chain bubble shape used by
     // keyboard dispatch — snapshot per-element handlers up-front, then walk
@@ -2118,8 +2117,8 @@ impl<V: View> AppState<V> {
                 PendingImeOp::Commit { text, .. } => {
                     // Synthetic commit — inserts text at the focused
                     // element's caret + clears the preedit. Does NOT invoke
-                    // user `on_ime_commit` handlers (per phase-04 spec
-                    // step 16: re-entrancy contract).
+                    // user `on_ime_commit` handlers (re-entrancy contract:
+                    // synthetic commits must not invoke user callbacks).
                     let Some(focused) = self.focus_registry.borrow().focused() else {
                         continue;
                     };
@@ -2563,9 +2562,8 @@ impl<V: View> WindowRenderDelegate for AppState<V> {
     }
 
     fn on_display_change(&self, _window_id: WindowId) {
-        // Phase 5: Proactive device health check on WM_DISPLAYCHANGE / WM_DPICHANGED.
+        // Proactive device health check on WM_DISPLAYCHANGE / WM_DPICHANGED.
         // Called when monitor topology changes (resolution, monitor plug/unplug, DPI change).
-        // Phase 2.1 T3: confirm entry + post-probe verdict.
         log::trace!(target: "slate::device_lost", "on_display_change ENTRY");
         let lost = {
             let r = self.renderer.borrow();
@@ -2605,7 +2603,7 @@ impl<V: View> WindowRenderDelegate for AppState<V> {
 
 // ---------------------------------------------------------------------------
 // WindowImeDelegate impl — answers OS sync queries from the cached snapshot
-// only (ADR-001 amendment). NEVER traverses the live `ime_registry`.
+// only. NEVER traverses the live `ime_registry` (avoids re-entrancy).
 // ---------------------------------------------------------------------------
 
 impl<V: View> WindowImeDelegate for AppState<V> {
@@ -2691,9 +2689,9 @@ pub(crate) fn bubble_mouse_handler<F>(
             break;
         }
     }
-    // Phase 2 surface: dropped here (no AppState reference inside these
-    // helpers). Phase 3 routes mouse-down through a path that has access to
-    // `apply_pending_focus_op`.
+    // `pending_focus_op` is not applied here; these free-standing bubble
+    // helpers have no AppState reference. Callers that need focus applied
+    // (e.g. mouse-down) drain it via `apply_pending_focus_op` after return.
     let _ = pending_focus_op;
 }
 
@@ -2734,9 +2732,9 @@ pub(crate) fn bubble_pointer_handler<F>(
             break;
         }
     }
-    // Phase 2 surface: dropped here (no AppState reference inside these
-    // helpers). Phase 3 routes mouse-down through a path that has access to
-    // `apply_pending_focus_op`.
+    // `pending_focus_op` is not applied here; these free-standing bubble
+    // helpers have no AppState reference. Callers that need focus applied
+    // (e.g. mouse-down) drain it via `apply_pending_focus_op` after return.
     let _ = pending_focus_op;
 }
 
@@ -2774,9 +2772,9 @@ pub(crate) fn bubble_scroll_handler(
             break;
         }
     }
-    // Phase 2 surface: dropped here (no AppState reference inside these
-    // helpers). Phase 3 routes mouse-down through a path that has access to
-    // `apply_pending_focus_op`.
+    // `pending_focus_op` is not applied here; these free-standing bubble
+    // helpers have no AppState reference. Callers that need focus applied
+    // (e.g. mouse-down) drain it via `apply_pending_focus_op` after return.
     let _ = pending_focus_op;
 }
 
@@ -3101,7 +3099,7 @@ impl<V: View> AppState<V> {
     }
 
     // -------------------------------------------------------------------------
-    // IME test-hook accessors (Phase 9c)
+    // IME test-hook accessors
     // -------------------------------------------------------------------------
 
     /// Install App-level IME handlers. Test-only wrapper exposing the
@@ -3133,7 +3131,7 @@ impl<V: View> AppState<V> {
 
     /// Register a per-element mouse handler bundle. Test-only — production
     /// code wires this through `PrepaintCtx::register_mouse_handlers` from
-    /// TextField (Phase 10a.5).
+    /// TextField.
     pub fn install_element_mouse_handlers_for_test(
         &self,
         id: ElementId,

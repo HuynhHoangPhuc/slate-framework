@@ -1,4 +1,4 @@
-//! Atlas integration tests (Phase 3 step 12).
+//! Atlas integration tests.
 //!
 //! Tests requiring a real wgpu device skip cleanly when `make_headless_device`
 //! returns `None` (CI runners without an adapter).

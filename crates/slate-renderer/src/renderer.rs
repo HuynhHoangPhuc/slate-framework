@@ -72,7 +72,7 @@ pub struct Renderer {
     target: Box<dyn CompositionTarget>,
     _window: Arc<dyn Window>,
 
-    // Shared GPU resources (Phase 7).
+    // Shared GPU resources.
     viewport_buf: Buffer,
     viewport_bg: BindGroup,
     unit_quad: Buffer,
@@ -102,7 +102,7 @@ pub struct Renderer {
     // Retrying→Recovered transition to prevent leakage across cycles.
     wgpu_callback_fired: Arc<AtomicBool>,
 
-    // Observer infrastructure (Phase 1: RendererObserver trait).
+    // Observer infrastructure (RendererObserver trait).
     // Generation starts at 1 so consumers can reserve 0 for "uninitialized".
     generation: AtomicU64,
     observers: RefCell<Vec<Weak<dyn RendererObserver>>>,
@@ -305,7 +305,7 @@ impl Renderer {
 
     /// Returns true if the GPU device has been lost (e.g., due to driver reset,
     /// monitor topology change, or TDR). Once true, rendering will fail until
-    /// the device is recovered (Phase 5).
+    /// the device is recovered.
     pub fn is_device_lost(&self) -> bool {
         self.device_lost.load(Ordering::Acquire)
     }
@@ -457,7 +457,7 @@ impl Renderer {
 
     /// Fire all registered observers with the incremented generation.
     ///
-    /// Called by Phase 3's recovery state machine after successful device rebuild.
+    /// Called by the recovery state machine after successful device rebuild.
     /// Dead `Weak` references are pruned in the same pass.
     ///
     /// Uses clone-then-invoke pattern: collects live observers into a temp vec,
@@ -506,7 +506,7 @@ impl Renderer {
             || hr == DXGI_ERROR_DRIVER_INTERNAL_ERROR
             || hr == DXGI_ERROR_ACCESS_LOST
         {
-            // Phase 2: Capture and emit structured telemetry
+            // Capture and emit structured telemetry
             let reason = device_lost_reason::capture("Renderer::check_hr", hr, Some(&self.device));
             device_lost_reason::emit(&reason);
             self.device_lost.store(true, Ordering::Release);
@@ -526,9 +526,9 @@ impl Renderer {
         // Early-return if device is lost - no point attempting resize
         if self.device_lost.load(Ordering::Acquire) {
             log::trace!(target: "slate::resize", "Renderer::resize skipped: device lost");
-            // Phase 2.1 pre-emptive fix: nudge the pump so dispatch_redraw runs and
-            // the recovery state machine engages even if WM_EXITSIZEMOVE's delegate
-            // calls go silent. request_redraw is idempotent (InvalidateRect-backed).
+            // Nudge the pump so dispatch_redraw runs and the recovery state machine
+            // engages even if WM_EXITSIZEMOVE's delegate calls go silent.
+            // request_redraw is idempotent (InvalidateRect-backed).
             self._window.request_redraw();
             return;
         }

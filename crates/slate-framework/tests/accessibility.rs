@@ -1,4 +1,4 @@
-//! Integration tests for hierarchical accessibility tree (Phase 2 validation).
+//! Integration tests for hierarchical accessibility tree.
 
 mod common;
 

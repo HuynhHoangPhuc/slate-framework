@@ -76,7 +76,7 @@ impl<'a> LayoutCtx<'a> {
 pub struct PrepaintCtx<'a> {
     /// Taffy layout tree (read-only for bounds lookup).
     pub taffy: &'a TaffyTree<NodeContext>,
-    /// Hit regions registered during prepaint (Phase 6 dispatches events).
+    /// Hit regions registered during prepaint (used for event dispatch).
     pub hit_regions: &'a mut HitTestList,
     /// Completed top-level accessibility nodes (root-level a11y tree).
     a11y_completed: &'a mut Vec<AccessibilityNode>,
@@ -87,18 +87,18 @@ pub struct PrepaintCtx<'a> {
     /// Display scale factor.
     pub scale_factor: f64,
 
-    // --- Element-level state registry (Phase 4) ---
+    // --- Element-level state registry ---
     /// State registry for element-level reactive state slots.
     /// Internal consumers (e.g., paint cache) use `cx.state_registry.use_state(id, default)`.
-    /// No public hooks-style API in v1 per F6 Route A decision.
-    #[allow(dead_code)] // Used in Phase 6 by paint cache
+    /// No public hooks-style API in v1 (deferred).
+    #[allow(dead_code)] // Used by paint cache
     pub(crate) state_registry: &'a mut StateRegistry,
 
-    // --- Text shaping cache (Phase 6) ---
+    // --- Text shaping cache ---
     /// Cache for pre-atlas shaped text to skip shaping on unchanged Text elements.
     pub(crate) text_shaping_cache: &'a mut TextShapingCache,
 
-    // --- Tree-position keying for stable ElementIds (Phase 4 prep) ---
+    // --- Tree-position keying for stable ElementIds ---
     /// Stack of ancestor element IDs; `last()` is the immediate parent.
     /// Pushed by `push_frame`, popped by `pop_frame`. Length 1 (root) at frame start.
     pub(crate) id_stack: Vec<ElementId>,
@@ -112,7 +112,7 @@ pub struct PrepaintCtx<'a> {
     /// In-progress a11y node builders; `last_mut()` is the current node accumulating children.
     pub(crate) a11y_stack: Vec<AccessibilityNode>,
 
-    // --- Event handler collection (Phase 5a) ---
+    // --- Event handler collection ---
     /// Collected event handlers per element (populated during prepaint).
     pub(crate) handler_map: &'a mut HashMap<ElementId, Handlers>,
     /// Focused mouse-handler bundles registered by elements that opt into the
@@ -122,7 +122,7 @@ pub struct PrepaintCtx<'a> {
     /// Parent map for ancestor iteration during event dispatch.
     pub(crate) parent_map: &'a mut HashMap<ElementId, ElementId>,
 
-    // --- Keyboard handler collection + focus registry (Phase 9b) ---
+    // --- Keyboard handler collection + focus registry ---
     /// Per-element keyboard handlers (populated during prepaint).
     /// Consumed by `AppState::dispatch_key_*` via focused-chain bubble.
     pub(crate) key_handler_map: &'a mut HashMap<ElementId, KeyHandlers>,
@@ -133,7 +133,7 @@ pub struct PrepaintCtx<'a> {
     /// when emitting the focus ring overlay.
     pub(crate) focus_bounds: &'a mut HashMap<ElementId, FocusBounds>,
 
-    // --- IME registry + handler collection (Phase 9c) ---
+    // --- IME registry + handler collection ---
     /// Per-frame IME state registry. Wrapped in a `RefCell` so the dispatch
     /// path (via [`EventCtx::ime_state`](crate::event::EventCtx::ime_state))
     /// can read the same store without taking an exclusive borrow.
@@ -223,7 +223,7 @@ impl<'a> PrepaintCtx<'a> {
     ///
     /// Uses `DefaultHasher` which is NOT guaranteed stable across Rust versions.
     /// IDs are ephemeral per-session — do not serialize or persist them.
-    /// Phase 4 signals use these for subscription identity within a single run.
+    /// Signals use these for subscription identity within a single run.
     pub fn allocate_id<E: 'static>(&mut self) -> ElementId {
         let counter = self
             .child_counters
@@ -266,7 +266,7 @@ impl<'a> PrepaintCtx<'a> {
         }
     }
 
-    /// Register per-element keyboard handlers (Phase 9b).
+    /// Register per-element keyboard handlers.
     ///
     /// Call during prepaint after allocating the element ID. Only elements
     /// with at least one key handler need to call this; empty bundles are
@@ -277,7 +277,7 @@ impl<'a> PrepaintCtx<'a> {
         }
     }
 
-    /// Register per-element mouse handlers (Phase 10a — TextField v2).
+    /// Register per-element mouse handlers (TextField focused-element surface).
     ///
     /// Mirrors [`register_key_handlers`] for the focused-element mouse surface
     /// used by TextField (and, later, TextArea). Empty bundles are skipped so
@@ -288,7 +288,7 @@ impl<'a> PrepaintCtx<'a> {
         }
     }
 
-    /// Register per-element IME handlers (Phase 9c).
+    /// Register per-element IME handlers.
     ///
     /// Call during prepaint when the element opts into IME (e.g.
     /// `Div::ime_capable(true)`). Empty bundles are skipped.
@@ -311,7 +311,7 @@ impl<'a> PrepaintCtx<'a> {
         self.ime_registry.borrow_mut().register(id)
     }
 
-    /// Register a focusable entry along with its painted bounds (Phase 9b).
+    /// Register a focusable entry along with its painted bounds.
     ///
     /// Call during prepaint when the element opts in via `Div::focusable(true)`.
     /// `bounds` + `corner_radius` are cached for the focus-ring overlay so the
@@ -450,8 +450,8 @@ pub struct PaintCtx<'a> {
     pub scale_factor: f64,
     /// Per-frame IME state registry. Elements use this in `paint` to update
     /// their cached `caret_client_rect` so the published `CachedImeQuery`
-    /// reflects the freshly-painted caret position. Wired here in Phase 9c;
-    /// first consumer is the TextField element added in Phase 5.
+    /// reflects the freshly-painted caret position. First consumer is
+    /// the TextField element.
     #[allow(dead_code)]
     pub(crate) ime_registry: &'a RefCell<ImeRegistry>,
     /// Platform window, when one is attached. Animations (caret blink, etc.)

@@ -363,8 +363,7 @@ impl Element for Text {
         let element_id = cx.allocate_id::<Text>();
         self.last_id = Some(element_id);
 
-        // Phase 6: TextShapingCache lookup
-        // Compute paint_input_hash to check cache before reshaping
+        // TextShapingCache lookup — compute paint_input_hash before reshaping
         let input_hash = self.paint_input_hash(bounds);
 
         // Check if we can use cached lines

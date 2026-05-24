@@ -101,7 +101,7 @@ pub(crate) fn unregister_window(id: WindowId) {
 /// Mirrors [`with_window_delegate`]; required by `MetalView`'s
 /// `NSTextInputClient` sync queries (`firstRectForCharacterRange:`,
 /// `selectedRange`, etc.). Delegate impls (`AppState`) read from the
-/// pre-published `cached_ime_query` snapshot per ADR-001 amendment.
+/// pre-published `cached_ime_query` snapshot (cache-then-query contract).
 ///
 /// Returns the closure's `R` (or `None` if no delegate is wired).
 pub(crate) fn with_window_ime_delegate<R>(

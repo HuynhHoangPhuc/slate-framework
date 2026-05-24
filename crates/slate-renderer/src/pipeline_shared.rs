@@ -1,12 +1,11 @@
 //! Shared GPU resources for instanced primitive pipelines.
 //!
-//! Phase 1/2 scope: viewport uniform layout (used by every instance pipeline
-//! to convert pixel-space → NDC) and the static unit-quad vertex buffer
-//! (each instance pipeline draws an expanded copy of this quad).
+//! Viewport uniform layout (used by every instance pipeline to convert
+//! pixel-space → NDC) and the static unit-quad vertex buffer (each instance
+//! pipeline draws an expanded copy of this quad).
 //!
-//! Per plan §Architecture (red-team P1-11), `Renderer::new` (Phase 7) builds
-//! the BGL + buffer once and hands them by reference into each pipeline's
-//! `new`/`record`. Until Phase 7 lands, the test harness builds them inline.
+//! `Renderer::new` builds the BGL + buffer once and hands them by reference
+//! into each pipeline's `new`/`record`. The test harness builds them inline.
 
 use std::mem;
 use std::num::NonZeroU64;
@@ -44,7 +43,7 @@ const _: () = assert!(mem::size_of::<ViewportUniform>() == 16);
 /// Bind-group layout for the viewport uniform: single VS+FS uniform at binding 0.
 ///
 /// Constructed once and shared by every instanced primitive pipeline (rect,
-/// shadow, image, glyph). Phase 7's `Renderer` owns the resulting `BindGroup`.
+/// shadow, image, glyph). `Renderer` owns the resulting `BindGroup`.
 pub fn viewport_bind_group_layout(device: &Device) -> BindGroupLayout {
     device.create_bind_group_layout(&BindGroupLayoutDescriptor {
         label: Some("slate-viewport-bgl"),
@@ -123,7 +122,7 @@ pub fn atlas_bind_group_layout(device: &Device, label: &str) -> BindGroupLayout 
     })
 }
 
-/// Linear, clamp-to-edge atlas sampler. No mips in Phase 1.
+/// Linear, clamp-to-edge atlas sampler. No mips.
 pub fn atlas_linear_sampler(device: &Device, label: &str) -> Sampler {
     device.create_sampler(&SamplerDescriptor {
         label: Some(label),

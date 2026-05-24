@@ -7,7 +7,7 @@
 //!
 //! This module is `pub(crate)` — internal consumers (e.g., paint cache) use
 //! `state_registry.use_state(id, default)` directly. No public hooks-style API
-//! ships in v1 per F6 Route A decision (see phase-04 plan).
+//! ships in v1 (hooks-style API is deferred).
 
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
@@ -23,7 +23,7 @@ use crate::types::ElementId;
 /// `last_seen_frame`; slots not accessed for 2 consecutive frames are GC'd
 /// by `gc()` (called at frame end).
 pub(crate) struct StateRegistry {
-    #[allow(dead_code)] // Used in Phase 5 by use_state
+    #[allow(dead_code)] // Used by use_state
     runtime: Arc<Runtime>,
     slots: HashMap<(ElementId, TypeId), Slot>,
     current_frame: u64,
@@ -32,7 +32,7 @@ pub(crate) struct StateRegistry {
 /// Type-erased state slot.
 struct Slot {
     /// Erased `Signal<T>` — downcast via `TypeId` key.
-    #[allow(dead_code)] // Used in Phase 5 by use_state
+    #[allow(dead_code)] // Used by use_state
     value: Box<dyn Any + Send + Sync>,
     /// Frame number when this slot was last accessed via `use_state`.
     last_seen_frame: u64,
@@ -68,7 +68,7 @@ impl StateRegistry {
     /// Panics if the stored value for `(id, TypeId::of::<T>())` is not a `Signal<T>`.
     /// This indicates a bug — the key includes `TypeId`, so type mismatch is impossible
     /// unless the caller corrupted the registry.
-    #[allow(dead_code)] // Used in Phase 6 by paint cache
+    #[allow(dead_code)] // Used by paint cache
     pub fn use_state<T: Send + Sync + 'static>(
         &mut self,
         id: ElementId,
@@ -121,7 +121,7 @@ impl StateRegistry {
     }
 
     /// Access the backing runtime (for internal use).
-    #[allow(dead_code)] // Used in Phase 5 for runtime access
+    #[allow(dead_code)] // Used for runtime access
     pub fn runtime(&self) -> &Arc<Runtime> {
         &self.runtime
     }

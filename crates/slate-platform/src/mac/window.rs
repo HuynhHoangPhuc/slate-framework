@@ -40,12 +40,11 @@ pub struct MacWindow {
     /// CVDisplayLink for vsync-synchronized rendering. Ensures rendering continues
     /// during live resize when the main run loop is in NSEventTrackingRunLoopMode.
     _display_link: Option<DisplayLink>,
-    /// Render delegate for sync resize/redraw callbacks (Phase 4).
+    /// Render delegate for sync resize/redraw callbacks.
     pub(crate) render_delegate: RefCell<Option<Weak<dyn WindowRenderDelegate>>>,
-    /// IME query delegate for sync OS composition queries (Phase 9c).
-    /// Wired into `MetalView` via Phase 2 once `NSTextInputClient` is implemented.
+    /// IME query delegate for sync OS composition queries during `NSTextInputClient` callbacks.
     pub(crate) ime_delegate: RefCell<Option<Weak<dyn WindowImeDelegate>>>,
-    /// Generation counter for `schedule_redraw_at` (Phase 10a.6).
+    /// Generation counter for `schedule_redraw_at`.
     ///
     /// Bumped on every call; the GCD-dispatched closure captures its target
     /// generation and skips the redraw if `redraw_gen` has moved on. This is

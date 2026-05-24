@@ -237,7 +237,7 @@ pub(super) fn build_text_input_handler(value: Signal<String>) -> ElementTextInpu
     })
 }
 
-/// Build the `on_mouse_down` handler for TextField (Phase 10a.5).
+/// Build the `on_mouse_down` handler for TextField.
 ///
 /// Reads the cached `ShapedLine` + paint origin written by `paint()` on the
 /// previous frame, snaps the click x to a grapheme boundary via
@@ -284,7 +284,7 @@ pub(super) fn build_mouse_down_handler() -> MouseHandler {
     })
 }
 
-/// Build the `on_mouse_move` handler for TextField (Phase 10a.5).
+/// Build the `on_mouse_move` handler for TextField.
 ///
 /// Only extends the active selection while `state.dragging` is true (set by
 /// `mouse_down`, cleared by `mouse_up`). The anchor stays put; only the caret
@@ -322,7 +322,7 @@ pub(super) fn build_mouse_move_handler() -> MouseHandler {
     })
 }
 
-/// Build the `on_mouse_up` handler for TextField (Phase 10a.5).
+/// Build the `on_mouse_up` handler for TextField.
 ///
 /// Ends the drag. If the anchor and caret coincide, the selection collapses
 /// (`selection_anchor` cleared) so subsequent typing replaces the caret rather

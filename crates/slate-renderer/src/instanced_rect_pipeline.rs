@@ -1,11 +1,9 @@
-//! Instanced rounded-rect pipeline (Phase 2).
+//! Instanced rounded-rect pipeline.
 //!
-//! Replaces the Phase 0 single-rect uniform pipeline (one
-//! 48-byte uniform per draw) with an instanced pipeline that draws every
-//! `RectInstance` from a [`crate::Scene`] in a single `draw(0..6, 0..N)` call.
-//! Shader math is byte-for-byte identical — only the data path changes.
+//! Draws every `RectInstance` from a [`crate::Scene`] in a single
+//! `draw(0..6, 0..N)` call.
 //!
-//! # Two-phase API (red-team P0-2 fix)
+//! # Two-phase API
 //!
 //! Splits work to avoid borrow-checker / drop-during-pass hazards:
 //!
@@ -19,7 +17,7 @@
 //!
 //! `RectInstance.color` is **linear, premultiplied** RGBA — see
 //! [`crate::srgb_u8_to_linear_premul`]. Blend state is `One/OneMinusSrcAlpha`
-//! on both color and alpha, matching the Phase 1 reconciliation.
+//! on both color and alpha.
 //!
 //! [`prepare`]: InstancedRectPipeline::prepare
 //! [`record`]: InstancedRectPipeline::record
@@ -98,7 +96,7 @@ pub struct InstancedRectPipeline {
 
 impl InstancedRectPipeline {
     /// Build the pipeline. `viewport_bgl` is shared across all instanced
-    /// pipelines and constructed by the `Renderer` (Phase 7) — see
+    /// pipelines and constructed by the `Renderer` — see
     /// [`crate::pipeline_shared::viewport_bind_group_layout`].
     pub fn new(
         device: &Device,
@@ -143,8 +141,7 @@ impl InstancedRectPipeline {
                 entry_point: Some("fs_main"),
                 targets: &[Some(ColorTargetState {
                     format: surface_format,
-                    // Phase 1 premultiplied contract: One/OneMinusSrcAlpha
-                    // on BOTH color and alpha.
+                    // Premultiplied-alpha blend: One/OneMinusSrcAlpha on both color and alpha.
                     blend: Some(BlendState {
                         color: BlendComponent {
                             src_factor: BlendFactor::One,
@@ -189,8 +186,7 @@ impl InstancedRectPipeline {
     }
 
     /// Upload `instances` to the per-instance buffer. Call once per frame
-    /// **before** `begin_render_pass` (red-team P0-2: avoids dropping the
-    /// old buffer mid-pass).
+    /// **before** `begin_render_pass` (avoids dropping the old buffer mid-pass).
     pub fn prepare(&mut self, device: &Device, queue: &Queue, instances: &[RectInstance]) {
         if instances.is_empty() {
             self.last_instance_count = 0;

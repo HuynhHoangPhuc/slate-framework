@@ -1,10 +1,10 @@
-//! Atlas-sampled image pipeline (Phase 4).
+//! Atlas-sampled image pipeline.
 //!
 //! Renders every [`ImageInstance`] from a [`crate::Scene`] in a single
 //! `draw(0..6, 0..N)` call, sampling from the shared color atlas
 //! ([`crate::atlas::Atlas`] in `Format::Rgba8UnormSrgb`).
 //!
-//! # Two-phase API (red-team P0-2)
+//! # Two-phase API
 //!
 //! Same shape as [`crate::InstancedRectPipeline`]:
 //!
@@ -15,11 +15,11 @@
 //!
 //! # Atlas binding
 //!
-//! Pipeline does NOT own the atlas. `Renderer` (Phase 7) owns one shared
-//! color atlas; the pipeline holds a `BindGroup` referencing the atlas's
-//! texture view plus a linear sampler. When the atlas re-allocates the
-//! underlying texture (page growth in a future phase), the renderer must
-//! call [`rebuild_atlas_bg`] with the new `Atlas` so the bind group stays valid.
+//! Pipeline does NOT own the atlas. `Renderer` owns one shared color atlas;
+//! the pipeline holds a `BindGroup` referencing the atlas's texture view plus
+//! a linear sampler. When the atlas re-allocates the underlying texture (page
+//! growth), the renderer must call [`rebuild_atlas_bg`] with the new `Atlas`
+//! so the bind group stays valid.
 //!
 //! # Color contract
 //!
@@ -106,9 +106,8 @@ impl ImagePipeline {
         viewport_bgl: &BindGroupLayout,
         image_atlas: &Atlas,
     ) -> Self {
-        // Phase 1 contract: surface must be sRGB so hw handles linear→sRGB
-        // encoding. Non-sRGB surfaces compile and run but produce washed-out
-        // output (red-team P2-12).
+        // Surface must be sRGB so hw handles linear→sRGB encoding.
+        // Non-sRGB surfaces compile and run but produce washed-out output.
         assert!(
             matches!(
                 surface_format,
@@ -176,7 +175,7 @@ impl ImagePipeline {
                 entry_point: Some("fs_main"),
                 targets: &[Some(ColorTargetState {
                     format: surface_format,
-                    // Phase 1 premultiplied contract.
+                    // Premultiplied-alpha blend: One/OneMinusSrcAlpha on both color and alpha.
                     blend: Some(BlendState {
                         color: BlendComponent {
                             src_factor: BlendFactor::One,
@@ -224,7 +223,7 @@ impl ImagePipeline {
     }
 
     /// Rebuild the atlas bind group from a new `Atlas`. Call this when the
-    /// atlas re-allocates its underlying texture (Phase 7+ atlas growth).
+    /// atlas re-allocates its underlying texture (e.g. on atlas growth).
     /// Panics if `image_atlas` has the wrong format (must be `Rgba8UnormSrgb`).
     pub fn rebuild_atlas_bg(&mut self, device: &Device, image_atlas: &Atlas) {
         assert_eq!(

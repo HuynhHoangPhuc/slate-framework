@@ -1,4 +1,4 @@
-//! Phase 2 contract test: scene instance structs use `Lpx` for spatial fields.
+//! Contract test: scene instance structs use `Lpx` for spatial fields.
 //!
 //! Locks in:
 //! - `RectInstance.rect`, `ShadowInstance.rect`, `ImageInstance.rect`,

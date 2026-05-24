@@ -1,4 +1,4 @@
-//! Integration tests for TextField-shape IME behaviour (Phase 9c).
+//! Integration tests for TextField-shape IME behaviour.
 //!
 //! Rather than constructing a full View tree (which would require the complete
 //! prepaint walk), these tests simulate TextField's on_ime_preedit /

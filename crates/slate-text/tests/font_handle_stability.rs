@@ -2,7 +2,7 @@
 //!
 //! Pins the invariant that two distinct platform face objects representing the
 //! same logical face produce equal `FontHandle`s. This is the contract the
-//! macOS shaping path relies on after `260519-0701-font-handle-stable-identity`.
+//! macOS shaping path relies on this identity contract.
 
 use slate_text::FontHandle;
 

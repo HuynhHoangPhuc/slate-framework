@@ -35,7 +35,7 @@
 //!
 //! # Arithmetic
 //!
-//! Only the operations actually needed by Phase 2 callsites are implemented:
+//! Only the operations actually needed by callsites are implemented:
 //! `Add/Sub<Lpx>`, `Mul/Div<f32>`, `Neg`. Mixed arithmetic with bare `f32`
 //! (other than scalar multiply/divide) is intentionally not supported.
 

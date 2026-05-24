@@ -1,10 +1,10 @@
 //! IME (NSTextInputClient) support for `MetalView`.
 //!
-//! Phase 9c: AppKit routes Input Method composition (Pinyin, Hiragana, dead
-//! keys, emoji picker) through the `NSTextInputClient` protocol. This file
-//! holds the helpers and the per-method body delegates; the protocol method
-//! declarations themselves live in [`view::MetalView`]'s `define_class!`
-//! block (objc2 requires protocol methods to be declared inline).
+//! AppKit routes Input Method composition (Pinyin, Hiragana, dead keys, emoji
+//! picker) through the `NSTextInputClient` protocol. This file holds the
+//! helpers and the per-method body delegates; the protocol method declarations
+//! themselves live in [`view::MetalView`]'s `define_class!` block (objc2
+//! requires protocol methods to be declared inline).
 //!
 //! All bodies are invoked on the main thread inside [`super::ffi_boundary`].
 
@@ -322,11 +322,11 @@ impl MetalView {
     /// right answer for both shapes, so ignoring `_range` stays safe until an
     /// IME starts asking for a genuine sub-range.
     ///
-    /// **C11 (panel below the typed line):** the cached rect's `y_client`
-    /// sits at the line top with `h_client = line_height`. After the in-view
-    /// flip, the resulting NSRect's *top edge in screen coords* lands at the
-    /// line top — and AppKit anchors the candidate panel against that top
-    /// edge, which places the panel overlapping the typed text.
+    /// **Candidate panel placement (panel below the typed line):** the cached
+    /// rect's `y_client` sits at the line top with `h_client = line_height`.
+    /// After the in-view flip, the resulting NSRect's *top edge in screen
+    /// coords* lands at the line top — and AppKit anchors the candidate panel
+    /// against that top edge, which places the panel overlapping the typed text.
     ///
     /// We transform the rect into a 1-physical-pixel sliver positioned at
     /// the line *bottom* in client coords. The flip then yields an NSRect

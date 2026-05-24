@@ -1,12 +1,12 @@
 //! `Scene` — per-frame container of instanced primitive data, plus the four
 //! GPU-bound `*Instance` structs and the `Layer` range descriptor.
 //!
-//! # Design summary (see `plans/.../phase-01-scene-primitive-types.md`)
+//! # Design summary
 //!
-//! Pure CPU-side data structures: no GPU code lives here. The renderer
-//! (Phase 7) will read `Scene` once per frame, slice each `Vec` into a
-//! single `Queue::write_buffer` per pipeline, and walk `layers` in
-//! push-order issuing instanced draws.
+//! Pure CPU-side data structures: no GPU code lives here. The renderer reads
+//! `Scene` once per frame, slices each `Vec` into a single
+//! `Queue::write_buffer` per pipeline, and walks `layers` in push-order
+//! issuing instanced draws.
 //!
 //! ## Struct-of-Arrays layout
 //!
@@ -83,7 +83,7 @@ pub struct RectInstance {
 const _: () = assert!(core::mem::size_of::<RectInstance>() == 48);
 const _: () = assert!(core::mem::align_of::<RectInstance>() == 4);
 
-/// Instance data for a Gaussian-blurred drop shadow (Phase 6 pipeline).
+/// Instance data for a Gaussian-blurred drop shadow.
 ///
 /// Total size: **48 bytes**, 4-byte aligned (vertex-step instance buffers
 /// have no std140 stride requirement; the plan doc's "64 bytes" comment was
@@ -107,7 +107,7 @@ pub struct ShadowInstance {
 }
 const _: () = assert!(core::mem::size_of::<ShadowInstance>() == 48);
 
-/// Instance data for an atlas-backed image quad (Phase 4 pipeline).
+/// Instance data for an atlas-backed image quad.
 ///
 /// Total size: **48 bytes** (three packed `vec4<f32>` attributes — same
 /// rationale as `ShadowInstance` re. plan doc's "64 bytes" comment).
@@ -126,15 +126,13 @@ pub struct ImageInstance {
 }
 const _: () = assert!(core::mem::size_of::<ImageInstance>() == 48);
 
-/// Instance data for a glyph quad sampled from the R8 alpha atlas
-/// (Phase 5 pipeline).
+/// Instance data for a glyph quad sampled from the R8 alpha atlas.
 ///
 /// Total size: **64 bytes**, 16-byte aligned.
 ///
 /// `color` is the **premultiplied linear** ink color; the fragment shader
 /// multiplies the sampled alpha mask by this color. Sub-pixel variant count
-/// is locked at **4** (red-team P1-9 / Open Q #1 resolved); higher counts
-/// would blow the single-page atlas cap.
+/// is locked at **4**; higher counts would blow the single-page atlas cap.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct GlyphInstance {

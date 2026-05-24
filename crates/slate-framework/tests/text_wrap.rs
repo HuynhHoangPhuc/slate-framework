@@ -1,4 +1,4 @@
-//! Integration tests for TextWrap::Wrap (Phase 3 C6 validation).
+//! Integration tests for TextWrap::Wrap.
 
 use slate_framework::Text;
 use slate_framework::elements::{TextAlign, TextWrap};

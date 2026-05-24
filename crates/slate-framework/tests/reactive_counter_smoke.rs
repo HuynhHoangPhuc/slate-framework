@@ -1,6 +1,6 @@
 //! Smoke test for reactive Text with Signal.
 //!
-//! Validates Phase 5: Text::new_reactive + observer wiring.
+//! Validates Text::new_reactive + observer wiring.
 
 use slate_framework::reactive::Signal;
 use slate_framework::{AnyElement, HeadlessApp, IntoAny, Text, View};

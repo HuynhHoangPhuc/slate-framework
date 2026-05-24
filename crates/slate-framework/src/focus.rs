@@ -1,8 +1,8 @@
-//! Focus management — Phase 9b foundation.
+//! Focus management.
 //!
 //! Pure-data layer: types + tab-order traversal. No dispatch wiring lives here;
-//! `AppState` (Phase 3) owns a `RefCell<FocusRegistry>` and calls into this
-//! module from its event-dispatch pipeline.
+//! `AppState` owns a `RefCell<FocusRegistry>` and calls into this module from
+//! its event-dispatch pipeline.
 //!
 //! # Tab order
 //! Stable sort by `(tab_index, registration_index)`. Entries with
@@ -18,8 +18,6 @@
 //! Implementation note: `sorted_indices` is rebuilt lazily only when
 //! `dirty` is set by a `register` call; Tab shifts iterate it without
 //! allocating.
-//!
-//! See `plans/260516-2000-slate-phase-9b-per-element-keys-and-focus/phase-01-*.md`.
 
 use crate::types::ElementId;
 

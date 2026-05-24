@@ -4,7 +4,7 @@
 //! and pure helpers for decoding composition strings, cursor positions, and
 //! target-converted attribute runs. Message-pump arms in
 //! [`crate::win::message_loop`] consume these helpers from the
-//! `WM_IME_COMPOSITION` arm; see Phase 3 plan and ADR-001 amendment.
+//! `WM_IME_COMPOSITION` arm.
 
 use std::ops::Range;
 

@@ -100,10 +100,9 @@ pub struct WinWindowInner {
     pub(crate) captured_buttons: Cell<u8>,
     /// True if TrackMouseEvent is armed for WM_MOUSELEAVE.
     pub(crate) is_tracking_hover: Cell<bool>,
-    /// Render delegate for sync resize/redraw callbacks (Phase 4).
+    /// Render delegate for sync resize/redraw callbacks.
     pub(crate) delegate: RefCell<Option<Weak<dyn WindowRenderDelegate>>>,
-    /// IME query delegate for sync OS composition queries (Phase 9c).
-    /// Wired into `WM_IME_*` arms in Phase 3.
+    /// IME query delegate for sync OS composition queries during `WM_IME_*` handling.
     pub(crate) ime_delegate: RefCell<Option<Weak<dyn WindowImeDelegate>>>,
     /// True iff a Win32 IME composition is currently active on this window.
     /// Flipped on by `WM_IME_STARTCOMPOSITION`, off by `WM_IME_ENDCOMPOSITION`.
@@ -112,10 +111,10 @@ pub struct WinWindowInner {
     pub(crate) composition_active: Cell<bool>,
     /// True during modal size-move loop; WM_SIZE skips delegate (WM_TIMER handles it).
     pub(crate) in_size_move: Cell<bool>,
-    /// Phase 5: Deferred device probe triggered during modal loop.
+    /// Deferred device probe triggered during modal loop.
     /// Set by WM_DISPLAYCHANGE/WM_DPICHANGED when in_size_move; fired in WM_EXITSIZEMOVE.
     pub(crate) pending_display_change: Cell<bool>,
-    /// Phase 2.1: fire-once gates so T2 diagnostics don't flood logs (~239×/drag).
+    /// Fire-once gates so delegate-missing diagnostics don't flood logs (~239×/drag).
     pub(crate) logged_no_delegate: Cell<bool>,
     pub(crate) logged_weak_upgrade_none: Cell<bool>,
     /// Cached DXGI factory for monitor→adapter LUID mapping. Created once at
@@ -140,9 +139,9 @@ pub struct WinWindowInner {
     /// leak into the next keypress.
     pub(crate) pending_high_surrogate: Cell<Option<u16>>,
     /// True iff a one-shot redraw timer is currently armed via
-    /// `Window::schedule_redraw_at` (Phase 10a.6). Used to `KillTimer`
-    /// before re-arming so a fast caller replaces an in-flight timer
-    /// without double-fire, and to clean up on `WM_DESTROY`.
+    /// `Window::schedule_redraw_at`. Used to `KillTimer` before re-arming
+    /// so a fast caller replaces an in-flight timer without double-fire,
+    /// and to clean up on `WM_DESTROY`.
     pub(crate) redraw_timer_armed: Cell<bool>,
     /// Set immediately before our own `ReleaseCapture()` call so the
     /// following `WM_CAPTURECHANGED` is recognized as a voluntary release,
@@ -161,12 +160,12 @@ impl WinWindowInner {
             if let Some(strong) = weak.upgrade() {
                 f(&*strong);
             } else if !self.logged_weak_upgrade_none.replace(true) {
-                // Phase 2.1 T2: surface silent no-op when AppState was already dropped.
+                // Surface silent no-op when AppState was already dropped.
                 // Fire-once per window to keep diagnostic logs readable.
                 log::trace!(target: "slate::win", "with_delegate: weak upgrade returned None (logged once)");
             }
         } else if !self.logged_no_delegate.replace(true) {
-            // Phase 2.1 T2: delegate slot never installed (e.g. example bypasses AppState).
+            // Delegate slot never installed (e.g. example bypasses AppState).
             // Fire-once per window — otherwise spams ~239×/drag.
             log::trace!(target: "slate::win", "with_delegate: no delegate installed (logged once)");
         }
@@ -193,7 +192,7 @@ impl WinWindowInner {
                     dispatch_event(Event::ImeDisabled { window: self.id });
                 }
                 // Cancel any in-flight redraw timer so the OS does not raise
-                // a stray WM_TIMER against a destroyed window (Phase 10a.6).
+                // a stray WM_TIMER against a destroyed window.
                 if self.redraw_timer_armed.replace(false) {
                     // SAFETY: hwnd is still valid inside WM_DESTROY.
                     let _ = unsafe { KillTimer(Some(hwnd), REDRAW_TIMER_ID) };
@@ -241,7 +240,7 @@ impl WinWindowInner {
                 let _ = unsafe { ValidateRect(Some(hwnd), None) };
                 LRESULT(0)
             }
-            // One-shot redraw scheduled via Window::schedule_redraw_at (10a.6).
+            // One-shot redraw scheduled via Window::schedule_redraw_at.
             // KillTimer immediately so the id is reusable for the next arm and
             // a stuck-set "armed" flag can't outlive the fire.
             WM_TIMER if _wparam.0 == REDRAW_TIMER_ID => {
@@ -285,7 +284,7 @@ impl WinWindowInner {
                     // discard
                 }
 
-                // Phase 5: Fire deferred device probe if display changed during modal loop.
+                // Fire deferred device probe if display changed during modal loop.
                 if self.pending_display_change.get() {
                     self.pending_display_change.set(false);
                     log::trace!(target: "slate::win", "WM_EXITSIZEMOVE: firing deferred display change probe");
@@ -301,7 +300,6 @@ impl WinWindowInner {
                     log::trace!(target: "slate::win", "WM_EXITSIZEMOVE: draining deferred monitor-change redraw");
                     dispatch_event(Event::WindowRedrawRequested { window: self.id });
                 }
-                // Phase 2.1 T1: prove we re-emerge from the if-block.
                 log::trace!(target: "slate::win", "WM_EXITSIZEMOVE: post-probe checkpoint reached");
 
                 self.with_delegate(|d| d.on_size_move_end(self.id));
@@ -309,7 +307,7 @@ impl WinWindowInner {
                 dispatch_event(Event::WindowRedrawRequested { window: self.id });
                 LRESULT(0)
             }
-            // Phase 5: Proactive device health check on monitor topology change.
+            // Proactive device health check on monitor topology change.
             WM_DISPLAYCHANGE => {
                 if self.in_size_move.get() || IN_SIZE_MOVE.with(|f| f.get()) {
                     log::trace!(target: "slate::win", "WM_DISPLAYCHANGE: in modal loop, deferring probe");
@@ -323,7 +321,7 @@ impl WinWindowInner {
             WM_DPICHANGED => {
                 // SAFETY: Win32 guarantees lParam is a valid *const RECT for WM_DPICHANGED.
                 let suggested = unsafe { &*(lparam.0 as *const RECT) };
-                // SetWindowPos is unconditional per constraint #10 (must honour suggested rect).
+                // SetWindowPos must honour the OS-suggested rect to prevent DPI feedback loops.
                 let _ = unsafe {
                     SetWindowPos(
                         hwnd,
@@ -335,7 +333,7 @@ impl WinWindowInner {
                         SWP_NOZORDER | SWP_NOACTIVATE,
                     )
                 };
-                // In-size-move guard (Phase 5 / constraint #10): suppress resize dispatch during modal.
+                // In-size-move guard: suppress resize dispatch during modal loop.
                 if !IN_SIZE_MOVE.with(|f| f.get()) {
                     // Suggested RECT is frame coords; use GetClientRect for client size.
                     let mut rect = RECT::default();
@@ -356,7 +354,7 @@ impl WinWindowInner {
                         scale_factor: scale,
                     });
                 }
-                // Phase 5 / Q2: WM_DPICHANGED also probes for device loss (cross-monitor mid-drag).
+                // WM_DPICHANGED also probes for device loss (cross-monitor mid-drag).
                 if self.in_size_move.get() || IN_SIZE_MOVE.with(|f| f.get()) {
                     log::trace!(target: "slate::win", "WM_DPICHANGED: in modal loop, deferring probe");
                     self.pending_display_change.set(true);
@@ -400,7 +398,7 @@ impl WinWindowInner {
                 LRESULT(0)
             }
             // -----------------------------------------------------------------
-            // Mouse events (Phase 5a)
+            // Mouse events
             // -----------------------------------------------------------------
             WM_LBUTTONDOWN | WM_LBUTTONDBLCLK => {
                 self.handle_button_down(hwnd, _wparam, lparam, MouseButton::Left);
@@ -536,7 +534,7 @@ impl WinWindowInner {
                 }
             }
             // -----------------------------------------------------------------
-            // Keyboard events (Phase 9a)
+            // Keyboard events
             // -----------------------------------------------------------------
             WM_KEYDOWN | WM_SYSKEYDOWN => {
                 let vk = _wparam.0 as u32;
@@ -647,7 +645,7 @@ impl WinWindowInner {
                 LRESULT(0)
             }
             // -----------------------------------------------------------------
-            // IME composition (Phase 9c)
+            // IME composition
             // -----------------------------------------------------------------
             WM_IME_STARTCOMPOSITION => {
                 self.composition_active.set(true);
@@ -819,7 +817,7 @@ impl WinWindowInner {
 }
 
 // ---------------------------------------------------------------------------
-// WndProc trampoline — extern "system" callback with catch_unwind + abort (C4)
+// WndProc trampoline — extern "system" callback with catch_unwind + abort
 // ---------------------------------------------------------------------------
 
 /// # SAFETY
@@ -832,14 +830,14 @@ pub(crate) unsafe extern "system" fn wnd_proc_trampoline(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
-    // C4 fix: catch_unwind boundary — panicking across Win32 dispatch is UB on stable.
+    // catch_unwind boundary — panicking across Win32 dispatch is UB on stable.
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         // SAFETY: lparam for WM_NCCREATE points to a CREATESTRUCTW as specified
         // by Win32. We immediately store the pointer and increment the Arc count.
         if msg == WM_NCCREATE {
             let cs = lparam.0 as *const CREATESTRUCTW;
             let inner_ptr = unsafe { (*cs).lpCreateParams as *const WinWindowInner };
-            // C2 fix: increment strong count — OS now holds a logical Arc reference.
+            // Increment strong count — OS now holds a logical Arc reference.
             unsafe { Arc::increment_strong_count(inner_ptr) };
             unsafe { SetWindowLongPtrW(hwnd, GWLP_USERDATA, inner_ptr as isize) };
             return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
@@ -856,10 +854,10 @@ pub(crate) unsafe extern "system" fn wnd_proc_trampoline(
         let res = inner.handle_message(hwnd, msg, wparam, lparam);
 
         if msg == WM_NCDESTROY {
-            // C1 fix: last message this HWND will ever receive.
+            // Last message this HWND will ever receive; release the OS Arc reference.
             unsafe { SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0) };
             unsafe { Arc::decrement_strong_count(inner_ptr) };
-            // H1 fix: clear wake HWND to prevent posting to dead window.
+            // Clear wake HWND to prevent posting to a dead window.
             clear_wake_hwnd(hwnd);
         }
 

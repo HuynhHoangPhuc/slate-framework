@@ -89,7 +89,7 @@ pub trait Element: 'static {
     /// Returns `None` until prepaint has been called. Override to expose
     /// the ID allocated via `PrepaintCtx::allocate_id`.
     ///
-    /// Phase 4 signals use this for subscription identity.
+    /// Signals use this for subscription identity.
     fn id(&self) -> Option<ElementId> {
         None
     }
@@ -99,7 +99,7 @@ pub trait Element: 'static {
     /// Returns 0 by default (sentinel: caching disabled, always rebuild).
     /// Cacheable elements (`Text`) override to hash content, style, and bounds.
     ///
-    /// # Phase 6 (D10) Cache Protocol
+    /// # Cache Protocol
     ///
     /// - `hash == 0`: Cache bypass — element always re-paints.
     /// - `hash != 0`: Cache lookup by `(ElementId, hash)`.
@@ -109,7 +109,7 @@ pub trait Element: 'static {
     /// Only leaf elements (`Text`) override this method. Container elements
     /// (`Div`) return 0 (the default) to avoid stale-child replay issues.
     ///
-    /// # F2 Quantization
+    /// # f32 Quantization
     ///
     /// Bounds and colors contain `f32` which has no `Hash` impl. Use
     /// `paint_cache::hash_f32` / `hash_bounds` / `hash_color` helpers

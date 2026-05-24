@@ -1,9 +1,9 @@
-//! Gaussian rounded-rect shadow pipeline (Phase 6).
+//! Gaussian rounded-rect shadow pipeline.
 //!
 //! Single-pass analytical shadow using Zed's `blur_along_x` algorithm —
 //! no atlas, no FBO, no multi-pass. Quad inflated by ±3σ in the vertex stage.
 //!
-//! # Two-phase API (red-team P0-2 fix)
+//! # Two-phase API
 //!
 //! 1. [`prepare`] — uploads instance data BEFORE `RenderPass` starts.
 //! 2. [`record`] — issues draw commands inside the pass (immutable self).

@@ -1,7 +1,6 @@
-//! Cross-platform clipboard text access (Phase 10b.2).
+//! Cross-platform clipboard text access.
 //!
-//! Plain-text round-trip only. RTF / image / file-list types are ignored per
-//! the v2 scope decision (OQ4).
+//! Plain-text round-trip only. RTF / image / file-list types are not supported.
 //!
 //! # Threading
 //!

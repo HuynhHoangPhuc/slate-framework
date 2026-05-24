@@ -22,8 +22,8 @@ use crate::focus::FocusRegistry;
 use crate::types::ElementId;
 use crate::view::View;
 
-// Synthetic device-lost trigger for Phase 2.1 closure on the real visible-window
-// AppState path. Setting `SLATE_FORCE_DEVICE_LOST_MS=N` schedules a
+// Synthetic device-lost trigger on the real visible-window AppState path.
+// Setting `SLATE_FORCE_DEVICE_LOST_MS=N` schedules a
 // `force_renderer_device_lost()` N milliseconds after the first `Resumed`,
 // so the OS WM_PAINT pump can be observed driving the state machine through
 // `DetectedLost -> CooldownGate -> Retrying -> Recovered`.
@@ -38,7 +38,7 @@ static FORCE_DEVICE_LOST_ARMED: std::sync::atomic::AtomicBool =
 /// Application context passed to the view factory.
 ///
 /// Provides access to the reactive runtime, background executor, and the
-/// focus registry (Phase 9b) for constructing signals, spawning background
+/// focus registry for constructing signals, spawning background
 /// tasks, and driving focus from outside of event handlers.
 ///
 /// Note: `ForegroundExecutor` is intentionally not exposed here because it's `!Send`
@@ -237,8 +237,8 @@ impl App {
         let background_executor = executor.background.clone();
 
         // Create shared application state first so AppContext can share its
-        // focus registry (Phase 9b: AppContext::set_focus / focused_element
-        // need to operate on the same registry AppState dispatches against).
+        // focus registry (AppContext::set_focus / focused_element need to
+        // operate on the same registry AppState dispatches against).
         let state = Rc::new(AppState::new(
             window.clone(),
             executor,
@@ -275,7 +275,7 @@ impl App {
         window.set_render_delegate(dyn_weak);
         drop(dyn_strong); // strong ref no longer needed; `state` keeps AppState alive.
 
-        // Phase 9c: install IME delegate via the same Rc<dyn …>-via-let-binding
+        // Install IME delegate via the same Rc<dyn …>-via-let-binding
         // dance. Identical SAFETY argument as above (unsizing coercion needs a
         // coercion site, not an `as` cast).
         let ime_strong: Rc<dyn WindowImeDelegate> = state.clone();
@@ -293,9 +293,9 @@ impl App {
                 return;
             }
 
-            // Phase 2.1 synthetic trigger: env-var-scheduled force_device_lost
-            // fires from a background thread that wakes the run loop; the wake
-            // event arrives here and we run on the main thread.
+            // Synthetic trigger: env-var-scheduled force_device_lost fires from
+            // a background thread that wakes the run loop; the wake event
+            // arrives here and we run on the main thread.
             #[cfg(all(target_os = "windows", feature = "test-hooks"))]
             if FORCE_DEVICE_LOST_PENDING.swap(false, std::sync::atomic::Ordering::AcqRel) {
                 log::warn!(

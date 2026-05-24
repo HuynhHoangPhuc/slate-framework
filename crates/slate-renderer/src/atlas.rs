@@ -1,5 +1,4 @@
-//! Shared GPU texture atlas backing the glyph (Phase 5) and image (Phase 4)
-//! pipelines.
+//! Shared GPU texture atlas backing the glyph and image pipelines.
 //!
 //! One [`Atlas`] wraps a single 2048² wgpu texture plus an
 //! [`etagere::AtlasAllocator`] (shelf packing). Allocations return a
@@ -13,14 +12,14 @@
 //! - [`Format::Rgba8UnormSrgb`] — color (image atlas). Sampled values land
 //!   in linear space, matching the surface's `Bgra8UnormSrgb` contract.
 //!
-//! # Usage flags (red-team P1-2)
+//! # Usage flags
 //!
 //! Texture is created with `COPY_DST | TEXTURE_BINDING | COPY_SRC` —
 //! atlases are upload-only, never a render target. `COPY_SRC` enables
 //! `copy_texture_to_buffer` readback for debug dumps and integration
 //! tests; it does NOT make the atlas a render target.
 //!
-//! # Frame contract (red-team P1-7)
+//! # Frame contract
 //!
 //! Callers MUST invoke [`Atlas::begin_frame`] once per frame before
 //! producing any draw work. Allocations whose `last_touch_frame` equals the
@@ -45,8 +44,8 @@ use wgpu::{
     TextureViewDescriptor,
 };
 
-/// Page side length in texels. Single-page-per-format hard cap for Phase 1
-/// (multi-page deferred to framework Phase 2 — see plan §Non-Goals).
+/// Page side length in texels. Single-page-per-format hard cap; multi-page
+/// support is a future extension deferred beyond initial scope.
 pub const PAGE_SIZE: u32 = 2048;
 
 /// Re-exported `etagere::AllocId` — opaque, `Hash + Eq + Copy`.
@@ -117,9 +116,9 @@ struct AllocMeta {
 
 /// VecDeque + position sidecar. `push_back` is O(1); `touch` / `pop_front`
 /// / `remove` are O(n) on the deque-shift plus an O(n) sidecar fix-up.
-/// Acceptable at atlas scale (Phase 1 caps at a few thousand live entries
-/// per page); revisit with an intrusive doubly-linked list if profiling
-/// shows churn cost in Phase 5 glyph workloads.
+/// Acceptable at atlas scale (a few thousand live entries per page); revisit
+/// with an intrusive doubly-linked list if profiling shows high churn cost
+/// in glyph workloads.
 #[derive(Debug, Default)]
 struct LruTracker {
     order: VecDeque<AllocId>,
@@ -197,7 +196,7 @@ impl Atlas {
             sample_count: 1,
             dimension: TextureDimension::D2,
             format: format.wgpu_format(),
-            // Upload-only: never a render target (red-team P1-2).
+            // Upload-only: never a render target.
             // COPY_SRC is for readback / debug dumps, not rendering.
             usage: TextureUsages::COPY_DST
                 | TextureUsages::TEXTURE_BINDING
@@ -388,7 +387,7 @@ impl Atlas {
     ///
     /// Returns `1.0 / page_side_length`. Used by [`crate::allocate_glyph`] to
     /// compute the 1-texel inset without coupling to the `PAGE_SIZE` constant
-    /// directly — Phase 2 multi-page atlases can override this per page.
+    /// directly — future multi-page atlases can override this per page.
     pub fn texel_size_uv(&self) -> f32 {
         1.0 / self.page_size as f32
     }

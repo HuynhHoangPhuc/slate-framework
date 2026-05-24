@@ -88,7 +88,7 @@ impl MacSurface {
         // Drain submitted command-buffer callbacks without blocking. Cheap
         // when there's no work queued; matches Tristan-Hume / Zed pattern
         // step 1. Escalation tree (Wait, then [commandBuffer waitUntilScheduled]
-        // via wgpu-hal) lives in Phase 3 if residual flicker appears.
+        // via wgpu-hal) if residual flicker appears.
         let _ = device.poll(PollType::Poll);
         match frame.inner {
             AcquiredFrameInner::Mac(tex) => tex.present(),

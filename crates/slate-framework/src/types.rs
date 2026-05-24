@@ -149,8 +149,7 @@ static ELEMENT_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 /// Stable identity for an element across frames.
 ///
-/// Used for persistent state (Phase 4), hit-testing (Phase 6),
-/// and accessibility (Phase 5).
+/// Used for persistent state, hit-testing, and accessibility.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ElementId(pub u64);
 

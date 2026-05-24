@@ -1,4 +1,4 @@
-//! Integration tests for stable ElementId via tree-position keying (Phase 1 C3).
+//! Integration tests for stable ElementId via tree-position keying.
 
 use slate_framework::types::ElementId;
 

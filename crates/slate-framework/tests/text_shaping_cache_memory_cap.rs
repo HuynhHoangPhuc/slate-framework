@@ -1,6 +1,6 @@
 //! Integration tests for TextShapingCache memory management.
 //!
-//! Phase 6 (D10): Validates memory tracking and per-element size limits.
+//! Validates memory tracking and per-element size limits.
 //!
 //! Note: LRU eviction at memory cap (50MB) is tested in paint_cache.rs unit tests
 //! with a configurable small cap. Integration tests verify memory accounting works.

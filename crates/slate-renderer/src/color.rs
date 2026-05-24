@@ -74,7 +74,7 @@ pub fn linear_to_srgb_u8(rgba: [f32; 4]) -> [u8; 4] {
 
 /// Convert an 8-bit sRGB color to **linear, premultiplied** RGBA.
 ///
-/// This is the canonical input form for every Phase 1+ instance struct
+/// This is the canonical input form for every instance struct
 /// (`RectInstance.color`, `ShadowInstance.color`, `ImageInstance.tint`,
 /// `GlyphInstance.color`). The renderer's blend state is configured for
 /// premultiplied source (`One/OneMinusSrcAlpha` on both color and alpha),

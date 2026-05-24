@@ -10,7 +10,7 @@
 //!   - `EventCtx::window_id()` returns the originating window's id for both
 //!     mouse and key dispatch.
 //!
-//! The F6 Route-A lock ("no public hooks API in v1") is enforced structurally:
+//! The "no public hooks API in v1" constraint is enforced structurally:
 //! `use_state` lives on `StateRegistry`, whose module is `pub(crate)`, and
 //! `RenderCx` exposes only `window_id()`. There is no public `use_state` to
 //! exercise here.

@@ -222,8 +222,8 @@ impl Element for TextArea {
         );
 
         // Ensure ImeState exists; seed text from the signal on first frame, then
-        // seed the undo baseline once (reuses the Phase 1 single-line helpers —
-        // the buffer + undo contract is shared across both editable elements).
+        // seed the undo baseline once (the buffer + undo contract is shared
+        // across both editable elements).
         let state_rc = cx.register_ime_state(element_id);
         {
             let mut state = state_rc.borrow_mut();
