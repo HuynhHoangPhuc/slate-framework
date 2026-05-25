@@ -24,6 +24,7 @@
 //! ```
 
 // Core modules
+pub mod a11y_accesskit;
 pub mod app;
 #[cfg(any(test, feature = "test-hooks"))]
 pub mod app_state;
@@ -105,8 +106,8 @@ pub use smol::Timer;
 pub use style::{DisplayMode, Length, Overflow, Position, SizeConstraint, Style};
 pub use text_system::{PlatformFont, TextSystem};
 pub use types::{
-    AccessibilityInfo, AccessibilityNode, AccessibilityRole, Bounds, Edges, ElementId, LayoutId,
-    LiveRegion, NodeContext, Point, Size,
+    AccessibilityAction, AccessibilityInfo, AccessibilityNode, AccessibilityRelationships,
+    AccessibilityRole, Bounds, Edges, ElementId, LayoutId, LiveRegion, NodeContext, Point, Size,
 };
 pub use view::{IntoAny, View};
 

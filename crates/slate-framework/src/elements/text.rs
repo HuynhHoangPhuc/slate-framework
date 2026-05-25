@@ -422,6 +422,7 @@ impl Element for Text {
                 bounds,
                 info,
                 children: Vec::new(),
+                actions: Vec::new(),
             });
         }
 

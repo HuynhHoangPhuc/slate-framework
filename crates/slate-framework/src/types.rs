@@ -279,6 +279,56 @@ pub enum LiveRegion {
     Assertive,
 }
 
+/// Cross-element semantic relationships referenced by ElementId.
+///
+/// Mirrors WAI-ARIA relationship attributes. All four vectors carry the
+/// ElementIds of the *target* nodes (the elements this node points at).
+/// Empty vectors mean "no relationship of this kind".
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
+pub struct AccessibilityRelationships {
+    /// Elements that label this node (aria-labelledby).
+    pub labelled_by: Vec<ElementId>,
+    /// Elements that describe this node (aria-describedby).
+    pub described_by: Vec<ElementId>,
+    /// Elements whose content/presence this node controls (aria-controls).
+    pub controls: Vec<ElementId>,
+    /// Subtree this node logically owns even if not a DOM ancestor (aria-owns).
+    pub owns: Vec<ElementId>,
+}
+
+/// Action a screen reader / assistive tech can invoke on a node.
+///
+/// Maps 1:1 onto a subset of `accesskit::Action` chosen to cover the
+/// minimum semantics needed for v1 widgets (button, checkbox, expander,
+/// slider, scroll). Extensions stay additive per the semver discipline
+/// in `docs/a11y-contract.md`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum AccessibilityAction {
+    Click,
+    Focus,
+    Blur,
+    Increment,
+    Decrement,
+    Expand,
+    Collapse,
+    ScrollIntoView,
+}
+
+impl From<AccessibilityAction> for accesskit::Action {
+    fn from(action: AccessibilityAction) -> Self {
+        match action {
+            AccessibilityAction::Click => accesskit::Action::Click,
+            AccessibilityAction::Focus => accesskit::Action::Focus,
+            AccessibilityAction::Blur => accesskit::Action::Blur,
+            AccessibilityAction::Increment => accesskit::Action::Increment,
+            AccessibilityAction::Decrement => accesskit::Action::Decrement,
+            AccessibilityAction::Expand => accesskit::Action::Expand,
+            AccessibilityAction::Collapse => accesskit::Action::Collapse,
+            AccessibilityAction::ScrollIntoView => accesskit::Action::ScrollIntoView,
+        }
+    }
+}
+
 /// Accessibility info for an element.
 ///
 /// Provides semantic information for screen readers and assistive technologies.
@@ -303,6 +353,13 @@ pub struct AccessibilityInfo {
     pub is_selected: Option<bool>,
     /// Live region behavior for dynamic content updates.
     pub live_region: Option<LiveRegion>,
+    /// Cross-element relationships (labelled-by, described-by, controls, owns).
+    pub relationships: AccessibilityRelationships,
+    /// Sequential keyboard navigation order. `None` = default flow,
+    /// `Some(0)` = focusable but skipped from sequential nav, `Some(n>0)`
+    /// = explicit order (HTML tabindex semantics). Internal contract;
+    /// no direct accesskit field today.
+    pub tab_index: Option<i32>,
 }
 
 /// Accessibility node for the a11y tree.
@@ -318,6 +375,9 @@ pub struct AccessibilityNode {
     pub info: AccessibilityInfo,
     /// Child nodes (for hierarchical tree structure).
     pub children: Vec<AccessibilityNode>,
+    /// Actions assistive tech can invoke on this node. Required for
+    /// round-tripping `accesskit::ActionRequest`.
+    pub actions: Vec<AccessibilityAction>,
 }
 
 #[cfg(test)]

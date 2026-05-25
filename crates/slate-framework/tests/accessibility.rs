@@ -5,21 +5,12 @@ mod common;
 use slate_framework::types::{AccessibilityNode, AccessibilityRole};
 use slate_framework::{Div, Text};
 
-/// Helper to extract a11y nodes from an element tree via HeadlessApp.
-#[allow(dead_code)]
+/// Render an element tree headlessly and return the completed a11y tree.
 fn render_and_get_a11y(element: impl slate_framework::IntoElement) -> Vec<AccessibilityNode> {
-    let app = slate_framework::HeadlessApp::new(800, 600).expect("HeadlessApp creation");
-    let any_element = slate_framework::AnyElement::new(element);
-
-    // HeadlessApp doesn't expose a11y nodes directly, so we test via the
-    // element tree structure. For full a11y testing, we'd need to expose
-    // the a11y_completed vec from HeadlessApp or add a dedicated API.
-    // For now, we validate the tree structure via Element::accessibility().
-    drop(app);
-    drop(any_element);
-
-    // Return empty for now - actual a11y tree testing requires HeadlessApp API changes
-    Vec::new()
+    let mut app = slate_framework::HeadlessApp::new(800, 600).expect("HeadlessApp creation");
+    let root = slate_framework::AnyElement::new(element);
+    app.render(root).expect("headless render");
+    app.a11y_nodes()
 }
 
 #[test]
@@ -69,4 +60,27 @@ fn accessibility_info_default() {
     assert!(info.label.is_none());
     assert!(!info.is_disabled);
     assert!(!info.is_focused);
+    assert!(info.relationships.labelled_by.is_empty());
+    assert!(info.relationships.described_by.is_empty());
+    assert!(info.relationships.controls.is_empty());
+    assert!(info.relationships.owns.is_empty());
+    assert!(info.tab_index.is_none());
+}
+
+#[test]
+fn a11y_tree_div_with_two_texts() {
+    let tree = render_and_get_a11y(
+        Div::new()
+            .child(Text::new("Hello"))
+            .child(Text::new("World")),
+    );
+
+    assert_eq!(tree.len(), 1, "expected a single root Group node");
+    let root = &tree[0];
+    assert_eq!(root.info.role, AccessibilityRole::Group);
+    assert_eq!(root.children.len(), 2, "Group should hold two Label children");
+    assert_eq!(root.children[0].info.role, AccessibilityRole::Label);
+    assert_eq!(root.children[0].info.label.as_deref(), Some("Hello"));
+    assert_eq!(root.children[1].info.role, AccessibilityRole::Label);
+    assert_eq!(root.children[1].info.label.as_deref(), Some("World"));
 }

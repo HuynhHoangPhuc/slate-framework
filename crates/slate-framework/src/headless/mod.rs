@@ -160,6 +160,15 @@ impl HeadlessApp {
         &self.scene
     }
 
+    /// Snapshot the most recently built accessibility tree.
+    ///
+    /// Returns a clone of the completed `Vec<AccessibilityNode>` produced
+    /// during the last `render()` / `render_view()` call. Empty until the
+    /// first render runs.
+    pub fn a11y_nodes(&self) -> Vec<AccessibilityNode> {
+        self.a11y_nodes.clone()
+    }
+
     /// Get the reactive runtime for creating signals in tests.
     pub fn runtime(&self) -> Arc<Runtime> {
         self.runtime.clone()

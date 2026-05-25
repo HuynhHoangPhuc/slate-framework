@@ -383,6 +383,7 @@ impl<'a> PrepaintCtx<'a> {
             bounds,
             info,
             children: Vec::new(),
+            actions: Vec::new(),
         });
     }
 
