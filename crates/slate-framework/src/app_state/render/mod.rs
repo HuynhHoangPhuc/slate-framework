@@ -1,8 +1,11 @@
 //! Render pipeline, device-lost recovery, and platform render delegate.
 //!
 //! Submodules:
-//! - `redraw`: surface init, redraw dispatch + state-machine driver, sync
-//!   resize, device-lost/restored handlers.
+//! - `dispatch`: re-entrancy-guarded redraw entry that drives the device-lost
+//!   recovery state machine before delegating to `run_redraw`.
+//! - `redraw`: inner layout → prepaint → paint → render pipeline.
+//! - `surface`: initial bring-up, sync resize, and device-lost / device-restored
+//!   platform event arms.
 //! - `recovery`: classification + retry helpers driven by `dispatch_redraw`.
 //!
 //! This `mod.rs` also hosts the `WindowRenderDelegate` impl (sync
@@ -20,8 +23,10 @@ use super::guards::SyncResizeGuard;
 use super::state::AppState;
 use super::types::{AppSignal, RecoveryState};
 
+mod dispatch;
 mod recovery;
 mod redraw;
+mod surface;
 
 impl<V: View> AppState<V> {
     /// Clear an active capture if its target produced no hit region this frame
