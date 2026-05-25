@@ -28,11 +28,11 @@ use smallvec::SmallVec;
 use crate::app::AppContext;
 use crate::context::{LayoutCtx, PaintCtx, PrepaintCtx};
 use crate::event::{
-    ElementImeCommitHandler, ElementImeLifecycleHandler, ElementImePreeditHandler,
-    ElementTextInputHandler, EventCtx, Handlers, ImeCommitEvent, ImeCommitHandler,
-    ImeLifecycleEvent, ImeLifecycleHandler, ImePreeditEvent, ImePreeditHandler, KeyHandler,
-    MouseEvent, MouseHandler, PendingCaptureOp, PendingFocusOp, PointerEvent, PointerEventKind,
-    PointerHandler, ScrollEvent, ScrollHandler, TextInputEvent, TextInputHandler,
+    ElementImeCommitHandler, ElementImeLifecycleHandler, ElementImePreeditHandler, EventCtx,
+    Handlers, ImeCommitEvent, ImeCommitHandler, ImeLifecycleEvent, ImeLifecycleHandler,
+    ImePreeditEvent, ImePreeditHandler, KeyHandler, MouseEvent, MouseHandler, PendingCaptureOp,
+    PendingFocusOp, PointerEvent, PointerEventKind, PointerHandler, ScrollEvent, ScrollHandler,
+    TextInputHandler,
 };
 use crate::hit_test::HitTestList;
 use crate::ime::{CachedImeQuery, PendingImeOp};
@@ -1363,72 +1363,6 @@ impl<V: View> AppState<V> {
     // single-threaded UI contract and the existing mouse-dispatch borrow
     // discipline (see ADR-001).
     // -----------------------------------------------------------------------
-
-    /// Dispatch `TextInput`: same bubble shape; composes text from the platform layer.
-    pub(crate) fn dispatch_text_input(&self, text: String) -> AppSignal {
-        let has_app_handlers = !self.on_text_input.borrow().is_empty();
-        let chain = self.build_focused_chain();
-        if chain.is_empty() && !has_app_handlers {
-            return AppSignal::None;
-        }
-
-        let event = TextInputEvent {
-            text,
-            timestamp: Instant::now(),
-        };
-        let mut stopped = false;
-        let mut pending_focus_op: Option<PendingFocusOp> = None;
-        let mut pending_capture_op: Option<PendingCaptureOp> = None;
-        let focused = self.focus_registry.borrow().focused();
-
-        let element_handlers: SmallVec<[(ElementId, ElementTextInputHandler); 8]> = {
-            let map = self.key_handler_map.borrow();
-            chain
-                .iter()
-                .filter_map(|id| {
-                    map.get(id)
-                        .and_then(|h| h.on_text_input.clone())
-                        .map(|h| (*id, h))
-                })
-                .collect()
-        };
-        for (id, handler) in &element_handlers {
-            let mut ctx = EventCtx::new(
-                    &mut stopped,
-                    &mut pending_focus_op,
-                    &mut pending_capture_op,
-                    self.window.id(),
-                    focused,
-                )
-                .with_ime(*id, &self.ime_registry);
-            handler(&event, &mut ctx);
-            if stopped {
-                break;
-            }
-        }
-
-        if !stopped && has_app_handlers {
-            let mut handlers = self.on_text_input.borrow_mut();
-            for handler in handlers.iter_mut() {
-                let mut ctx = EventCtx::new(
-                    &mut stopped,
-                    &mut pending_focus_op,
-                    &mut pending_capture_op,
-                    self.window.id(),
-                    focused,
-                );
-                handler(&event, &mut ctx);
-                if stopped {
-                    break;
-                }
-            }
-            drop(handlers);
-        }
-
-        self.apply_pending_focus_op(pending_focus_op);
-        self.apply_pending_capture_op(pending_capture_op);
-        AppSignal::RequestRedraw
-    }
 
     // -----------------------------------------------------------------------
     // IME event dispatch

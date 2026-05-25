@@ -12,6 +12,7 @@ use crate::view::View;
 use super::state::AppState;
 
 mod key;
+mod text_input;
 
 impl<V: View> AppState<V> {
     /// Snapshot the focused element + its ancestor chain (leaf → root).
