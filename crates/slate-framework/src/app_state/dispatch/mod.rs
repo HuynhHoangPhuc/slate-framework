@@ -11,6 +11,7 @@ use crate::view::View;
 
 use super::state::AppState;
 
+mod ime;
 mod key;
 mod text_input;
 

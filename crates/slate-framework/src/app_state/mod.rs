@@ -1,4 +1,4 @@
-//! Shared application state for event handler and resize callback.
+﻿//! Shared application state for event handler and resize callback.
 //!
 //! `AppState<V>` holds all RefCell-wrapped state that was previously captured
 //! by the `App::run` closure. Wrapping in `Rc<AppState<V>>` allows both the
@@ -19,8 +19,8 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use slate_platform::{
-    Key, KeyCode, Modifiers, MouseButton, PhysicalRect, PhysicalSize, Platform, Window, WindowId,
-    WindowImeDelegate, WindowRenderDelegate,
+    Key, KeyCode, Modifiers, MouseButton, PhysicalSize, Platform, Window, WindowId,
+    WindowRenderDelegate,
 };
 use slate_renderer::{Renderer, RendererObserver};
 use smallvec::SmallVec;
@@ -28,14 +28,11 @@ use smallvec::SmallVec;
 use crate::app::AppContext;
 use crate::context::{LayoutCtx, PaintCtx, PrepaintCtx};
 use crate::event::{
-    ElementImeCommitHandler, ElementImeLifecycleHandler, ElementImePreeditHandler, EventCtx,
-    Handlers, ImeCommitEvent, ImeCommitHandler, ImeLifecycleEvent, ImeLifecycleHandler,
-    ImePreeditEvent, ImePreeditHandler, KeyHandler, MouseEvent, MouseHandler, PendingCaptureOp,
-    PendingFocusOp, PointerEvent, PointerEventKind, PointerHandler, ScrollEvent, ScrollHandler,
-    TextInputHandler,
+    EventCtx, Handlers, ImeCommitHandler, ImeLifecycleHandler, ImePreeditHandler, KeyHandler,
+    MouseEvent, MouseHandler, PendingCaptureOp, PendingFocusOp, PointerEvent, PointerEventKind,
+    PointerHandler, ScrollEvent, ScrollHandler, TextInputHandler,
 };
 use crate::hit_test::HitTestList;
-use crate::ime::{CachedImeQuery, PendingImeOp};
 use crate::layout::{compute_layout, resolve_bounds};
 use crate::render_cx::RenderCx;
 use crate::text_system::TextSystem;
@@ -103,21 +100,6 @@ impl<V: View> AppState<V> {
         }
     }
 
-    /// Install App-level IME handlers. Called once by `App::run` after
-    /// construction, mirrors `install_key_handlers`.
-    pub(crate) fn install_ime_handlers(
-        &self,
-        on_ime_preedit: Vec<ImePreeditHandler>,
-        on_ime_commit: Vec<ImeCommitHandler>,
-        on_ime_enabled: Vec<ImeLifecycleHandler>,
-        on_ime_disabled: Vec<ImeLifecycleHandler>,
-    ) {
-        *self.on_ime_preedit.borrow_mut() = on_ime_preedit;
-        *self.on_ime_commit.borrow_mut() = on_ime_commit;
-        *self.on_ime_enabled.borrow_mut() = on_ime_enabled;
-        *self.on_ime_disabled.borrow_mut() = on_ime_disabled;
-    }
-
     /// Initialize renderer + text_system + view. Called from Event::Resumed.
     /// Re-entry guarded: if renderer is already Some, returns Ok without re-allocating.
     pub fn init_surfaces<P: Platform>(
@@ -127,7 +109,7 @@ impl<V: View> AppState<V> {
         platform: &P,
     ) -> Result<(), String> {
         // Re-entry guard: if already initialized (e.g. screen unlock fires Resumed again),
-        // skip re-initialization. DO NOT reset recovery_state here — that would wipe
+        // skip re-initialization. DO NOT reset recovery_state here â€” that would wipe
         // an active recovery counter. (Red-team RT-1.6)
         if self.renderer.borrow().is_some() {
             return Ok(());
@@ -203,7 +185,7 @@ impl<V: View> AppState<V> {
             "dispatch_redraw entry: rendering={pre_rendering} device_lost={pre_device_lost}"
         );
 
-        // RE-ENTRANCY GUARD — applies to BOTH sync and async render paths.
+        // RE-ENTRANCY GUARD â€” applies to BOTH sync and async render paths.
         // If a redraw is already in flight, skip the duplicate.
         if self.rendering.get() {
             return AppSignal::None;
@@ -222,7 +204,7 @@ impl<V: View> AppState<V> {
         // physical adapter and mark the device lost so the recovery state
         // machine re-picks an adapter matching the window's current monitor.
         //
-        // Gated on `RecoveryState::NotLost` + `!skip_draws` — during active
+        // Gated on `RecoveryState::NotLost` + `!skip_draws` â€” during active
         // recovery the renderer still reports the OLD adapter's LUID, so an
         // unconditional probe would re-mark device-lost on every retry step
         // and could trip the 5-second flap guard.
@@ -257,7 +239,7 @@ impl<V: View> AppState<V> {
                 {
                     log::info!(
                         target: "slate::device_lost",
-                        "adapter LUID mismatch: window={:#018x} renderer={:#018x} — marking device-lost",
+                        "adapter LUID mismatch: window={:#018x} renderer={:#018x} â€” marking device-lost",
                         w, a
                     );
                     if let Some(r) = self.renderer.borrow().as_ref() {
@@ -291,12 +273,12 @@ impl<V: View> AppState<V> {
                 let now = Instant::now();
 
                 // Deferral: loss arrived during the modal size/move loop.
-                // Park in `DeferredUntilStable` — `on_size_move_end` will
+                // Park in `DeferredUntilStable` â€” `on_size_move_end` will
                 // transition us into `CooldownGate` once the user releases.
                 // No render, no retry while deferred.
                 if self.window.in_size_move() {
                     log::info!(target: "slate::device_lost",
-                        "device-lost during modal size/move loop — deferring (reason={:?})", reason);
+                        "device-lost during modal size/move loop â€” deferring (reason={:?})", reason);
                     *state = RecoveryState::DeferredUntilStable {
                         detected_at: now,
                         reason,
@@ -306,13 +288,13 @@ impl<V: View> AppState<V> {
                 }
 
                 // Reason-aware flap guard: only `WgpuCallback` losses count.
-                // `LuidMigration` always passes — cross-adapter drag is healthy.
+                // `LuidMigration` always passes â€” cross-adapter drag is healthy.
                 if reason == DeviceLossReason::WgpuCallback {
                     if let Some(prev) = self.last_wgpu_callback_loss_at.get() {
                         let elapsed = now.duration_since(prev);
                         if elapsed <= Duration::from_secs(RECOVERY_FLAP_GUARD_SECS) {
                             log::error!(target: "slate::device_lost",
-                                "device-lost re-fired {}ms after prior WgpuCallback (guard={}s, reason=WgpuCallback) — giving up",
+                                "device-lost re-fired {}ms after prior WgpuCallback (guard={}s, reason=WgpuCallback) â€” giving up",
                                 elapsed.as_millis(),
                                 RECOVERY_FLAP_GUARD_SECS);
                             *state = RecoveryState::GiveUp { reason };
@@ -405,7 +387,7 @@ impl<V: View> AppState<V> {
     ///
     /// Returns `WgpuCallback` if wgpu's lost-callback fired since the last
     /// consume; otherwise `LuidMigration` (the loss was synthesized by the
-    /// per-redraw LUID probe). Must be called on the NotLost→DetectedLost edge.
+    /// per-redraw LUID probe). Must be called on the NotLostâ†’DetectedLost edge.
     fn classify_loss_reason(&self) -> DeviceLossReason {
         let callback_fired = self
             .renderer
@@ -438,7 +420,7 @@ impl<V: View> AppState<V> {
         if callback_fired && current == DeviceLossReason::LuidMigration {
             self.last_wgpu_callback_loss_at.set(Some(Instant::now()));
             log::info!(target: "slate::device_lost",
-                "upgrade-rule: WgpuCallback arrived mid-cycle — upgrading reason from LuidMigration");
+                "upgrade-rule: WgpuCallback arrived mid-cycle â€” upgrading reason from LuidMigration");
             DeviceLossReason::WgpuCallback
         } else {
             current
@@ -485,7 +467,7 @@ impl<V: View> AppState<V> {
 
                 // RT-15: Assign FIRST so observer callbacks that inspect
                 // `self.renderer.borrow()` see the new device instead of None.
-                // Matches `init_surfaces` ordering (assign → register).
+                // Matches `init_surfaces` ordering (assign â†’ register).
                 *self.renderer.borrow_mut() = Some(new_renderer);
 
                 // Register cache-invalidation observers on the now-installed renderer.
@@ -567,7 +549,7 @@ impl<V: View> AppState<V> {
         }
     }
 
-    /// Run the redraw pipeline (layout → prepaint → paint → render).
+    /// Run the redraw pipeline (layout â†’ prepaint â†’ paint â†’ render).
     ///
     /// This is the inner body called by `dispatch_redraw`. The re-entrancy guard
     /// and device-lost recovery wrapper live in `dispatch_redraw`, not here.
@@ -579,7 +561,7 @@ impl<V: View> AppState<V> {
 
         // skip_draws gate - suppress one frame after recovery
         if self.skip_draws.get() {
-            log::debug!(target: "slate::device_lost", "skip_draws active — present suppressed");
+            log::debug!(target: "slate::device_lost", "skip_draws active â€” present suppressed");
             self.skip_draws.set(false);
             return;
         }
@@ -753,7 +735,7 @@ impl<V: View> AppState<V> {
             // NLL drops `cx`'s borrows here since it's not used past this point.
             self.republish_ime_cache();
 
-            // Focus ring overlay — emitted last so it sits on top of
+            // Focus ring overlay â€” emitted last so it sits on top of
             // element content. Only painted when the focused element opted into
             // a visible ring via `focus_ring(true)` (default for `focusable`).
             let focused = self.focus_registry.borrow().focused();
@@ -813,7 +795,7 @@ impl<V: View> AppState<V> {
     ///
     /// Idempotent: skips work when the requested size matches the last
     /// size we already configured. AppKit can fire setFrameSize: with the
-    /// same PhysicalSize twice per drag tick (logical→backing rounding),
+    /// same PhysicalSize twice per drag tick (logicalâ†’backing rounding),
     /// and re-running configure on the wgpu surface for the same dimensions
     /// would be wasted GPU work mid-drag.
     pub(crate) fn run_resize_sync(&self, size: PhysicalSize) {
@@ -826,7 +808,7 @@ impl<V: View> AppState<V> {
         self.last_resize_size.set(Some(size));
     }
 
-    /// Event::WindowResized arm — currently a no-op.
+    /// Event::WindowResized arm â€” currently a no-op.
     /// Platform now drives WindowRedrawRequested post-resize.
     pub fn handle_window_resized(&self, physical_size: (u32, u32)) {
         if let Some(r) = self.renderer.borrow_mut().as_mut() {
@@ -901,8 +883,8 @@ impl<V: View> AppState<V> {
 
         // Click-to-focus / click-to-blur. Auto-focuses the deepest focusable
         // ancestor on the hit chain BEFORE invoking handlers, so handlers
-        // observe the updated `focused_element()`. A background-click — no
-        // focusable ancestor on the hit chain, or a hit-test miss — clears
+        // observe the updated `focused_element()`. A background-click â€” no
+        // focusable ancestor on the hit chain, or a hit-test miss â€” clears
         // focus (native-widget semantics; reverses the earlier "no auto-blur"
         // design lock). Authors who need to keep focus on a draggable can opt
         // into `focusable(true).focus_ring(false)`.
@@ -1340,7 +1322,7 @@ impl<V: View> AppState<V> {
     /// Mouse capture can be revoked outside the normal mouse_up path (window
     /// loses focus, modal popup steals it, SetCapture stolen by a sibling).
     /// Any `ImeState.dragging` flag set by `mouse_down` must be cleared here
-    /// — otherwise the next `mouse_move` over that element would silently
+    /// â€” otherwise the next `mouse_move` over that element would silently
     /// re-extend the selection without a preceding mouse_down.
     pub(crate) fn dispatch_capture_lost(&self) -> AppSignal {
         *self.capture_target.borrow_mut() = None;
@@ -1348,383 +1330,6 @@ impl<V: View> AppState<V> {
         *self.button_state.borrow_mut() = 0;
         self.ime_registry.borrow().clear_drag_flags();
         AppSignal::None
-    }
-
-    // -----------------------------------------------------------------------
-    // Keyboard event dispatch methods
-    //
-    // Mirrors the mouse-dispatch pattern: build the framework event payload,
-    // walk the registered handler vec, return `RequestRedraw` when any handler
-    // ran (handler may have mutated reactive state) and `None` otherwise to
-    // avoid spurious repaints in apps that never register a key handler.
-    //
-    // Handlers must not re-enter `dispatch_key_*` — the `borrow_mut()` on the
-    // handler vec is held across invocation. This matches the platform's
-    // single-threaded UI contract and the existing mouse-dispatch borrow
-    // discipline (see ADR-001).
-    // -----------------------------------------------------------------------
-
-    // -----------------------------------------------------------------------
-    // IME event dispatch
-    //
-    // All four dispatchers share the focused-chain bubble shape used by
-    // keyboard dispatch — snapshot per-element handlers up-front, then walk
-    // App-level handlers if propagation was not stopped. Each handler runs
-    // with an `EventCtx::with_ime(...)` so element code can mutate its
-    // `ImeState` through `cx.ime_state(id)` without re-borrowing the registry.
-    // -----------------------------------------------------------------------
-
-    /// Publish a fresh [`CachedImeQuery`] snapshot from the focused element's
-    /// [`ImeState`]. Called at the end of `dispatch_ime_preedit` AND at the
-    /// end of every paint pass — those are the two deterministic moments the
-    /// OS sync-query channel must see updated values.
-    ///
-    /// The snapshot includes a bounded text window around the caret so the
-    /// query path can answer `ime_text` without re-entering the registry.
-    pub(crate) fn republish_ime_cache(&self) {
-        // Default → no focused element / no ime-capable element this frame.
-        let mut snap = CachedImeQuery::default();
-
-        let Some(focused) = self.focus_registry.borrow().focused() else {
-            *self.cached_ime_query.borrow_mut() = snap;
-            return;
-        };
-
-        let entry = self.ime_registry.borrow().get(focused);
-        if let Some(state_rc) = entry
-            && let Ok(state) = state_rc.try_borrow()
-        {
-            snap.caret_client_rect = state.caret_client_rect;
-            snap.marked_range = state.answer_marked_range();
-            snap.selected_range = state.answer_selected_range();
-
-            // Bounded text window: 256 bytes either side of the caret,
-            // snapped to UTF-8 char boundaries so the slice is always valid.
-            const HALF: usize = 256;
-            let len = state.text.len();
-            let mut lo = state.caret.saturating_sub(HALF);
-            let mut hi = (state.caret + HALF).min(len);
-            while lo > 0 && !state.text.is_char_boundary(lo) {
-                lo -= 1;
-            }
-            while hi < len && !state.text.is_char_boundary(hi) {
-                hi += 1;
-            }
-            if let Some(slice) = state.text.get(lo..hi) {
-                snap.text_window = Some((lo..hi, slice.to_string()));
-            }
-        }
-
-        *self.cached_ime_query.borrow_mut() = snap;
-    }
-
-    /// Drain queued [`PendingImeOp`]s. Called BEFORE `apply_pending_focus_op`
-    /// so Tab-during-composition lands its synthetic commit on the
-    /// still-focused element.
-    pub(crate) fn drain_pending_ime_ops(&self) {
-        let ops: Vec<PendingImeOp> = self.pending_ime_ops.borrow_mut().drain(..).collect();
-        for op in ops {
-            match op {
-                PendingImeOp::Commit { text, .. } => {
-                    // Synthetic commit — inserts text at the focused
-                    // element's caret + clears the preedit. Does NOT invoke
-                    // user `on_ime_commit` handlers (re-entrancy contract:
-                    // synthetic commits must not invoke user callbacks).
-                    let Some(focused) = self.focus_registry.borrow().focused() else {
-                        continue;
-                    };
-                    let Some(state_rc) = self.ime_registry.borrow().get(focused) else {
-                        continue;
-                    };
-                    if let Ok(mut state) = state_rc.try_borrow_mut() {
-                        // Clear preedit first.
-                        state.preedit = None;
-                        if !text.is_empty() {
-                            let caret = state.caret;
-                            state.text.insert_str(caret, &text);
-                            state.caret = caret + text.len();
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /// Dispatch `Event::ImeEnabled` — focused-chain bubble, no payload.
-    pub(crate) fn dispatch_ime_enabled(&self, _window: WindowId) -> AppSignal {
-        let has_app_handlers = !self.on_ime_enabled.borrow().is_empty();
-        let chain = self.build_focused_chain();
-        if chain.is_empty() && !has_app_handlers {
-            return AppSignal::None;
-        }
-
-        let event = ImeLifecycleEvent {
-            timestamp: Instant::now(),
-        };
-        let mut stopped = false;
-        let mut pending_focus_op: Option<PendingFocusOp> = None;
-        let mut pending_capture_op: Option<PendingCaptureOp> = None;
-        let focused = self.focus_registry.borrow().focused();
-
-        let element_handlers: SmallVec<[ElementImeLifecycleHandler; 8]> = {
-            let map = self.ime_handler_map.borrow();
-            chain
-                .iter()
-                .filter_map(|id| map.get(id).and_then(|h| h.on_ime_enabled.clone()))
-                .collect()
-        };
-        for handler in &element_handlers {
-            let id = chain.first().copied().unwrap_or_else(ElementId::root);
-            let mut ctx = EventCtx::new(
-                    &mut stopped,
-                    &mut pending_focus_op,
-                    &mut pending_capture_op,
-                    self.window.id(),
-                    focused,
-                )
-                .with_ime(id, &self.ime_registry);
-            handler(&event, &mut ctx);
-            if stopped {
-                break;
-            }
-        }
-
-        if !stopped && has_app_handlers {
-            let mut handlers = self.on_ime_enabled.borrow_mut();
-            for handler in handlers.iter_mut() {
-                let id = chain.first().copied().unwrap_or_else(ElementId::root);
-                let mut ctx = EventCtx::new(
-                    &mut stopped,
-                    &mut pending_focus_op,
-                    &mut pending_capture_op,
-                    self.window.id(),
-                    focused,
-                )
-                    .with_ime(id, &self.ime_registry);
-                handler(&event, &mut ctx);
-                if stopped {
-                    break;
-                }
-            }
-            drop(handlers);
-        }
-
-        self.drain_pending_ime_ops();
-        self.apply_pending_focus_op(pending_focus_op);
-        self.apply_pending_capture_op(pending_capture_op);
-        AppSignal::RequestRedraw
-    }
-
-    /// Dispatch `Event::ImeDisabled` — focused-chain bubble, no payload.
-    pub(crate) fn dispatch_ime_disabled(&self, _window: WindowId) -> AppSignal {
-        let has_app_handlers = !self.on_ime_disabled.borrow().is_empty();
-        let chain = self.build_focused_chain();
-        if chain.is_empty() && !has_app_handlers {
-            return AppSignal::None;
-        }
-
-        let event = ImeLifecycleEvent {
-            timestamp: Instant::now(),
-        };
-        let mut stopped = false;
-        let mut pending_focus_op: Option<PendingFocusOp> = None;
-        let mut pending_capture_op: Option<PendingCaptureOp> = None;
-        let focused = self.focus_registry.borrow().focused();
-
-        let element_handlers: SmallVec<[ElementImeLifecycleHandler; 8]> = {
-            let map = self.ime_handler_map.borrow();
-            chain
-                .iter()
-                .filter_map(|id| map.get(id).and_then(|h| h.on_ime_disabled.clone()))
-                .collect()
-        };
-        for handler in &element_handlers {
-            let id = chain.first().copied().unwrap_or_else(ElementId::root);
-            let mut ctx = EventCtx::new(
-                    &mut stopped,
-                    &mut pending_focus_op,
-                    &mut pending_capture_op,
-                    self.window.id(),
-                    focused,
-                )
-                .with_ime(id, &self.ime_registry);
-            handler(&event, &mut ctx);
-            if stopped {
-                break;
-            }
-        }
-
-        if !stopped && has_app_handlers {
-            let mut handlers = self.on_ime_disabled.borrow_mut();
-            for handler in handlers.iter_mut() {
-                let id = chain.first().copied().unwrap_or_else(ElementId::root);
-                let mut ctx = EventCtx::new(
-                    &mut stopped,
-                    &mut pending_focus_op,
-                    &mut pending_capture_op,
-                    self.window.id(),
-                    focused,
-                )
-                    .with_ime(id, &self.ime_registry);
-                handler(&event, &mut ctx);
-                if stopped {
-                    break;
-                }
-            }
-            drop(handlers);
-        }
-
-        self.drain_pending_ime_ops();
-        self.apply_pending_focus_op(pending_focus_op);
-        self.apply_pending_capture_op(pending_capture_op);
-        AppSignal::RequestRedraw
-    }
-
-    /// Dispatch `Event::ImePreedit` — focused-chain bubble. Republishes the
-    /// IME cache at the end so OS sync queries that arrive between paints
-    /// (Windows IMM `WM_IME_REQUEST`) read fresh values.
-    pub(crate) fn dispatch_ime_preedit(
-        &self,
-        _window: WindowId,
-        text: String,
-        cursor_byte_offset: usize,
-        selection: Option<std::ops::Range<usize>>,
-    ) -> AppSignal {
-        let has_app_handlers = !self.on_ime_preedit.borrow().is_empty();
-        let chain = self.build_focused_chain();
-        if chain.is_empty() && !has_app_handlers {
-            return AppSignal::None;
-        }
-
-        let event = ImePreeditEvent {
-            text,
-            cursor_byte_offset,
-            selection,
-            timestamp: Instant::now(),
-        };
-        let mut stopped = false;
-        let mut pending_focus_op: Option<PendingFocusOp> = None;
-        let mut pending_capture_op: Option<PendingCaptureOp> = None;
-        let focused = self.focus_registry.borrow().focused();
-
-        let element_handlers: SmallVec<[ElementImePreeditHandler; 8]> = {
-            let map = self.ime_handler_map.borrow();
-            chain
-                .iter()
-                .filter_map(|id| map.get(id).and_then(|h| h.on_ime_preedit.clone()))
-                .collect()
-        };
-        for handler in &element_handlers {
-            let id = chain.first().copied().unwrap_or_else(ElementId::root);
-            let mut ctx = EventCtx::new(
-                    &mut stopped,
-                    &mut pending_focus_op,
-                    &mut pending_capture_op,
-                    self.window.id(),
-                    focused,
-                )
-                .with_ime(id, &self.ime_registry);
-            handler(&event, &mut ctx);
-            if stopped {
-                break;
-            }
-        }
-
-        if !stopped && has_app_handlers {
-            let mut handlers = self.on_ime_preedit.borrow_mut();
-            for handler in handlers.iter_mut() {
-                let id = chain.first().copied().unwrap_or_else(ElementId::root);
-                let mut ctx = EventCtx::new(
-                    &mut stopped,
-                    &mut pending_focus_op,
-                    &mut pending_capture_op,
-                    self.window.id(),
-                    focused,
-                )
-                    .with_ime(id, &self.ime_registry);
-                handler(&event, &mut ctx);
-                if stopped {
-                    break;
-                }
-            }
-            drop(handlers);
-        }
-
-        self.drain_pending_ime_ops();
-        self.apply_pending_focus_op(pending_focus_op);
-        self.apply_pending_capture_op(pending_capture_op);
-        // Republish so OS queries arriving before next paint see fresh state.
-        self.republish_ime_cache();
-        AppSignal::RequestRedraw
-    }
-
-    /// Dispatch `Event::ImeCommit` — focused-chain bubble. Empty-string
-    /// commit is the "clear preedit, no insert" signal; handlers MUST NOT
-    /// call `Signal::set` in that case (contract documented on
-    /// [`ImeCommitEvent`]).
-    pub(crate) fn dispatch_ime_commit(&self, _window: WindowId, text: String) -> AppSignal {
-        let has_app_handlers = !self.on_ime_commit.borrow().is_empty();
-        let chain = self.build_focused_chain();
-        if chain.is_empty() && !has_app_handlers {
-            return AppSignal::None;
-        }
-
-        let event = ImeCommitEvent {
-            text,
-            timestamp: Instant::now(),
-        };
-        let mut stopped = false;
-        let mut pending_focus_op: Option<PendingFocusOp> = None;
-        let mut pending_capture_op: Option<PendingCaptureOp> = None;
-        let focused = self.focus_registry.borrow().focused();
-
-        let element_handlers: SmallVec<[ElementImeCommitHandler; 8]> = {
-            let map = self.ime_handler_map.borrow();
-            chain
-                .iter()
-                .filter_map(|id| map.get(id).and_then(|h| h.on_ime_commit.clone()))
-                .collect()
-        };
-        for handler in &element_handlers {
-            let id = chain.first().copied().unwrap_or_else(ElementId::root);
-            let mut ctx = EventCtx::new(
-                    &mut stopped,
-                    &mut pending_focus_op,
-                    &mut pending_capture_op,
-                    self.window.id(),
-                    focused,
-                )
-                .with_ime(id, &self.ime_registry);
-            handler(&event, &mut ctx);
-            if stopped {
-                break;
-            }
-        }
-
-        if !stopped && has_app_handlers {
-            let mut handlers = self.on_ime_commit.borrow_mut();
-            for handler in handlers.iter_mut() {
-                let id = chain.first().copied().unwrap_or_else(ElementId::root);
-                let mut ctx = EventCtx::new(
-                    &mut stopped,
-                    &mut pending_focus_op,
-                    &mut pending_capture_op,
-                    self.window.id(),
-                    focused,
-                )
-                    .with_ime(id, &self.ime_registry);
-                handler(&event, &mut ctx);
-                if stopped {
-                    break;
-                }
-            }
-            drop(handlers);
-        }
-
-        self.drain_pending_ime_ops();
-        self.apply_pending_focus_op(pending_focus_op);
-        self.apply_pending_capture_op(pending_capture_op);
-        AppSignal::RequestRedraw
     }
 
     // -----------------------------------------------------------------------
@@ -1753,7 +1358,7 @@ impl<V: View> AppState<V> {
                         timestamp: Instant::now(),
                     };
                     // Collect from both surfaces (MouseHandlers first per ancestor,
-                    // then Handlers) under shared stopped flag — mirrors the
+                    // then Handlers) under shared stopped flag â€” mirrors the
                     // down/up dispatchers so drag tracking on TextField sees the
                     // move before any broad on_mouse_move below. Focused-surface
                     // entries carry their owning id for `ImeState` resolution.
@@ -1832,7 +1437,7 @@ impl<V: View> AppState<V> {
 }
 
 // ---------------------------------------------------------------------------
-// WindowRenderDelegate impl — sync resize/redraw from platform callbacks
+// WindowRenderDelegate impl â€” sync resize/redraw from platform callbacks
 // ---------------------------------------------------------------------------
 
 impl<V: View> WindowRenderDelegate for AppState<V> {
@@ -1849,7 +1454,7 @@ impl<V: View> WindowRenderDelegate for AppState<V> {
         self.run_resize_sync(new_size);
 
         // Step 2: full redraw THROUGH the recovery wrapper.
-        // RT-2.5: must use dispatch_redraw, not run_redraw — sync resize
+        // RT-2.5: must use dispatch_redraw, not run_redraw â€” sync resize
         // can still hit device-lost (e.g., GPU reset under heavy load), and
         // bypassing the wrapper would either render garbage or panic.
         if self.dispatch_redraw() == AppSignal::RequestQuit {
@@ -1879,7 +1484,7 @@ impl<V: View> WindowRenderDelegate for AppState<V> {
         log::trace!(target: "slate::device_lost", "on_display_change: probe returned lost={lost}");
         if lost {
             log::info!(target: "slate::device_lost",
-                "on_display_change: device probe found loss → requesting redraw");
+                "on_display_change: device probe found loss â†’ requesting redraw");
             self.window.request_redraw();
         }
     }
@@ -1895,7 +1500,7 @@ impl<V: View> WindowRenderDelegate for AppState<V> {
         let snapshot = self.recovery_state.borrow().clone();
         if let RecoveryState::DeferredUntilStable { reason, .. } = snapshot {
             log::info!(target: "slate::device_lost",
-                "exit size/move — resuming recovery via cooldown gate (reason={:?})", reason);
+                "exit size/move â€” resuming recovery via cooldown gate (reason={:?})", reason);
             *self.recovery_state.borrow_mut() = RecoveryState::CooldownGate {
                 since: Instant::now(),
                 reason,
@@ -1906,39 +1511,6 @@ impl<V: View> WindowRenderDelegate for AppState<V> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// WindowImeDelegate impl — answers OS sync queries from the cached snapshot
-// only. NEVER traverses the live `ime_registry` (avoids re-entrancy).
-// ---------------------------------------------------------------------------
-
-impl<V: View> WindowImeDelegate for AppState<V> {
-    fn ime_caret_rect(&self, _window_id: WindowId) -> Option<PhysicalRect> {
-        self.cached_ime_query.borrow().caret_client_rect
-    }
-
-    fn ime_text(&self, _window_id: WindowId, range: std::ops::Range<usize>) -> Option<String> {
-        let cache = self.cached_ime_query.borrow();
-        let (window_range, text) = cache.text_window.as_ref()?;
-        // Translate absolute byte range into cached-window-local slice. The
-        // requested range must fit inside the cached window AND land on UTF-8
-        // boundaries; otherwise we report None (the OS will fall back to its
-        // own state, which is the safe default).
-        if range.start < window_range.start || range.end > window_range.end {
-            return None;
-        }
-        let lo = range.start - window_range.start;
-        let hi = range.end - window_range.start;
-        text.get(lo..hi).map(|s| s.to_string())
-    }
-
-    fn ime_selected_range(&self, _window_id: WindowId) -> Option<std::ops::Range<usize>> {
-        self.cached_ime_query.borrow().selected_range.clone()
-    }
-
-    fn ime_marked_range(&self, _window_id: WindowId) -> Option<std::ops::Range<usize>> {
-        self.cached_ime_query.borrow().marked_range.clone()
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Event dispatch helpers (pub(crate) for use by app.rs and future phases)
@@ -2348,7 +1920,7 @@ impl<V: View> AppState<V> {
     }
 
     /// Dispatch a synthetic `MouseMoved` and return its **raw** `AppSignal`
-    /// without the masking flush. Test-only — lets tests assert whether a bare
+    /// without the masking flush. Test-only â€” lets tests assert whether a bare
     /// move requests a redraw (drag-in-progress) versus stays silent (idle
     /// hover), which `dispatch_mouse_move_for_test` hides by hardcoding
     /// `RequestRedraw`.
@@ -2371,7 +1943,7 @@ impl<V: View> AppState<V> {
         self.dispatch_capture_lost()
     }
 
-    /// Register a per-element keyboard handler bundle. Test-only — production
+    /// Register a per-element keyboard handler bundle. Test-only â€” production
     /// code wires this through `PrepaintCtx::register_key_handlers` from Div.
     pub fn install_element_key_handlers_for_test(
         &self,
@@ -2386,13 +1958,13 @@ impl<V: View> AppState<V> {
         self.focus_registry.borrow_mut().register(entry);
     }
 
-    /// Set focus to the given element. Test-only — bypasses the focusable check
+    /// Set focus to the given element. Test-only â€” bypasses the focusable check
     /// (mirrors `AppContext::set_focus` minus the redraw request).
     pub fn set_focus_for_test(&self, id: ElementId) {
         self.focus_registry.borrow_mut().set_focus(id);
     }
 
-    /// Insert a parent_map edge for building the focused-chain. Test-only —
+    /// Insert a parent_map edge for building the focused-chain. Test-only â€”
     /// production code wires this through `PrepaintCtx::register_handlers`.
     pub fn set_parent_for_test(&self, child: ElementId, parent: ElementId) {
         self.parent_map.borrow_mut().insert(child, parent);
@@ -2434,7 +2006,7 @@ impl<V: View> AppState<V> {
         self.ime_handler_map.borrow_mut().insert(id, handlers);
     }
 
-    /// Register a per-element mouse handler bundle. Test-only — production
+    /// Register a per-element mouse handler bundle. Test-only â€” production
     /// code wires this through `PrepaintCtx::register_mouse_handlers` from
     /// TextField.
     pub fn install_element_mouse_handlers_for_test(
@@ -2455,7 +2027,7 @@ impl<V: View> AppState<V> {
     }
 
     /// Write an `ImeState` directly into the registry for `id`, then
-    /// republish the cache. Test-only — bypasses the platform dispatch path.
+    /// republish the cache. Test-only â€” bypasses the platform dispatch path.
     pub fn set_ime_state_for_test(&self, id: ElementId, new_state: crate::ime::ImeState) {
         let rc = self.ime_registry.borrow_mut().register(id);
         *rc.borrow_mut() = new_state;
@@ -2499,7 +2071,7 @@ impl<V: View> AppState<V> {
     }
 
     /// Run the unmount-driven capture release against the current hit list.
-    /// Test-only — exercises the same path the prepaint pass uses.
+    /// Test-only â€” exercises the same path the prepaint pass uses.
     pub fn release_capture_if_unmounted_for_test(&self) {
         let hit = self.hit_test_list.borrow();
         self.release_capture_if_unmounted(&hit);
