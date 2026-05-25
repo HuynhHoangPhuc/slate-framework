@@ -1,0 +1,87 @@
+---
+source: crates/slate-framework/tests/golden_trace_two_window.rs
+expression: trace
+---
+[
+    TraceEntry {
+        seq: 0,
+        window: "winA",
+        kind: "BeginDispatch",
+        handler_on: None,
+        ctx_target: None,
+        signal: None,
+        note: Some(
+            "text_input:x on winA",
+        ),
+    },
+    TraceEntry {
+        seq: 1,
+        window: "winA",
+        kind: "EndDispatch",
+        handler_on: None,
+        ctx_target: None,
+        signal: Some(
+            "RequestRedraw",
+        ),
+        note: None,
+    },
+    TraceEntry {
+        seq: 2,
+        window: "winB",
+        kind: "BeginDispatch",
+        handler_on: None,
+        ctx_target: None,
+        signal: None,
+        note: Some(
+            "text_input:y on winB",
+        ),
+    },
+    TraceEntry {
+        seq: 3,
+        window: "winB",
+        kind: "EndDispatch",
+        handler_on: None,
+        ctx_target: None,
+        signal: Some(
+            "RequestRedraw",
+        ),
+        note: None,
+    },
+    TraceEntry {
+        seq: 4,
+        window: "winA",
+        kind: "BeginDispatch",
+        handler_on: None,
+        ctx_target: None,
+        signal: None,
+        note: Some(
+            "key:Tab on winA",
+        ),
+    },
+    TraceEntry {
+        seq: 5,
+        window: "winA",
+        kind: "element_key_down",
+        handler_on: Some(
+            1,
+        ),
+        ctx_target: Some(
+            1,
+        ),
+        signal: None,
+        note: Some(
+            "Tab",
+        ),
+    },
+    TraceEntry {
+        seq: 6,
+        window: "winA",
+        kind: "EndDispatch",
+        handler_on: None,
+        ctx_target: None,
+        signal: Some(
+            "RequestRedraw",
+        ),
+        note: None,
+    },
+]

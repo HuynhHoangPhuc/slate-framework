@@ -87,3 +87,17 @@ required-features = ["test-hooks"]
 name = "dispatch_golden_trace"
 harness = false
 required-features = ["test-hooks"]
+
+# Two-window smoke: per-window state isolation, last-window-destroy semantics,
+# and reactive wake-all bridge verification.
+[[test]]
+name = "multi_window_smoke"
+harness = false
+required-features = ["test-hooks"]
+
+# Two-window golden-trace companion to dispatch_golden_trace. Pins the
+# handler-invocation order for interleaved events across two live windows.
+[[test]]
+name = "golden_trace_two_window"
+harness = false
+required-features = ["test-hooks"]
