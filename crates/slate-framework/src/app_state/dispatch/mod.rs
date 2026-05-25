@@ -13,6 +13,7 @@ use super::state::AppState;
 
 mod ime;
 mod key;
+mod mouse;
 mod text_input;
 
 impl<V: View> AppState<V> {
