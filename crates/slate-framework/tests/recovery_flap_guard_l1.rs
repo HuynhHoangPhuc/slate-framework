@@ -20,8 +20,10 @@ use std::time::{Duration, Instant};
 
 use slate_framework::app::AppContext;
 use slate_framework::app_state::{AppState, RecoveryState};
+use slate_framework::app_state::window_state::WindowState;
 use slate_framework::element::AnyElement;
 use slate_framework::elements::Div;
+use slate_framework::erased_view::ErasedView;
 use slate_framework::executor::{Executor, RedrawRequester};
 use slate_framework::view::{IntoAny, View};
 use slate_platform::{
@@ -55,12 +57,14 @@ fn l1_luid_migration_never_gives_up() {
     let executor = Executor::new(redraw_requester.clone());
     let runtime = slate_reactive::Runtime::new();
     let cx = AppContext::new_for_test(runtime.clone(), executor.background.clone());
-    let state = Rc::new(AppState::new(
-        window.clone(),
-        executor,
-        redraw_requester,
-        runtime,
-    ));
+    let window_id = window.id();
+
+    let state = Rc::new(AppState::new(executor, redraw_requester.clone(), runtime.clone()));
+    {
+        state.windows.borrow_mut().insert(window_id, WindowState::new(window.clone(), runtime));
+    }
+    state.register_redraw_requester_for_test(window_id, redraw_requester);
+
     let dyn_strong: Rc<dyn WindowRenderDelegate> = state.clone();
     let dyn_weak = Rc::downgrade(&dyn_strong);
     window.set_render_delegate(dyn_weak);
@@ -71,7 +75,7 @@ fn l1_luid_migration_never_gives_up() {
     let losses_fired = Cell::new(0u32);
     let last_fire_at = Cell::new(Instant::now());
     let last_recovered_at = Cell::new(None::<Instant>);
-    let mut view_factory = |_cx: &AppContext| NoopView;
+    let mut view_factory = |_cx: &AppContext| Box::new(NoopView) as Box<dyn ErasedView>;
 
     platform.run(|event| {
         if start.elapsed() > HARD_TIMEOUT {
@@ -82,7 +86,7 @@ fn l1_luid_migration_never_gives_up() {
         let should_tick = match event {
             Event::Resumed => {
                 if state
-                    .init_surfaces(&mut view_factory, &cx, &platform)
+                    .init_surfaces(window_id, &mut view_factory, &cx, &platform)
                     .is_err()
                 {
                     platform.quit();
@@ -98,7 +102,7 @@ fn l1_luid_migration_never_gives_up() {
             return;
         }
 
-        state.dispatch_redraw(state.window_id_for_test());
+        state.dispatch_redraw(window_id);
 
         // GiveUp at any point is failure.
         if matches!(state.current_recovery_state(), RecoveryState::GiveUp { .. }) {

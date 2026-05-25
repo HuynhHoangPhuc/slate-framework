@@ -6,8 +6,9 @@
 
 use smallvec::SmallVec;
 
+use slate_platform::WindowId;
+
 use crate::types::ElementId;
-use crate::view::View;
 
 use super::state::AppState;
 
@@ -16,17 +17,23 @@ mod key;
 mod mouse;
 mod text_input;
 
-impl<V: View> AppState<V> {
-    /// Snapshot the focused element + its ancestor chain (leaf → root).
+impl AppState {
+    /// Snapshot the focused element + its ancestor chain (leaf → root) for the
+    /// given window.
     ///
-    /// Returns an empty SmallVec when no element is focused, so the caller
-    /// can skip the per-element bubble entirely without paying for the walk.
-    pub(super) fn build_focused_chain(&self) -> SmallVec<[ElementId; 8]> {
+    /// Returns an empty `SmallVec` when no element is focused or the window is
+    /// unknown, so callers can skip the per-element bubble without paying for
+    /// the walk.
+    pub(super) fn build_focused_chain(&self, window_id: WindowId) -> SmallVec<[ElementId; 8]> {
         let mut chain: SmallVec<[ElementId; 8]> = SmallVec::new();
-        let Some(start) = self.focus_registry.borrow().focused() else {
+        let guard = self.windows.borrow();
+        let Some(win) = guard.get(&window_id) else {
             return chain;
         };
-        let parent_map = self.parent_map.borrow();
+        let Some(start) = win.focus_registry.borrow().focused() else {
+            return chain;
+        };
+        let parent_map = win.parent_map.borrow();
         let mut cur = Some(start);
         while let Some(id) = cur {
             chain.push(id);

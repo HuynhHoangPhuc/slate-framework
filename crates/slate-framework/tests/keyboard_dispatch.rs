@@ -20,6 +20,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use slate_framework::app_state::{AppSignal, AppState};
+use slate_framework::app_state::window_state::WindowState;
 use slate_framework::element::AnyElement;
 use slate_framework::elements::Div;
 use slate_framework::executor::{Executor, RedrawRequester};
@@ -28,8 +29,9 @@ use slate_framework::{
     EventCtx, Key, KeyCode, KeyEvent, KeyHandler, Modifiers, NamedKey, TextInputEvent,
     TextInputHandler,
 };
-use slate_platform::{DefaultPlatform, Platform, WindowOptions, wake_run_loop};
+use slate_platform::{DefaultPlatform, Platform, Window, WindowId, WindowOptions, wake_run_loop};
 
+#[allow(dead_code)]
 struct NoopView;
 
 impl View for NoopView {
@@ -38,7 +40,7 @@ impl View for NoopView {
     }
 }
 
-fn make_state() -> Rc<AppState<NoopView>> {
+fn make_state() -> (Rc<AppState>, WindowId) {
     let platform = DefaultPlatform::new();
     let window = platform.create_window(WindowOptions {
         title: "slate-keyboard-test".into(),
@@ -54,14 +56,21 @@ fn make_state() -> Rc<AppState<NoopView>> {
     // Platform is dropped here; window keeps the HWND alive via its Arc inner.
     // Dispatch methods touch only RefCells, so no platform pump is needed.
     let _ = platform;
-    Rc::new(AppState::new(window, executor, redraw_requester, runtime))
+    let state = Rc::new(AppState::new(executor, redraw_requester.clone(), runtime.clone()));
+    let window_id = window.id();
+    {
+        let win_state = WindowState::new(window, runtime);
+        state.windows.borrow_mut().insert(window_id, win_state);
+    }
+    state.register_redraw_requester_for_test(window_id, redraw_requester);
+    (state, window_id)
 }
 
 #[test]
 fn dispatch_key_down_fires_registered_handler() {
     let fired = Rc::new(Cell::new(0u32));
     let f = fired.clone();
-    let state = make_state();
+    let (state, win) = make_state();
     state.install_key_handlers_for_test(
         vec![Box::new(move |_e: &KeyEvent, _cx: &mut EventCtx| {
             f.set(f.get() + 1)
@@ -71,6 +80,7 @@ fn dispatch_key_down_fires_registered_handler() {
     );
 
     let signal = state.dispatch_key_down_for_test(
+        win,
         KeyCode::KeyA,
         Key::Character("a".into()),
         Modifiers::default(),
@@ -87,7 +97,7 @@ fn dispatch_key_down_invokes_all_handlers_in_order() {
     let o1 = order.clone();
     let o2 = order.clone();
     let o3 = order.clone();
-    let state = make_state();
+    let (state, win) = make_state();
     let handlers: Vec<KeyHandler> = vec![
         Box::new(move |_e: &KeyEvent, _cx: &mut EventCtx| o1.borrow_mut().push(1)),
         Box::new(move |_e: &KeyEvent, _cx: &mut EventCtx| o2.borrow_mut().push(2)),
@@ -96,6 +106,7 @@ fn dispatch_key_down_invokes_all_handlers_in_order() {
     state.install_key_handlers_for_test(handlers, vec![], vec![]);
 
     let _ = state.dispatch_key_down_for_test(
+        win,
         KeyCode::Space,
         Key::Named(NamedKey::Space),
         Modifiers::default(),
@@ -107,8 +118,9 @@ fn dispatch_key_down_invokes_all_handlers_in_order() {
 
 #[test]
 fn dispatch_key_up_no_handlers_returns_none_signal() {
-    let state = make_state();
+    let (state, win) = make_state();
     let signal = state.dispatch_key_up_for_test(
+        win,
         KeyCode::KeyA,
         Key::Character("a".into()),
         Modifiers::default(),
@@ -120,14 +132,14 @@ fn dispatch_key_up_no_handlers_returns_none_signal() {
 fn dispatch_text_input_passes_string_to_handler() {
     let captured = Rc::new(RefCell::new(String::new()));
     let c = captured.clone();
-    let state = make_state();
+    let (state, win) = make_state();
     let text_handlers: Vec<TextInputHandler> =
         vec![Box::new(move |e: &TextInputEvent, _cx: &mut EventCtx| {
             *c.borrow_mut() = e.text.clone()
         })];
     state.install_key_handlers_for_test(vec![], vec![], text_handlers);
 
-    let signal = state.dispatch_text_input_for_test("hello".into());
+    let signal = state.dispatch_text_input_for_test(win, "hello".into());
 
     assert_eq!(*captured.borrow(), "hello");
     assert!(matches!(signal, AppSignal::RequestRedraw { .. }));
@@ -137,7 +149,7 @@ fn dispatch_text_input_passes_string_to_handler() {
 fn dispatch_key_event_carries_is_repeat_flag() {
     let last = Rc::new(Cell::new(false));
     let l = last.clone();
-    let state = make_state();
+    let (state, win) = make_state();
     state.install_key_handlers_for_test(
         vec![Box::new(move |e: &KeyEvent, _cx: &mut EventCtx| {
             l.set(e.is_repeat)
@@ -147,6 +159,7 @@ fn dispatch_key_event_carries_is_repeat_flag() {
     );
 
     let _ = state.dispatch_key_down_for_test(
+        win,
         KeyCode::Space,
         Key::Named(NamedKey::Space),
         Modifiers::default(),
@@ -163,7 +176,7 @@ fn dispatch_key_up_clears_is_repeat_flag() {
     // had is_repeat=true.
     let observed = Rc::new(Cell::new(true));
     let o = observed.clone();
-    let state = make_state();
+    let (state, win) = make_state();
     state.install_key_handlers_for_test(
         vec![],
         vec![Box::new(move |e: &KeyEvent, _cx: &mut EventCtx| {
@@ -173,6 +186,7 @@ fn dispatch_key_up_clears_is_repeat_flag() {
     );
 
     let _ = state.dispatch_key_up_for_test(
+        win,
         KeyCode::KeyA,
         Key::Character("a".into()),
         Modifiers::default(),
@@ -183,20 +197,22 @@ fn dispatch_key_up_clears_is_repeat_flag() {
 
 #[test]
 fn dispatch_does_not_request_redraw_when_no_handlers() {
-    let state = make_state();
+    let (state, win) = make_state();
 
     let key_down = state.dispatch_key_down_for_test(
+        win,
         KeyCode::KeyA,
         Key::Character("a".into()),
         Modifiers::default(),
         false,
     );
     let key_up = state.dispatch_key_up_for_test(
+        win,
         KeyCode::KeyA,
         Key::Character("a".into()),
         Modifiers::default(),
     );
-    let text_input = state.dispatch_text_input_for_test("x".into());
+    let text_input = state.dispatch_text_input_for_test(win, "x".into());
 
     assert_eq!(key_down, AppSignal::None);
     assert_eq!(key_up, AppSignal::None);
@@ -210,7 +226,7 @@ fn keyboard_dispatch_unaffected_by_ime_registry() {
     // additions did not regress existing keyboard dispatch code paths.
     let fired = Rc::new(Cell::new(0u32));
     let f = fired.clone();
-    let state = make_state();
+    let (state, win) = make_state();
     state.install_key_handlers_for_test(
         vec![Box::new(move |_e: &KeyEvent, _cx: &mut EventCtx| {
             f.set(f.get() + 1)
@@ -220,6 +236,7 @@ fn keyboard_dispatch_unaffected_by_ime_registry() {
     );
 
     let signal = state.dispatch_key_down_for_test(
+        win,
         KeyCode::KeyA,
         Key::Character("a".into()),
         Modifiers::default(),

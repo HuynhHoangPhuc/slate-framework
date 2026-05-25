@@ -91,7 +91,9 @@ pub struct WindowState {
     pub(crate) focus_bounds: RefCell<HashMap<ElementId, FocusBounds>>,
 
     // -- IME -------------------------------------------------------------
-    pub(crate) ime_registry: RefCell<ImeRegistry>,
+    /// Wrapped in `Rc` so dispatch loops can clone a reference out before
+    /// dropping the outer `windows` borrow (mirrors `focus_registry`).
+    pub(crate) ime_registry: Rc<RefCell<ImeRegistry>>,
     pub(crate) ime_handler_map: RefCell<HashMap<ElementId, ImeHandlers>>,
     pub(crate) ime_registered_ids: RefCell<HashSet<ElementId>>,
     /// Snapshot consumed by `WindowImeDelegate` sync queries — republished at
@@ -161,7 +163,7 @@ impl WindowState {
             key_handler_map: RefCell::new(HashMap::new()),
             focus_registry: Rc::new(RefCell::new(FocusRegistry::new())),
             focus_bounds: RefCell::new(HashMap::new()),
-            ime_registry: RefCell::new(ImeRegistry::new()),
+            ime_registry: Rc::new(RefCell::new(ImeRegistry::new())),
             ime_handler_map: RefCell::new(HashMap::new()),
             ime_registered_ids: RefCell::new(HashSet::new()),
             cached_ime_query: RefCell::new(CachedImeQuery::default()),

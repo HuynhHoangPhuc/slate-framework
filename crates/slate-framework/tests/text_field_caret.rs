@@ -16,6 +16,7 @@ use std::sync::{Arc, Mutex};
 
 use slate_framework::EventCtx;
 use slate_framework::app_state::{AppSignal, AppState};
+use slate_framework::app_state::window_state::WindowState;
 use slate_framework::element::AnyElement;
 use slate_framework::elements::Div;
 use slate_framework::event::{ImeCommitEvent, ImeHandlers, ImePreeditEvent};
@@ -24,12 +25,13 @@ use slate_framework::focus::FocusableEntry;
 use slate_framework::ime::{ImeState, Preedit};
 use slate_framework::types::ElementId;
 use slate_framework::view::{IntoAny, View};
-use slate_platform::{DefaultPlatform, PhysicalRect, Platform, WindowOptions, wake_run_loop};
+use slate_platform::{DefaultPlatform, PhysicalRect, Platform, Window, WindowId, WindowOptions, wake_run_loop};
 
 // ---------------------------------------------------------------------------
 // Shared helpers (mirrors ime_dispatch.rs)
 // ---------------------------------------------------------------------------
 
+#[allow(dead_code)]
 struct NoopView;
 
 impl View for NoopView {
@@ -38,7 +40,7 @@ impl View for NoopView {
     }
 }
 
-fn make_state() -> Rc<AppState<NoopView>> {
+fn make_state() -> (Rc<AppState>, WindowId) {
     let platform = DefaultPlatform::new();
     let window = platform.create_window(WindowOptions {
         title: "slate-textfield-caret-test".into(),
@@ -52,7 +54,14 @@ fn make_state() -> Rc<AppState<NoopView>> {
     let executor = Executor::new(redraw_requester.clone());
     let runtime = slate_reactive::Runtime::new();
     let _ = platform;
-    Rc::new(AppState::new(window, executor, redraw_requester, runtime))
+    let state = Rc::new(AppState::new(executor, redraw_requester.clone(), runtime.clone()));
+    let window_id = window.id();
+    {
+        let win_state = WindowState::new(window, runtime);
+        state.windows.borrow_mut().insert(window_id, win_state);
+    }
+    state.register_redraw_requester_for_test(window_id, redraw_requester);
+    (state, window_id)
 }
 
 fn id(n: u64) -> ElementId {
@@ -143,13 +152,13 @@ fn make_commit_handler(
 
 #[test]
 fn ime_preedit_followed_by_commit_updates_signal() {
-    let state = make_state();
+    let (state, win) = make_state();
     let elem_id = id(10);
-    state.register_focusable_for_test(entry(10));
-    state.set_focus_for_test(elem_id);
+    state.register_focusable_for_test(win, entry(10));
+    state.set_focus_for_test(win, elem_id);
 
     // Shared ImeState for handlers to read/write.
-    let ime_rc = state.register_ime_state_for_test(elem_id);
+    let ime_rc = state.register_ime_state_for_test(win, elem_id);
 
     // Simple in-test signal: Arc<Mutex<String>> so the setter closure is
     // Send + Sync (required because it is captured by the commit handler
@@ -161,6 +170,7 @@ fn ime_preedit_followed_by_commit_updates_signal() {
     });
 
     state.install_element_ime_handlers_for_test(
+        win,
         elem_id,
         ImeHandlers {
             on_ime_preedit: Some(make_preedit_handler(elem_id)),
@@ -169,10 +179,8 @@ fn ime_preedit_followed_by_commit_updates_signal() {
         },
     );
 
-    let window = state.window_id_for_test();
-
     // --- Step 1: preedit arrives ---
-    let sig = state.dispatch_ime_preedit_for_test(window, "你好".into(), 6, None);
+    let sig = state.dispatch_ime_preedit_for_test(win, "你好".into(), 6, None);
     assert!(matches!(sig, AppSignal::RequestRedraw { .. }));
     {
         let s = ime_rc.borrow();
@@ -185,7 +193,7 @@ fn ime_preedit_followed_by_commit_updates_signal() {
     }
 
     // --- Step 2: commit finalises ---
-    let sig = state.dispatch_ime_commit_for_test(window, "你好".into());
+    let sig = state.dispatch_ime_commit_for_test(win, "你好".into());
     assert!(matches!(sig, AppSignal::RequestRedraw { .. }));
     {
         let s = ime_rc.borrow();
@@ -208,12 +216,12 @@ fn ime_preedit_followed_by_commit_updates_signal() {
 
 #[test]
 fn empty_commit_only_clears_preedit() {
-    let state = make_state();
+    let (state, win) = make_state();
     let elem_id = id(11);
-    state.register_focusable_for_test(entry(11));
-    state.set_focus_for_test(elem_id);
+    state.register_focusable_for_test(win, entry(11));
+    state.set_focus_for_test(win, elem_id);
 
-    let ime_rc = state.register_ime_state_for_test(elem_id);
+    let ime_rc = state.register_ime_state_for_test(win, elem_id);
 
     // Seed a non-empty preedit.
     {
@@ -232,6 +240,7 @@ fn empty_commit_only_clears_preedit() {
     });
 
     state.install_element_ime_handlers_for_test(
+        win,
         elem_id,
         ImeHandlers {
             on_ime_preedit: Some(make_preedit_handler(elem_id)),
@@ -240,10 +249,8 @@ fn empty_commit_only_clears_preedit() {
         },
     );
 
-    let window = state.window_id_for_test();
-
     // Empty commit — macOS `unmarkText` / cancel composition.
-    state.dispatch_ime_commit_for_test(window, String::new());
+    state.dispatch_ime_commit_for_test(win, String::new());
 
     let s = ime_rc.borrow();
     assert!(
@@ -267,12 +274,12 @@ fn empty_commit_only_clears_preedit() {
 
 #[test]
 fn sequential_commits_accumulate() {
-    let state = make_state();
+    let (state, win) = make_state();
     let elem_id = id(12);
-    state.register_focusable_for_test(entry(12));
-    state.set_focus_for_test(elem_id);
+    state.register_focusable_for_test(win, entry(12));
+    state.set_focus_for_test(win, elem_id);
 
-    let ime_rc = state.register_ime_state_for_test(elem_id);
+    let ime_rc = state.register_ime_state_for_test(win, elem_id);
 
     let signal_value: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
     let sv = signal_value.clone();
@@ -281,6 +288,7 @@ fn sequential_commits_accumulate() {
     });
 
     state.install_element_ime_handlers_for_test(
+        win,
         elem_id,
         ImeHandlers {
             on_ime_preedit: Some(make_preedit_handler(elem_id)),
@@ -289,11 +297,9 @@ fn sequential_commits_accumulate() {
         },
     );
 
-    let window = state.window_id_for_test();
-
-    state.dispatch_ime_commit_for_test(window, "Hello".into());
-    state.dispatch_ime_commit_for_test(window, " ".into());
-    state.dispatch_ime_commit_for_test(window, "世界".into());
+    state.dispatch_ime_commit_for_test(win, "Hello".into());
+    state.dispatch_ime_commit_for_test(win, " ".into());
+    state.dispatch_ime_commit_for_test(win, "世界".into());
 
     assert_eq!(&*signal_value.lock().unwrap(), "Hello 世界");
     assert_eq!(ime_rc.borrow().text, "Hello 世界");
@@ -305,10 +311,10 @@ fn sequential_commits_accumulate() {
 
 #[test]
 fn set_ime_state_caret_rect_readable_via_query() {
-    let state = make_state();
+    let (state, win) = make_state();
     let elem_id = id(13);
-    state.register_focusable_for_test(entry(13));
-    state.set_focus_for_test(elem_id);
+    state.register_focusable_for_test(win, entry(13));
+    state.set_focus_for_test(win, elem_id);
 
     let rect = PhysicalRect {
         x: 5,
@@ -317,6 +323,7 @@ fn set_ime_state_caret_rect_readable_via_query() {
         height: 18,
     };
     state.set_ime_state_for_test(
+        win,
         elem_id,
         ImeState {
             caret_client_rect: Some(rect),
@@ -324,5 +331,5 @@ fn set_ime_state_caret_rect_readable_via_query() {
         },
     );
 
-    assert_eq!(state.ime_caret_rect_query_for_test(), Some(rect));
+    assert_eq!(state.ime_caret_rect_query_for_test(win), Some(rect));
 }

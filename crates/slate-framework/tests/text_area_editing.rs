@@ -50,6 +50,7 @@ macro_rules! ensure_eq {
 type Case = (&'static str, fn() -> Result<(), String>);
 
 use slate_framework::app_state::AppState;
+use slate_framework::app_state::window_state::WindowState;
 use slate_framework::element::AnyElement;
 use slate_framework::elements::Div;
 use slate_framework::elements::text_area::{
@@ -64,9 +65,10 @@ use slate_framework::text_system::TextSystem;
 use slate_framework::types::ElementId;
 use slate_framework::view::{IntoAny, View};
 use slate_framework::{Key, KeyCode, Modifiers, NamedKey};
-use slate_platform::{DefaultPlatform, Platform, WindowId, WindowOptions, wake_run_loop};
+use slate_platform::{DefaultPlatform, Platform, Window, WindowId, WindowOptions, wake_run_loop};
 use slate_reactive::{Runtime, Signal};
 
+#[allow(dead_code)]
 struct NoopView;
 
 impl View for NoopView {
@@ -75,7 +77,7 @@ impl View for NoopView {
     }
 }
 
-fn make_state() -> Rc<AppState<NoopView>> {
+fn make_state() -> (Rc<AppState>, WindowId) {
     let platform = DefaultPlatform::new();
     let window = platform.create_window(WindowOptions {
         title: "slate-textarea-editing-test".into(),
@@ -89,7 +91,14 @@ fn make_state() -> Rc<AppState<NoopView>> {
     let executor = Executor::new(redraw_requester.clone());
     let runtime = slate_reactive::Runtime::new();
     let _ = platform;
-    Rc::new(AppState::new(window, executor, redraw_requester, runtime))
+    let state = Rc::new(AppState::new(executor, redraw_requester.clone(), runtime.clone()));
+    let window_id = window.id();
+    {
+        let win_state = WindowState::new(window, runtime);
+        state.windows.borrow_mut().insert(window_id, win_state);
+    }
+    state.register_redraw_requester_for_test(window_id, redraw_requester);
+    (state, window_id)
 }
 
 /// A focused, fully-wired TextArea: the real key + text-input + IME handlers
@@ -97,7 +106,7 @@ fn make_state() -> Rc<AppState<NoopView>> {
 /// caller keeps it alive for the test's duration (a dropped runtime would sever
 /// `value.set`).
 struct Harness {
-    state: Rc<AppState<NoopView>>,
+    state: Rc<AppState>,
     ime: Rc<RefCell<ImeState>>,
     value: Signal<String>,
     window: WindowId,
@@ -108,21 +117,22 @@ fn harness() -> Harness {
     // Route copy/paste through an in-memory clipboard so the round-trip is
     // deterministic and independent of a working OS pasteboard (headless CI).
     slate_platform::clipboard::install_clipboard_override_for_test();
-    let state = make_state();
+    let (state, win) = make_state();
     let elem = ElementId::from_raw(20);
-    state.register_focusable_for_test(FocusableEntry {
+    state.register_focusable_for_test(win, FocusableEntry {
         id: elem,
         tab_index: 0,
         focus_ring: true,
     });
-    state.set_focus_for_test(elem);
+    state.set_focus_for_test(win, elem);
 
-    let ime = state.register_ime_state_for_test(elem);
-    state.republish_ime_cache_for_test();
+    let ime = state.register_ime_state_for_test(win, elem);
+    state.republish_ime_cache_for_test(win);
 
     let rt = Runtime::new();
     let value = Signal::new(rt.clone(), String::new());
     state.install_element_key_handlers_for_test(
+        win,
         elem,
         KeyHandlers {
             on_key_down: Some(build_key_down_handler_for_test(value.clone())),
@@ -130,24 +140,23 @@ fn harness() -> Harness {
             on_text_input: Some(build_text_input_handler_for_test(value.clone())),
         },
     );
-    state.install_element_ime_handlers_for_test(elem, build_ime_handlers_for_test(value.clone()));
+    state.install_element_ime_handlers_for_test(win, elem, build_ime_handlers_for_test(value.clone()));
 
-    let window = state.window_id_for_test();
     Harness {
         state,
         ime,
         value,
-        window,
+        window: win,
         _rt: rt,
     }
 }
 
 impl Harness {
     fn typ(&self, s: &str) {
-        self.state.dispatch_text_input_for_test(s.to_string());
+        self.state.dispatch_text_input_for_test(self.window, s.to_string());
     }
     fn key(&self, code: KeyCode, key: Key, mods: Modifiers) {
-        self.state.dispatch_key_down_for_test(code, key, mods, false);
+        self.state.dispatch_key_down_for_test(self.window, code, key, mods, false);
     }
     fn enter(&self) {
         self.key(KeyCode::Enter, Key::Named(NamedKey::Enter), Modifiers::default());

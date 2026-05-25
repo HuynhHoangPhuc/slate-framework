@@ -25,8 +25,10 @@ use slate_platform::{
 
 use crate::app::AppContext;
 use crate::app_state::{AppSignal, AppState, RecoveryState};
+use crate::app_state::window_state::WindowState;
 use crate::element::AnyElement;
 use crate::elements::Div;
+use crate::erased_view::ErasedView;
 use crate::executor::{Executor, RedrawRequester};
 use crate::view::{IntoAny, View};
 
@@ -64,8 +66,9 @@ pub struct RecoveryHarness {
     platform: DefaultPlatform,
     #[allow(dead_code)]
     window: Arc<DefaultWindow>,
-    state: Rc<AppState<NoopView>>,
+    state: Rc<AppState>,
     cx: AppContext,
+    window_id: slate_platform::WindowId,
 }
 
 impl RecoveryHarness {
@@ -86,12 +89,15 @@ impl RecoveryHarness {
 
         let cx = AppContext::new_for_test(runtime.clone(), executor.background.clone());
 
-        let state = Rc::new(AppState::new(
-            window.clone(),
-            executor,
-            redraw_requester,
-            runtime,
-        ));
+        let state = Rc::new(AppState::new(executor, redraw_requester.clone(), runtime.clone()));
+
+        // Register the window into the per-window map.
+        let window_id = window.id();
+        {
+            let win_state = WindowState::new(window.clone(), runtime);
+            state.windows.borrow_mut().insert(window_id, win_state);
+        }
+        state.register_redraw_requester(window_id, redraw_requester);
 
         let dyn_strong: Rc<dyn WindowRenderDelegate> = state.clone();
         let dyn_weak = Rc::downgrade(&dyn_strong);
@@ -103,6 +109,7 @@ impl RecoveryHarness {
             window,
             state,
             cx,
+            window_id,
         }
     }
 
@@ -115,14 +122,20 @@ impl RecoveryHarness {
         let triggered = Cell::new(false);
         let initial_gen = Cell::new(0u64);
         let request_quit = Cell::new(false);
-        let mut view_factory = |_cx: &AppContext| NoopView;
+        let window_id = self.window_id;
+
+        // Type-erased factory for init_surfaces.
+        let mut erased_factory = |_cx: &AppContext| -> Box<dyn ErasedView> {
+            Box::new(NoopView)
+        };
 
         let RecoveryHarness {
             platform,
             window: _window,
             state,
             cx,
-        } = &self;
+            window_id: _,
+        } = self;
 
         platform.run(|event| {
             if start.elapsed() > timeout {
@@ -139,7 +152,7 @@ impl RecoveryHarness {
             let should_tick = match event {
                 Event::Resumed => {
                     if state
-                        .init_surfaces(&mut view_factory, cx, platform)
+                        .init_surfaces(window_id, &mut erased_factory, &cx, &platform)
                         .is_err()
                     {
                         request_quit.set(true);
@@ -151,8 +164,8 @@ impl RecoveryHarness {
                 }
                 Event::Wake => true,
                 Event::WindowRedrawRequested { .. } => true,
-                Event::WindowResized { physical_size, .. } => {
-                    state.handle_window_resized(physical_size);
+                Event::WindowResized { window, physical_size, .. } => {
+                    state.handle_window_resized(window, physical_size);
                     false
                 }
                 Event::WindowCloseRequested { .. } => {
@@ -160,8 +173,8 @@ impl RecoveryHarness {
                     platform.quit();
                     return;
                 }
-                Event::WindowDestroyed { .. } => {
-                    if matches!(state.handle_window_destroyed(), AppSignal::RequestQuit) {
+                Event::WindowDestroyed { window, .. } => {
+                    if matches!(state.handle_window_destroyed(window), AppSignal::RequestQuit) {
                         request_quit.set(true);
                         platform.quit();
                     }
@@ -174,7 +187,7 @@ impl RecoveryHarness {
                 return;
             }
 
-            let sig = state.dispatch_redraw(state.window_id_for_test());
+            let sig = state.dispatch_redraw(window_id);
             if matches!(sig, AppSignal::RequestQuit) {
                 request_quit.set(true);
                 platform.quit();
@@ -189,9 +202,14 @@ impl RecoveryHarness {
                 && gen_now >= initial_gen.get()
                 && !state.renderer_is_device_lost()
             {
-                // Module is gated on Windows + test-hooks, so force_renderer_device_lost
-                // is always available here.
-                if state.force_renderer_device_lost() {
+                #[cfg(all(target_os = "windows", feature = "test-hooks"))]
+                if state.force_renderer_device_lost(window_id) {
+                    triggered.set(true);
+                }
+                #[cfg(not(all(target_os = "windows", feature = "test-hooks")))]
+                {
+                    // On non-Windows or non-test-hooks builds, mark triggered so
+                    // the harness doesn't loop forever.
                     triggered.set(true);
                 }
                 schedule_next_tick();

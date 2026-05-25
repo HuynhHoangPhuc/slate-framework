@@ -21,6 +21,7 @@
 use std::rc::Rc;
 
 use slate_framework::app_state::AppState;
+use slate_framework::app_state::window_state::WindowState;
 use slate_framework::element::AnyElement;
 use slate_framework::elements::Div;
 use slate_framework::elements::text_area::build_key_down_handler_for_test;
@@ -32,7 +33,7 @@ use slate_framework::text_system::TextSystem;
 use slate_framework::types::ElementId;
 use slate_framework::view::{IntoAny, View};
 use slate_framework::{Key, KeyCode, Modifiers, NamedKey};
-use slate_platform::{DefaultPlatform, Platform, WindowOptions, wake_run_loop};
+use slate_platform::{DefaultPlatform, Platform, Window, WindowId, WindowOptions, wake_run_loop};
 use slate_reactive::{Runtime, Signal};
 
 /// One named runner case: a label and the check fn that returns `Err` on failure.
@@ -55,6 +56,7 @@ macro_rules! ensure_eq {
     }};
 }
 
+#[allow(dead_code)]
 struct NoopView;
 
 impl View for NoopView {
@@ -63,7 +65,7 @@ impl View for NoopView {
     }
 }
 
-fn make_state() -> Rc<AppState<NoopView>> {
+fn make_state() -> (Rc<AppState>, WindowId) {
     let platform = DefaultPlatform::new();
     let window = platform.create_window(WindowOptions {
         title: "slate-textarea-nav-test".into(),
@@ -77,7 +79,14 @@ fn make_state() -> Rc<AppState<NoopView>> {
     let executor = Executor::new(redraw_requester.clone());
     let runtime = slate_reactive::Runtime::new();
     let _ = platform;
-    Rc::new(AppState::new(window, executor, redraw_requester, runtime))
+    let state = Rc::new(AppState::new(executor, redraw_requester.clone(), runtime.clone()));
+    let window_id = window.id();
+    {
+        let win_state = WindowState::new(window, runtime);
+        state.windows.borrow_mut().insert(window_id, win_state);
+    }
+    state.register_redraw_requester_for_test(window_id, redraw_requester);
+    (state, window_id)
 }
 
 /// Shape "alpha\nbeta\ngamma" at a generous width → 3 hard-newline visual lines.
@@ -94,30 +103,31 @@ fn three_line_layout() -> slate_text::MultilineLayout {
 
 /// Build a focused TextArea element with a seeded `ImeState` (text + layout)
 /// and the real key handler installed. Returns the shared `ImeState` handle.
-fn setup(caret: usize) -> (Rc<AppState<NoopView>>, Rc<std::cell::RefCell<ImeState>>) {
-    let state = make_state();
+fn setup(caret: usize) -> (Rc<AppState>, WindowId, Rc<std::cell::RefCell<ImeState>>) {
+    let (state, win) = make_state();
     let elem = ElementId::from_raw(20);
-    state.register_focusable_for_test(FocusableEntry {
+    state.register_focusable_for_test(win, FocusableEntry {
         id: elem,
         tab_index: 0,
         focus_ring: true,
     });
-    state.set_focus_for_test(elem);
+    state.set_focus_for_test(win, elem);
 
-    let ime_rc = state.register_ime_state_for_test(elem);
+    let ime_rc = state.register_ime_state_for_test(win, elem);
     {
         let mut s = ime_rc.borrow_mut();
         s.text = "alpha\nbeta\ngamma".to_string();
         s.caret = caret;
         s.last_layout = Some(Rc::new(three_line_layout()));
     }
-    state.republish_ime_cache_for_test();
+    state.republish_ime_cache_for_test(win);
 
     // The handler's bound signal: ArrowUp/Down/Home/End never call `set`, so a
     // throwaway runtime-backed signal suffices.
     let rt = Runtime::new();
     let signal = Signal::new(rt, String::new());
     state.install_element_key_handlers_for_test(
+        win,
         elem,
         KeyHandlers {
             on_key_down: Some(build_key_down_handler_for_test(signal)),
@@ -125,11 +135,11 @@ fn setup(caret: usize) -> (Rc<AppState<NoopView>>, Rc<std::cell::RefCell<ImeStat
             on_text_input: None,
         },
     );
-    (state, ime_rc)
+    (state, win, ime_rc)
 }
 
-fn press(state: &Rc<AppState<NoopView>>, code: KeyCode, named: NamedKey) {
-    state.dispatch_key_down_for_test(code, Key::Named(named), Modifiers::default(), false);
+fn press(state: &Rc<AppState>, win: WindowId, code: KeyCode, named: NamedKey) {
+    state.dispatch_key_down_for_test(win, code, Key::Named(named), Modifiers::default(), false);
 }
 
 /// Smoke proof for the `harness = false` approach: the real platform + a 1×1
@@ -143,8 +153,8 @@ fn check_platform_and_window_construct() -> Result<(), String> {
 
 fn check_arrow_down_through_real_handler_moves_to_next_line_no_panic() -> Result<(), String> {
     // Regression guard for the edition-2024 double-borrow in the ↑/↓ arm.
-    let (state, ime_rc) = setup(0); // caret at document start, line 0, x = 0
-    press(&state, KeyCode::ArrowDown, NamedKey::ArrowDown);
+    let (state, win, ime_rc) = setup(0); // caret at document start, line 0, x = 0
+    press(&state, win, KeyCode::ArrowDown, NamedKey::ArrowDown);
     let s = ime_rc.borrow();
     // Line 1 ("beta") starts at byte 6 ("alpha\n"); x=0 lands at its start.
     ensure_eq!(s.caret, 6, "↓ from line0 col0 lands at start of line1");
@@ -153,8 +163,8 @@ fn check_arrow_down_through_real_handler_moves_to_next_line_no_panic() -> Result
 }
 
 fn check_arrow_up_at_first_line_clamps_no_panic() -> Result<(), String> {
-    let (state, ime_rc) = setup(3); // mid line0
-    press(&state, KeyCode::ArrowUp, NamedKey::ArrowUp);
+    let (state, win, ime_rc) = setup(3); // mid line0
+    press(&state, win, KeyCode::ArrowUp, NamedKey::ArrowUp);
     let s = ime_rc.borrow();
     ensure_eq!(s.caret, 0, "↑ on the first line clamps to line start");
     Ok(())
@@ -162,8 +172,8 @@ fn check_arrow_up_at_first_line_clamps_no_panic() -> Result<(), String> {
 
 fn check_end_through_real_handler_is_visual_line_relative_no_panic() -> Result<(), String> {
     // Regression guard for the double-borrow in the Home/End arm.
-    let (state, ime_rc) = setup(6); // start of line1 "beta"
-    press(&state, KeyCode::End, NamedKey::End);
+    let (state, win, ime_rc) = setup(6); // start of line1 "beta"
+    press(&state, win, KeyCode::End, NamedKey::End);
     let s = ime_rc.borrow();
     // "beta" occupies bytes 6..10; End lands at 10 (before the '\n'), not doc end.
     ensure_eq!(s.caret, 10, "End is visual-line relative");
@@ -171,8 +181,8 @@ fn check_end_through_real_handler_is_visual_line_relative_no_panic() -> Result<(
 }
 
 fn check_home_through_real_handler_is_visual_line_relative_no_panic() -> Result<(), String> {
-    let (state, ime_rc) = setup(9); // mid line1 "beta"
-    press(&state, KeyCode::Home, NamedKey::Home);
+    let (state, win, ime_rc) = setup(9); // mid line1 "beta"
+    press(&state, win, KeyCode::Home, NamedKey::Home);
     let s = ime_rc.borrow();
     ensure_eq!(s.caret, 6, "Home lands at line1 start, not document start");
     Ok(())

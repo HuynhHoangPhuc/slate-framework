@@ -15,6 +15,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use slate_framework::app_state::{AppSignal, AppState};
+use slate_framework::app_state::window_state::WindowState;
 use slate_framework::element::AnyElement;
 use slate_framework::elements::Div;
 use slate_framework::event::{EventCtx, Modifiers, MouseButton, MouseEvent, MouseHandlers};
@@ -24,13 +25,14 @@ use slate_framework::hit_test::HitRegion;
 use slate_framework::ime::Preedit;
 use slate_framework::types::{Bounds, ElementId, Point, Size};
 use slate_framework::view::{IntoAny, View};
-use slate_platform::{DefaultPlatform, Platform, WindowOptions, wake_run_loop};
+use slate_platform::{DefaultPlatform, Platform, Window, WindowId, WindowOptions, wake_run_loop};
 use slate_text::{ShapedGlyph, ShapedLine, byte_at_pixel_x, types::FontId};
 
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
 
+#[allow(dead_code)]
 struct NoopView;
 
 impl View for NoopView {
@@ -39,7 +41,7 @@ impl View for NoopView {
     }
 }
 
-fn make_state() -> Rc<AppState<NoopView>> {
+fn make_state() -> (Rc<AppState>, WindowId) {
     let platform = DefaultPlatform::new();
     let window = platform.create_window(WindowOptions {
         title: "slate-textfield-mouse-test".into(),
@@ -53,7 +55,14 @@ fn make_state() -> Rc<AppState<NoopView>> {
     let executor = Executor::new(redraw_requester.clone());
     let runtime = slate_reactive::Runtime::new();
     let _ = platform;
-    Rc::new(AppState::new(window, executor, redraw_requester, runtime))
+    let state = Rc::new(AppState::new(executor, redraw_requester.clone(), runtime.clone()));
+    let window_id = window.id();
+    {
+        let win_state = WindowState::new(window, runtime);
+        state.windows.borrow_mut().insert(window_id, win_state);
+    }
+    state.register_redraw_requester_for_test(window_id, redraw_requester);
+    (state, window_id)
 }
 
 fn id(n: u64) -> ElementId {
@@ -165,14 +174,16 @@ fn mirror_up(target: ElementId) -> Mouse {
 /// Wire `id` into AppState as: focusable + ime-registered + mouse handlers +
 /// hit region at `bounds`. Returns the shared `Rc<RefCell<ImeState>>`.
 fn wire_textfield(
-    state: &AppState<NoopView>,
+    state: &AppState,
+    win: WindowId,
     elem_id: ElementId,
     bounds: Bounds,
 ) -> Rc<std::cell::RefCell<slate_framework::ime::ImeState>> {
-    state.register_focusable_for_test(entry(elem_id.0));
-    state.set_focus_for_test(elem_id);
-    let ime_rc = state.register_ime_state_for_test(elem_id);
+    state.register_focusable_for_test(win, entry(elem_id.0));
+    state.set_focus_for_test(win, elem_id);
+    let ime_rc = state.register_ime_state_for_test(win, elem_id);
     state.install_element_mouse_handlers_for_test(
+        win,
         elem_id,
         MouseHandlers {
             on_mouse_down: Some(mirror_down(elem_id)),
@@ -180,10 +191,7 @@ fn wire_textfield(
             on_mouse_up: Some(mirror_up(elem_id)),
         },
     );
-    state
-        .hit_test_list
-        .borrow_mut()
-        .push(HitRegion::new(elem_id, bounds, 0));
+    state.push_hit_region_for_test(win, HitRegion::new(elem_id, bounds, 0));
     ime_rc
 }
 
@@ -200,10 +208,10 @@ fn bounds(x: f32, y: f32, w: f32, h: f32) -> Bounds {
 
 #[test]
 fn mouse_down_seeds_caret_and_anchor_at_clicked_byte() {
-    let state = make_state();
+    let (state, win) = make_state();
     let elem_id = id(20);
     // bounds origin x = 100 so a window click at (110, _) maps to local_x=10.
-    let ime_rc = wire_textfield(&state, elem_id, bounds(100.0, 50.0, 200.0, 20.0));
+    let ime_rc = wire_textfield(&state, win, elem_id, bounds(100.0, 50.0, 200.0, 20.0));
 
     {
         let mut s = ime_rc.borrow_mut();
@@ -216,7 +224,7 @@ fn mouse_down_seeds_caret_and_anchor_at_clicked_byte() {
     }
 
     // local_x = 110 - 100 = 10 → past first glyph midpoint (5), before second midpoint (15) → byte 1.
-    state.dispatch_mouse_down_for_test((110.0, 55.0), MouseButton::Left, Modifiers::default());
+    state.dispatch_mouse_down_for_test(win, (110.0, 55.0), MouseButton::Left, Modifiers::default());
 
     let s = ime_rc.borrow();
     assert_eq!(
@@ -233,9 +241,9 @@ fn mouse_down_seeds_caret_and_anchor_at_clicked_byte() {
 
 #[test]
 fn mouse_move_extends_caret_keeps_anchor() {
-    let state = make_state();
+    let (state, win) = make_state();
     let elem_id = id(21);
-    let ime_rc = wire_textfield(&state, elem_id, bounds(0.0, 0.0, 200.0, 20.0));
+    let ime_rc = wire_textfield(&state, win, elem_id, bounds(0.0, 0.0, 200.0, 20.0));
 
     {
         let mut s = ime_rc.borrow_mut();
@@ -245,7 +253,7 @@ fn mouse_move_extends_caret_keeps_anchor() {
     }
 
     // local_x=4 is below first cluster midpoint (5) → byte 0.
-    state.dispatch_mouse_down_for_test((4.0, 5.0), MouseButton::Left, Modifiers::default());
+    state.dispatch_mouse_down_for_test(win, (4.0, 5.0), MouseButton::Left, Modifiers::default());
     {
         let s = ime_rc.borrow();
         assert_eq!(s.caret, 0);
@@ -254,7 +262,7 @@ fn mouse_move_extends_caret_keeps_anchor() {
     }
 
     // Move to x=35 (mid of 4th cluster) → snaps trailing to byte 4 (text.len).
-    state.dispatch_mouse_move_for_test((35.0, 5.0));
+    state.dispatch_mouse_move_for_test(win, (35.0, 5.0));
     let s = ime_rc.borrow();
     assert!(s.caret >= 3, "caret advanced under drag (got {})", s.caret);
     assert_eq!(s.selection_anchor, Some(0), "anchor stays put during drag");
@@ -263,9 +271,9 @@ fn mouse_move_extends_caret_keeps_anchor() {
 
 #[test]
 fn mouse_up_clears_drag_and_collapses_empty_selection() {
-    let state = make_state();
+    let (state, win) = make_state();
     let elem_id = id(22);
-    let ime_rc = wire_textfield(&state, elem_id, bounds(0.0, 0.0, 200.0, 20.0));
+    let ime_rc = wire_textfield(&state, win, elem_id, bounds(0.0, 0.0, 200.0, 20.0));
 
     {
         let mut s = ime_rc.borrow_mut();
@@ -275,8 +283,8 @@ fn mouse_up_clears_drag_and_collapses_empty_selection() {
     }
 
     // Down then up at the same position → caret == anchor → selection collapses.
-    state.dispatch_mouse_down_for_test((5.0, 5.0), MouseButton::Left, Modifiers::default());
-    state.dispatch_mouse_up_for_test((5.0, 5.0), MouseButton::Left, Modifiers::default());
+    state.dispatch_mouse_down_for_test(win, (5.0, 5.0), MouseButton::Left, Modifiers::default());
+    state.dispatch_mouse_up_for_test(win, (5.0, 5.0), MouseButton::Left, Modifiers::default());
 
     let s = ime_rc.borrow();
     assert!(!s.dragging, "drag cleared on mouse_up");
@@ -288,9 +296,9 @@ fn mouse_up_clears_drag_and_collapses_empty_selection() {
 
 #[test]
 fn mouse_up_after_drag_keeps_non_empty_selection() {
-    let state = make_state();
+    let (state, win) = make_state();
     let elem_id = id(23);
-    let ime_rc = wire_textfield(&state, elem_id, bounds(0.0, 0.0, 200.0, 20.0));
+    let ime_rc = wire_textfield(&state, win, elem_id, bounds(0.0, 0.0, 200.0, 20.0));
 
     {
         let mut s = ime_rc.borrow_mut();
@@ -300,9 +308,9 @@ fn mouse_up_after_drag_keeps_non_empty_selection() {
     }
 
     // local_x=4 → byte 0 anchor, drag to local_x=35 → byte 4 caret.
-    state.dispatch_mouse_down_for_test((4.0, 5.0), MouseButton::Left, Modifiers::default());
-    state.dispatch_mouse_move_for_test((35.0, 5.0));
-    state.dispatch_mouse_up_for_test((35.0, 5.0), MouseButton::Left, Modifiers::default());
+    state.dispatch_mouse_down_for_test(win, (4.0, 5.0), MouseButton::Left, Modifiers::default());
+    state.dispatch_mouse_move_for_test(win, (35.0, 5.0));
+    state.dispatch_mouse_up_for_test(win, (35.0, 5.0), MouseButton::Left, Modifiers::default());
 
     let s = ime_rc.borrow();
     assert!(!s.dragging, "drag cleared on mouse_up");
@@ -316,9 +324,9 @@ fn mouse_up_after_drag_keeps_non_empty_selection() {
 
 #[test]
 fn capture_lost_clears_dragging_so_next_move_is_inert() {
-    let state = make_state();
+    let (state, win) = make_state();
     let elem_id = id(25);
-    let ime_rc = wire_textfield(&state, elem_id, bounds(0.0, 0.0, 200.0, 20.0));
+    let ime_rc = wire_textfield(&state, win, elem_id, bounds(0.0, 0.0, 200.0, 20.0));
 
     {
         let mut s = ime_rc.borrow_mut();
@@ -328,11 +336,11 @@ fn capture_lost_clears_dragging_so_next_move_is_inert() {
     }
 
     // Down → dragging=true, anchor seeded at byte 0.
-    state.dispatch_mouse_down_for_test((4.0, 5.0), MouseButton::Left, Modifiers::default());
+    state.dispatch_mouse_down_for_test(win, (4.0, 5.0), MouseButton::Left, Modifiers::default());
     assert!(ime_rc.borrow().dragging, "drag flag set on mouse_down");
 
     // OS revokes capture before mouse_up (window lost focus, modal popup, …).
-    state.dispatch_capture_lost_for_test();
+    state.dispatch_capture_lost_for_test(win);
     assert!(
         !ime_rc.borrow().dragging,
         "capture_lost must clear dragging — otherwise next move re-extends selection"
@@ -340,7 +348,7 @@ fn capture_lost_clears_dragging_so_next_move_is_inert() {
 
     // Subsequent move with no preceding down must NOT extend the caret.
     let caret_before = ime_rc.borrow().caret;
-    state.dispatch_mouse_move_for_test((35.0, 5.0));
+    state.dispatch_mouse_move_for_test(win, (35.0, 5.0));
     let s = ime_rc.borrow();
     assert_eq!(
         s.caret, caret_before,
@@ -350,9 +358,9 @@ fn capture_lost_clears_dragging_so_next_move_is_inert() {
 
 #[test]
 fn mouse_down_during_preedit_is_noop() {
-    let state = make_state();
+    let (state, win) = make_state();
     let elem_id = id(24);
-    let ime_rc = wire_textfield(&state, elem_id, bounds(0.0, 0.0, 200.0, 20.0));
+    let ime_rc = wire_textfield(&state, win, elem_id, bounds(0.0, 0.0, 200.0, 20.0));
 
     {
         let mut s = ime_rc.borrow_mut();
@@ -367,7 +375,7 @@ fn mouse_down_during_preedit_is_noop() {
         });
     }
 
-    state.dispatch_mouse_down_for_test((25.0, 5.0), MouseButton::Left, Modifiers::default());
+    state.dispatch_mouse_down_for_test(win, (25.0, 5.0), MouseButton::Left, Modifiers::default());
 
     let s = ime_rc.borrow();
     assert_eq!(s.caret, 1, "caret unchanged during preedit");
@@ -380,9 +388,9 @@ fn mouse_down_during_preedit_is_noop() {
 
 #[test]
 fn mouse_move_during_capture_requests_redraw() {
-    let state = make_state();
+    let (state, win) = make_state();
     let elem_id = id(40);
-    let ime_rc = wire_textfield(&state, elem_id, bounds(0.0, 0.0, 200.0, 20.0));
+    let ime_rc = wire_textfield(&state, win, elem_id, bounds(0.0, 0.0, 200.0, 20.0));
     {
         let mut s = ime_rc.borrow_mut();
         s.text = "ABCD".into();
@@ -390,13 +398,13 @@ fn mouse_move_during_capture_requests_redraw() {
         s.paint_origin_x = 0.0;
     }
     // mouse_down inside the hit region sets the capture target (button held).
-    state.dispatch_mouse_down_for_test((5.0, 5.0), MouseButton::Left, Modifiers::default());
+    state.dispatch_mouse_down_for_test(win, (5.0, 5.0), MouseButton::Left, Modifiers::default());
     // A bare move while captured must request a redraw so the render-pass
     // flush_coalesced_move runs and the drag extends the selection. Without
     // this signal, Windows only redraws on the 530 ms blink and the drag stalls.
     assert!(
         matches!(
-            state.dispatch_mouse_moved_raw_for_test((35.0, 5.0)),
+            state.dispatch_mouse_moved_raw_for_test(win, (35.0, 5.0)),
             AppSignal::RequestRedraw { .. }
         ),
         "drag-in-progress move must request a redraw"
@@ -405,13 +413,13 @@ fn mouse_move_during_capture_requests_redraw() {
 
 #[test]
 fn mouse_move_without_capture_is_none() {
-    let state = make_state();
+    let (state, win) = make_state();
     let elem_id = id(41);
-    wire_textfield(&state, elem_id, bounds(0.0, 0.0, 200.0, 20.0));
+    wire_textfield(&state, win, elem_id, bounds(0.0, 0.0, 200.0, 20.0));
     // No prior mouse_down → no capture target → idle hover must stay silent
     // (returning RequestRedraw here would cause a redraw-storm on every move).
     assert_eq!(
-        state.dispatch_mouse_moved_raw_for_test((35.0, 5.0)),
+        state.dispatch_mouse_moved_raw_for_test(win, (35.0, 5.0)),
         AppSignal::None,
         "idle hover (no capture) must not request a redraw"
     );

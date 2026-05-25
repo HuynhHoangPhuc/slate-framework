@@ -13,16 +13,15 @@ use crate::event::{
     ElementTextInputHandler, EventCtx, PendingCaptureOp, PendingFocusOp, TextInputEvent,
 };
 use crate::types::ElementId;
-use crate::view::View;
 
 use super::super::state::AppState;
 use super::super::types::AppSignal;
 
-impl<V: View> AppState<V> {
+impl AppState {
     /// Dispatch `TextInput`: same bubble shape; composes text from the platform layer.
     pub(crate) fn dispatch_text_input(&self, window: WindowId, text: String) -> AppSignal {
         let has_app_handlers = !self.on_text_input.borrow().is_empty();
-        let chain = self.build_focused_chain();
+        let chain = self.build_focused_chain(window);
         if chain.is_empty() && !has_app_handlers {
             return AppSignal::None;
         }
@@ -34,10 +33,20 @@ impl<V: View> AppState<V> {
         let mut stopped = false;
         let mut pending_focus_op: Option<PendingFocusOp> = None;
         let mut pending_capture_op: Option<PendingCaptureOp> = None;
-        let focused = self.focus_registry.borrow().focused();
 
+        let focused = {
+            let guard = self.windows.borrow();
+            guard.get(&window).and_then(|w| w.focus_registry.borrow().focused())
+        };
+
+        // Snapshot per-element handlers up-front to avoid holding map borrow
+        // while invoking user code.
         let element_handlers: SmallVec<[(ElementId, ElementTextInputHandler); 8]> = {
-            let map = self.key_handler_map.borrow();
+            let guard = self.windows.borrow();
+            let Some(win) = guard.get(&window) else {
+                return AppSignal::None;
+            };
+            let map = win.key_handler_map.borrow();
             chain
                 .iter()
                 .filter_map(|id| {
@@ -47,7 +56,13 @@ impl<V: View> AppState<V> {
                 })
                 .collect()
         };
+
         for (id, handler) in &element_handlers {
+            let ime_rc = {
+                let guard = self.windows.borrow();
+                let Some(win) = guard.get(&window) else { break };
+                win.ime_registry.clone()
+            };
             let mut ctx = EventCtx::new(
                     &mut stopped,
                     &mut pending_focus_op,
@@ -55,7 +70,7 @@ impl<V: View> AppState<V> {
                     window,
                     focused,
                 )
-                .with_ime(*id, &self.ime_registry);
+                .with_ime(*id, &ime_rc);
             handler(&event, &mut ctx);
             if stopped {
                 break;
@@ -80,8 +95,8 @@ impl<V: View> AppState<V> {
             drop(handlers);
         }
 
-        self.apply_pending_focus_op(pending_focus_op);
-        self.apply_pending_capture_op(pending_capture_op);
+        self.apply_pending_focus_op(window, pending_focus_op);
+        self.apply_pending_capture_op(window, pending_capture_op);
         AppSignal::RequestRedraw { window }
     }
 }

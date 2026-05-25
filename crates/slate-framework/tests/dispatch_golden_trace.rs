@@ -32,8 +32,7 @@ use std::sync::{Arc, Mutex};
 
 use insta::assert_debug_snapshot;
 use slate_framework::app_state::{AppSignal, AppState};
-use slate_framework::element::AnyElement;
-use slate_framework::elements::Div;
+use slate_framework::app_state::window_state::WindowState;
 use slate_framework::event::{
     EventCtx, ImeCommitEvent, ImeHandlers, ImePreeditEvent, KeyEvent, KeyHandlers, MouseEvent,
     MouseHandlers, TextInputEvent,
@@ -42,9 +41,8 @@ use slate_framework::executor::{Executor, RedrawRequester};
 use slate_framework::focus::FocusableEntry;
 use slate_framework::hit_test::HitRegion;
 use slate_framework::types::{Bounds, ElementId, Point, Size};
-use slate_framework::view::{IntoAny, View};
 use slate_framework::{Key, KeyCode, Modifiers, MouseButton, NamedKey};
-use slate_platform::{DefaultPlatform, Platform, WindowOptions, wake_run_loop};
+use slate_platform::{DefaultPlatform, Platform, Window, WindowId, WindowOptions, wake_run_loop};
 
 // ---------------------------------------------------------------------------
 // Harness scaffolding (mirrors the cross-platform `harness = false` tests)
@@ -52,14 +50,9 @@ use slate_platform::{DefaultPlatform, Platform, WindowOptions, wake_run_loop};
 
 type Case = (&'static str, fn() -> Result<(), String>);
 
-struct NoopView;
-impl View for NoopView {
-    fn render(&mut self, _cx: &mut slate_framework::RenderCx) -> AnyElement {
-        Div::new().into_any()
-    }
-}
-
-fn make_state() -> Rc<AppState<NoopView>> {
+/// Construct an `AppState` with one registered test window, returning the
+/// state and the `WindowId` of that window.
+fn make_state() -> (Rc<AppState>, WindowId) {
     let platform = DefaultPlatform::new();
     let window = platform.create_window(WindowOptions {
         title: "slate-dispatch-golden-trace".into(),
@@ -72,8 +65,20 @@ fn make_state() -> Rc<AppState<NoopView>> {
     let redraw_requester = RedrawRequester::new(wake_run_loop);
     let executor = Executor::new(redraw_requester.clone());
     let runtime = slate_reactive::Runtime::new();
+
+    let state = Rc::new(AppState::new(executor, redraw_requester.clone(), runtime.clone()));
+
+    let window_id = window.id();
+    {
+        let win_state = WindowState::new(window, runtime);
+        state.windows.borrow_mut().insert(window_id, win_state);
+    }
+    state.register_redraw_requester_for_test(window_id, redraw_requester);
+
+    // Drop platform last so the window handle stays valid.
     let _ = platform;
-    Rc::new(AppState::new(window, executor, redraw_requester, runtime))
+
+    (state, window_id)
 }
 
 fn id(n: u64) -> ElementId {
@@ -209,7 +214,8 @@ type BoxText = Box<dyn FnMut(&TextInputEvent, &mut EventCtx)>;
 /// Install an instrumented mouse-down handler on `elem` that records its
 /// invocation, then install a matching hit region.
 fn wire_element_mouse_down(
-    state: &AppState<NoopView>,
+    state: &AppState,
+    window: WindowId,
     elem: ElementId,
     b: Bounds,
     rec: &Recorder,
@@ -220,6 +226,7 @@ fn wire_element_mouse_down(
         r.push(label, Some(elem), cx.element_id(), None, None);
     });
     state.install_element_mouse_handlers_for_test(
+        window,
         elem,
         MouseHandlers {
             on_mouse_down: Some(on_down),
@@ -227,13 +234,14 @@ fn wire_element_mouse_down(
             on_mouse_up: None,
         },
     );
-    state.hit_test_list.borrow_mut().push(HitRegion::new(elem, b, 0));
+    state.push_hit_region_for_test(window, HitRegion::new(elem, b, 0));
 }
 
 /// Install an instrumented mouse-down handler that ALSO grabs explicit capture
 /// of `capture_to`. Used in scene C to verify capture-routing trace ordering.
 fn wire_element_mouse_down_with_capture(
-    state: &AppState<NoopView>,
+    state: &AppState,
+    window: WindowId,
     elem: ElementId,
     b: Bounds,
     capture_to: ElementId,
@@ -250,6 +258,7 @@ fn wire_element_mouse_down_with_capture(
         r2.push("element_mouse_move", Some(elem), cx.element_id(), None, None);
     });
     state.install_element_mouse_handlers_for_test(
+        window,
         elem,
         MouseHandlers {
             on_mouse_down: Some(on_down),
@@ -257,11 +266,11 @@ fn wire_element_mouse_down_with_capture(
             on_mouse_up: None,
         },
     );
-    state.hit_test_list.borrow_mut().push(HitRegion::new(elem, b, 0));
+    state.push_hit_region_for_test(window, HitRegion::new(elem, b, 0));
 }
 
 /// Install instrumented per-element IME handlers (preedit + commit).
-fn wire_element_ime(state: &AppState<NoopView>, elem: ElementId, rec: &Recorder) {
+fn wire_element_ime(state: &AppState, window: WindowId, elem: ElementId, rec: &Recorder) {
     let rp = rec.clone();
     let on_preedit: ArcImePreedit = Arc::new(move |_e, cx| {
         rp.push(
@@ -283,6 +292,7 @@ fn wire_element_ime(state: &AppState<NoopView>, elem: ElementId, rec: &Recorder)
         );
     });
     state.install_element_ime_handlers_for_test(
+        window,
         elem,
         ImeHandlers {
             on_ime_preedit: Some(on_preedit),
@@ -293,7 +303,7 @@ fn wire_element_ime(state: &AppState<NoopView>, elem: ElementId, rec: &Recorder)
 }
 
 /// Install instrumented app-level key + text-input handlers.
-fn wire_app_keys(state: &AppState<NoopView>, rec: &Recorder) {
+fn wire_app_keys(state: &AppState, rec: &Recorder) {
     let rd = rec.clone();
     let on_down: BoxKey = Box::new(move |ev, cx| {
         let note = match &ev.key {
@@ -316,7 +326,7 @@ fn wire_app_keys(state: &AppState<NoopView>, rec: &Recorder) {
 
 /// Install instrumented per-element key handlers (down only — enough for the
 /// ordering pin).
-fn wire_element_keys(state: &AppState<NoopView>, elem: ElementId, rec: &Recorder) {
+fn wire_element_keys(state: &AppState, window: WindowId, elem: ElementId, rec: &Recorder) {
     let r = rec.clone();
     let on_down: ArcKey = Arc::new(move |ev, cx| {
         let note = match &ev.key {
@@ -327,6 +337,7 @@ fn wire_element_keys(state: &AppState<NoopView>, elem: ElementId, rec: &Recorder
         r.push("element_key_down", Some(elem), cx.element_id(), None, note);
     });
     state.install_element_key_handlers_for_test(
+        window,
         elem,
         KeyHandlers {
             on_key_down: Some(on_down),
@@ -341,14 +352,14 @@ fn wire_element_keys(state: &AppState<NoopView>, elem: ElementId, rec: &Recorder
 // ---------------------------------------------------------------------------
 
 fn scene_a_text_input_then_tab_then_esc() -> Vec<TraceEntry> {
-    let state = make_state();
+    let (state, win) = make_state();
     let rec = Recorder::new();
 
     let field = id(1);
-    state.register_focusable_for_test(entry(1));
-    state.set_focus_for_test(field);
+    state.register_focusable_for_test(win, entry(1));
+    state.set_focus_for_test(win, field);
     wire_app_keys(&state, &rec);
-    wire_element_keys(&state, field, &rec);
+    wire_element_keys(&state, win, field, &rec);
 
     let mods = Modifiers::default();
 
@@ -361,22 +372,23 @@ fn scene_a_text_input_then_tab_then_esc() -> Vec<TraceEntry> {
             None,
             Some("text_input:char"),
         );
-        let s = state.dispatch_text_input_for_test(ch.to_string());
+        let s = state.dispatch_text_input_for_test(win, ch.to_string());
         rec.push("EndDispatch", None, None, Some(signal_label(s)), None);
     }
 
     // 2) Tab down/up (focus traversal is owned by Tab handler in apps;
     //    here we only pin that the down/up routes are invoked).
     rec.push("BeginDispatch", None, None, None, Some("key:Tab"));
-    let s = state.dispatch_key_down_for_test(KeyCode::Tab, Key::Named(NamedKey::Tab), mods, false);
+    let s = state.dispatch_key_down_for_test(win, KeyCode::Tab, Key::Named(NamedKey::Tab), mods, false);
     rec.push("EndDispatch", None, None, Some(signal_label(s)), None);
     rec.push("BeginDispatch", None, None, None, Some("key:Tab_up"));
-    let s = state.dispatch_key_up_for_test(KeyCode::Tab, Key::Named(NamedKey::Tab), mods);
+    let s = state.dispatch_key_up_for_test(win, KeyCode::Tab, Key::Named(NamedKey::Tab), mods);
     rec.push("EndDispatch", None, None, Some(signal_label(s)), None);
 
     // 3) Escape down (mirrors the textfield "cancel composition" path)
     rec.push("BeginDispatch", None, None, None, Some("key:Escape"));
     let s = state.dispatch_key_down_for_test(
+        win,
         KeyCode::Escape,
         Key::Named(NamedKey::Escape),
         mods,
@@ -393,42 +405,41 @@ fn scene_a_text_input_then_tab_then_esc() -> Vec<TraceEntry> {
 // ---------------------------------------------------------------------------
 
 fn scene_b_click_focus_shift_then_ime() -> Vec<TraceEntry> {
-    let state = make_state();
+    let (state, win) = make_state();
     let rec = Recorder::new();
 
     let row1 = id(1);
     let row2 = id(2);
-    state.register_focusable_for_test(entry(1));
-    state.register_focusable_for_test(entry(2));
+    state.register_focusable_for_test(win, entry(1));
+    state.register_focusable_for_test(win, entry(2));
 
-    wire_element_mouse_down(&state, row1, bounds(0.0, 0.0, 100.0, 50.0), &rec, "row1_down");
-    wire_element_mouse_down(&state, row2, bounds(0.0, 50.0, 100.0, 50.0), &rec, "row2_down");
-    wire_element_ime(&state, row1, &rec);
-    wire_element_ime(&state, row2, &rec);
+    wire_element_mouse_down(&state, win, row1, bounds(0.0, 0.0, 100.0, 50.0), &rec, "row1_down");
+    wire_element_mouse_down(&state, win, row2, bounds(0.0, 50.0, 100.0, 50.0), &rec, "row2_down");
+    wire_element_ime(&state, win, row1, &rec);
+    wire_element_ime(&state, win, row2, &rec);
 
     let mods = Modifiers::default();
 
     rec.push("BeginDispatch", None, None, None, Some("mouse_down:row1"));
-    let s = state.dispatch_mouse_down_for_test((10.0, 10.0), MouseButton::Left, mods);
+    let s = state.dispatch_mouse_down_for_test(win, (10.0, 10.0), MouseButton::Left, mods);
     rec.push("EndDispatch", None, None, Some(signal_label(s)), None);
     // Release the implicit mouse-down capture (framework auto-captures the
     // hit target on every mouse-down and only releases on mouse-up). Without
     // this, the second click would dispatch to row1 regardless of position.
     rec.push("BeginDispatch", None, None, None, Some("mouse_up:row1"));
-    let s = state.dispatch_mouse_up_for_test((10.0, 10.0), MouseButton::Left, mods);
+    let s = state.dispatch_mouse_up_for_test(win, (10.0, 10.0), MouseButton::Left, mods);
     rec.push("EndDispatch", None, None, Some(signal_label(s)), None);
 
     // mouse_down on row2 auto-focuses row2 (focusable-ancestor lookup in
     // dispatch_mouse_down). Subsequent IME thus routes to row2 without any
     // explicit set_focus call here.
     rec.push("BeginDispatch", None, None, None, Some("mouse_down:row2"));
-    let s = state.dispatch_mouse_down_for_test((10.0, 60.0), MouseButton::Left, mods);
+    let s = state.dispatch_mouse_down_for_test(win, (10.0, 60.0), MouseButton::Left, mods);
     rec.push("EndDispatch", None, None, Some(signal_label(s)), None);
     rec.push("BeginDispatch", None, None, None, Some("mouse_up:row2"));
-    let s = state.dispatch_mouse_up_for_test((10.0, 60.0), MouseButton::Left, mods);
+    let s = state.dispatch_mouse_up_for_test(win, (10.0, 60.0), MouseButton::Left, mods);
     rec.push("EndDispatch", None, None, Some(signal_label(s)), None);
 
-    let win = state.window_id_for_test();
     rec.push(
         "BeginDispatch",
         None,
@@ -458,20 +469,21 @@ fn scene_b_click_focus_shift_then_ime() -> Vec<TraceEntry> {
 // ---------------------------------------------------------------------------
 
 fn scene_c_capture_drag_across_boundary() -> Vec<TraceEntry> {
-    let state = make_state();
+    let (state, win) = make_state();
     let rec = Recorder::new();
 
     let row1 = id(1);
     let row2 = id(2);
     wire_element_mouse_down_with_capture(
         &state,
+        win,
         row1,
         bounds(0.0, 0.0, 100.0, 50.0),
         row1,
         &rec,
         "row1_down",
     );
-    wire_element_mouse_down(&state, row2, bounds(0.0, 50.0, 100.0, 50.0), &rec, "row2_down");
+    wire_element_mouse_down(&state, win, row2, bounds(0.0, 50.0, 100.0, 50.0), &rec, "row2_down");
 
     let mods = Modifiers::default();
 
@@ -482,9 +494,9 @@ fn scene_c_capture_drag_across_boundary() -> Vec<TraceEntry> {
         None,
         Some("mouse_down:row1 (sets capture)"),
     );
-    let s = state.dispatch_mouse_down_for_test((10.0, 10.0), MouseButton::Left, mods);
+    let s = state.dispatch_mouse_down_for_test(win, (10.0, 10.0), MouseButton::Left, mods);
     rec.push("EndDispatch", None, None, Some(signal_label(s)), None);
-    let captured = *state.capture_target.borrow();
+    let captured = state.capture_target_for_test(win);
     let captured_note: &'static str = match captured {
         Some(e) if e == row1 => "capture=row1",
         Some(_) => "capture=other",
@@ -502,7 +514,7 @@ fn scene_c_capture_drag_across_boundary() -> Vec<TraceEntry> {
         None,
         Some("mouse_move:into row2 region"),
     );
-    let s = state.dispatch_mouse_move_for_test((10.0, 60.0));
+    let s = state.dispatch_mouse_move_for_test(win, (10.0, 60.0));
     rec.push("EndDispatch", None, None, Some(signal_label(s)), None);
 
     rec.push(
@@ -512,9 +524,9 @@ fn scene_c_capture_drag_across_boundary() -> Vec<TraceEntry> {
         None,
         Some("mouse_up:in row2 region"),
     );
-    let s = state.dispatch_mouse_up_for_test((10.0, 60.0), MouseButton::Left, mods);
+    let s = state.dispatch_mouse_up_for_test(win, (10.0, 60.0), MouseButton::Left, mods);
     rec.push("EndDispatch", None, None, Some(signal_label(s)), None);
-    let captured_after = *state.capture_target.borrow();
+    let captured_after = state.capture_target_for_test(win);
     let after_note: &'static str = match captured_after {
         Some(e) if e == row1 => "capture=row1(sticky)",
         Some(_) => "capture=other",
@@ -531,17 +543,16 @@ fn scene_c_capture_drag_across_boundary() -> Vec<TraceEntry> {
 // ---------------------------------------------------------------------------
 
 fn scene_d_ime_commit_then_tab() -> Vec<TraceEntry> {
-    let state = make_state();
+    let (state, win) = make_state();
     let rec = Recorder::new();
 
     let owner = id(1);
-    state.register_focusable_for_test(entry(1));
-    state.set_focus_for_test(owner);
-    wire_element_ime(&state, owner, &rec);
+    state.register_focusable_for_test(win, entry(1));
+    state.set_focus_for_test(win, owner);
+    wire_element_ime(&state, win, owner, &rec);
     wire_app_keys(&state, &rec);
-    wire_element_keys(&state, owner, &rec);
+    wire_element_keys(&state, win, owner, &rec);
 
-    let win = state.window_id_for_test();
     let mods = Modifiers::default();
 
     rec.push(
@@ -571,7 +582,7 @@ fn scene_d_ime_commit_then_tab() -> Vec<TraceEntry> {
         None,
         Some("key:Tab (post-commit)"),
     );
-    let s = state.dispatch_key_down_for_test(KeyCode::Tab, Key::Named(NamedKey::Tab), mods, false);
+    let s = state.dispatch_key_down_for_test(win, KeyCode::Tab, Key::Named(NamedKey::Tab), mods, false);
     rec.push("EndDispatch", None, None, Some(signal_label(s)), None);
 
     rec.snapshot()
@@ -627,5 +638,5 @@ fn main() {
         eprintln!("\n{failed} case(s) failed");
         std::process::exit(1);
     }
-    println!("\nall {} case(s) passed", cases.len());
+    println!("\nall {} case(s) cases passed", cases.len());
 }

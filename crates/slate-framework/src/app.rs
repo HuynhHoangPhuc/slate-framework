@@ -3,7 +3,6 @@
 //! `App` owns all framework resources and provides `run()` to enter
 //! the platform event loop with a View.
 
-use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -13,12 +12,13 @@ use slate_platform::{
 };
 
 use crate::app_state::{AppSignal, AppState};
+use crate::app_state::window_state::WindowState;
+use crate::erased_view::ErasedView;
 use crate::event::{
     EventCtx, ImeCommitEvent, ImeCommitHandler, ImeLifecycleEvent, ImeLifecycleHandler,
     ImePreeditEvent, ImePreeditHandler, KeyEvent, KeyHandler, TextInputEvent, TextInputHandler,
 };
 use crate::executor::{BackgroundExecutor, Executor, RedrawRequester};
-use crate::focus::FocusRegistry;
 use crate::types::ElementId;
 use crate::view::View;
 
@@ -37,18 +37,21 @@ static FORCE_DEVICE_LOST_ARMED: std::sync::atomic::AtomicBool =
 
 /// Application context passed to the view factory.
 ///
-/// Provides access to the reactive runtime, background executor, and the
-/// focus registry for constructing signals, spawning background
-/// tasks, and driving focus from outside of event handlers.
+/// Provides access to the reactive runtime and background executor for
+/// constructing signals and spawning background tasks.
+///
+/// Focus operations are now per-window; use `set_focus(window, id)` etc.
 ///
 /// Note: `ForegroundExecutor` is intentionally not exposed here because it's `!Send`
 /// and bound to the UI thread. UI-thread tasks should use the foreground executor
 /// available in element context methods.
 #[derive(Clone)]
 pub struct AppContext {
-    runtime: Arc<slate_reactive::Runtime>,
-    background_executor: BackgroundExecutor,
-    focus_registry: Rc<RefCell<FocusRegistry>>,
+    pub(crate) runtime: Arc<slate_reactive::Runtime>,
+    pub(crate) background_executor: BackgroundExecutor,
+    /// Weak reference back to AppState so focus API can route per-window.
+    /// `None` only in unit-test construction via `new_for_test`.
+    pub(crate) state: Option<std::rc::Weak<AppState>>,
 }
 
 impl AppContext {
@@ -62,25 +65,41 @@ impl AppContext {
         self.background_executor.clone()
     }
 
-    /// Set focus to `id` immediately (outside-handler entry point).
+    /// Set focus to `id` in the given window immediately (outside-handler
+    /// entry point).
     ///
     /// Returns `true` when `id` is currently registered with the focus
     /// registry. Inside an event handler, prefer
     /// [`EventCtx::request_focus`](crate::event::EventCtx::request_focus) so
     /// the change is deferred until after the chain unwinds.
-    pub fn set_focus(&self, id: ElementId) -> bool {
-        self.focus_registry.borrow_mut().set_focus(id)
+    pub fn set_focus(&self, window: slate_platform::WindowId, id: ElementId) -> bool {
+        let Some(weak) = &self.state else { return false };
+        let Some(state) = weak.upgrade() else { return false };
+        let guard = state.windows.borrow();
+        if let Some(win) = guard.get(&window) {
+            win.focus_registry.borrow_mut().set_focus(id)
+        } else {
+            false
+        }
     }
 
-    /// Clear focus immediately. Inside a handler, prefer
+    /// Clear focus immediately in the given window. Inside a handler, prefer
     /// [`EventCtx::blur`](crate::event::EventCtx::blur).
-    pub fn clear_focus(&self) {
-        self.focus_registry.borrow_mut().clear_focus();
+    pub fn clear_focus(&self, window: slate_platform::WindowId) {
+        let Some(weak) = &self.state else { return };
+        let Some(state) = weak.upgrade() else { return };
+        let guard = state.windows.borrow();
+        if let Some(win) = guard.get(&window) {
+            win.focus_registry.borrow_mut().clear_focus();
+        }
     }
 
-    /// Read the currently-focused element id.
-    pub fn focused_element(&self) -> Option<ElementId> {
-        self.focus_registry.borrow().focused()
+    /// Read the currently-focused element id in the given window.
+    pub fn focused_element(&self, window: slate_platform::WindowId) -> Option<ElementId> {
+        let weak = self.state.as_ref()?;
+        let state = weak.upgrade()?;
+        let guard = state.windows.borrow();
+        guard.get(&window)?.focus_registry.borrow().focused()
     }
 
     /// Construct an `AppContext` directly. Test-only.
@@ -92,14 +111,14 @@ impl AppContext {
         Self {
             runtime,
             background_executor,
-            focus_registry: Rc::new(RefCell::new(FocusRegistry::new())),
+            state: None,
         }
     }
 }
 
 /// Application container.
 ///
-/// Owns all framework resources: platform, window, renderer, executor,
+/// Owns all framework resources: platform, window, executor,
 /// layout tree, hit-test list, accessibility tree, and text system.
 pub struct App {
     platform: DefaultPlatform,
@@ -226,35 +245,36 @@ impl App {
             on_ime_disabled,
         } = self;
 
-        // Create executor and reactive runtime
+        // Create executor and reactive runtime.
         let redraw_requester = RedrawRequester::new(wake_run_loop);
         let executor = Executor::new(redraw_requester.clone());
         let runtime = slate_reactive::Runtime::new();
 
-        // Capture handles needed by AppContext before AppState consumes the
-        // owned originals (Executor is not Clone — only its inner
-        // BackgroundExecutor is).
+        // Capture handles needed by AppContext before AppState consumes them.
         let background_executor = executor.background.clone();
 
-        // Create shared application state first so AppContext can share its
-        // focus registry (AppContext::set_focus / focused_element need to
-        // operate on the same registry AppState dispatches against).
+        // Create shared application state. windows map starts empty.
         let state = Rc::new(AppState::new(
-            window.clone(),
             executor,
-            redraw_requester,
+            redraw_requester.clone(),
             runtime.clone(),
         ));
+
+        // Insert the initial window into the windows map.
+        let window_id = window.id();
+        {
+            let win_state = WindowState::new(window.clone(), runtime.clone());
+            state.windows.borrow_mut().insert(window_id, win_state);
+        }
+        state.register_redraw_requester(window_id, redraw_requester);
 
         let cx = AppContext {
             runtime,
             background_executor,
-            focus_registry: state.focus_registry.clone(),
+            state: Some(Rc::downgrade(&state)),
         };
 
-        // Move keyboard handlers into AppState before the platform loop starts.
-        // Setter pattern (rather than ctor args) keeps test call sites stable —
-        // headless harnesses that don't need keyboard dispatch never call this.
+        // Move keyboard/IME handlers into AppState.
         state.install_key_handlers(on_key_down, on_key_up, on_text_input);
         state.install_ime_handlers(
             on_ime_preedit,
@@ -276,8 +296,7 @@ impl App {
         drop(dyn_strong); // strong ref no longer needed; `state` keeps AppState alive.
 
         // Install IME delegate via the same Rc<dyn …>-via-let-binding
-        // dance. Identical SAFETY argument as above (unsizing coercion needs a
-        // coercion site, not an `as` cast).
+        // dance. Identical SAFETY argument as above.
         let ime_strong: Rc<dyn WindowImeDelegate> = state.clone();
         let ime_weak = Rc::downgrade(&ime_strong);
         window.set_ime_delegate(ime_weak);
@@ -286,23 +305,28 @@ impl App {
         let platform_ref = &platform;
         let state_ref = state.clone();
 
+        // Wrap the typed view factory into a type-erased factory for init_surfaces.
+        let cx_clone = cx.clone();
+        let mut erased_factory = move |_cx: &AppContext| -> Box<dyn ErasedView> {
+            Box::new(view_fn(&cx_clone))
+        };
+
         platform.run(move |event| {
-            // Check pending_quit flag from sync delegate path
+            // Check pending_quit flag from sync delegate path.
             if state_ref.pending_quit.get() {
                 platform_ref.quit();
                 return;
             }
 
             // Synthetic trigger: env-var-scheduled force_device_lost fires from
-            // a background thread that wakes the run loop; the wake event
-            // arrives here and we run on the main thread.
+            // a background thread that wakes the run loop.
             #[cfg(all(target_os = "windows", feature = "test-hooks"))]
             if FORCE_DEVICE_LOST_PENDING.swap(false, std::sync::atomic::Ordering::AcqRel) {
                 log::warn!(
                     target: "slate::test_hooks",
                     "SLATE_FORCE_DEVICE_LOST_MS elapsed - firing force_renderer_device_lost"
                 );
-                let fired = state_ref.force_renderer_device_lost();
+                let fired = state_ref.force_renderer_device_lost(window_id);
                 log::warn!(
                     target: "slate::test_hooks",
                     "force_renderer_device_lost returned fired={fired}"
@@ -312,25 +336,29 @@ impl App {
             let signal = match event {
                 Event::Resumed => {
                     if state_ref
-                        .init_surfaces(&mut view_fn, &cx, platform_ref)
+                        .init_surfaces(window_id, &mut erased_factory, &cx, platform_ref)
                         .is_err()
                     {
                         AppSignal::RequestQuit
                     } else {
                         #[cfg(all(target_os = "windows", feature = "test-hooks"))]
                         arm_force_device_lost_trigger();
-                        AppSignal::RequestRedraw {
-                            window: state_ref.window.id(),
-                        }
+                        AppSignal::RequestRedraw { window: window_id }
                     }
                 }
-                Event::WindowResized { physical_size, .. } => {
-                    state_ref.handle_window_resized(physical_size);
+                Event::WindowResized { window, physical_size, .. } => {
+                    state_ref.handle_window_resized(window, physical_size);
                     AppSignal::None
                 }
                 Event::WindowRedrawRequested { window, .. } => state_ref.dispatch_redraw(window),
-                Event::WindowCloseRequested { .. } => AppSignal::RequestQuit,
-                Event::WindowDestroyed { .. } => state_ref.handle_window_destroyed(),
+                Event::WindowCloseRequested { .. } => {
+                    // Platform sends close-requested before destroy. We queue a
+                    // quit signal — the actual `WindowDestroyed` will confirm it.
+                    // For the initial single-window case this is effectively the
+                    // same as RequestQuit.
+                    AppSignal::RequestQuit
+                }
+                Event::WindowDestroyed { window, .. } => state_ref.handle_window_destroyed(window),
                 Event::Wake => state_ref.handle_wake(),
                 Event::MouseDown {
                     window,
@@ -404,8 +432,7 @@ impl App {
                     AppSignal::None
                 }
                 // Slate's Event is #[non_exhaustive]; this final arm preserves
-                // forward compatibility — future Slate variants are observed
-                // but not yet routed.
+                // forward compatibility.
                 _ => AppSignal::None,
             };
 
@@ -420,8 +447,7 @@ impl App {
 
 /// Read `SLATE_FORCE_DEVICE_LOST_MS` once and arm a background thread that
 /// sleeps the requested duration, sets `FORCE_DEVICE_LOST_PENDING`, and
-/// wakes the run loop. The wake handler on the main thread observes the
-/// flag and invokes `AppState::force_renderer_device_lost`.
+/// wakes the run loop.
 ///
 /// Subsequent calls are no-ops (one-shot arming).
 #[cfg(all(target_os = "windows", feature = "test-hooks"))]

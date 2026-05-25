@@ -50,6 +50,7 @@ macro_rules! ensure {
 type Case = (&'static str, fn() -> Result<(), String>);
 
 use slate_framework::app_state::AppState;
+use slate_framework::app_state::window_state::WindowState;
 use slate_framework::element::AnyElement;
 use slate_framework::elements::Div;
 use slate_framework::event::{EventCtx, MouseEvent, MouseHandlers};
@@ -58,8 +59,9 @@ use slate_framework::hit_test::HitRegion;
 use slate_framework::types::{Bounds, ElementId, Point, Size};
 use slate_framework::view::{IntoAny, View};
 use slate_framework::{Key, KeyCode, KeyEvent, Modifiers, MouseButton};
-use slate_platform::{DefaultPlatform, Platform, WindowOptions, wake_run_loop};
+use slate_platform::{DefaultPlatform, Platform, Window, WindowId, WindowOptions, wake_run_loop};
 
+#[allow(dead_code)]
 struct NoopView;
 
 impl View for NoopView {
@@ -68,7 +70,7 @@ impl View for NoopView {
     }
 }
 
-fn make_state() -> Rc<AppState<NoopView>> {
+fn make_state() -> (Rc<AppState>, WindowId) {
     let platform = DefaultPlatform::new();
     let window = platform.create_window(WindowOptions {
         title: "slate-capture-windowid-test".into(),
@@ -82,7 +84,14 @@ fn make_state() -> Rc<AppState<NoopView>> {
     let executor = Executor::new(redraw_requester.clone());
     let runtime = slate_reactive::Runtime::new();
     let _ = platform;
-    Rc::new(AppState::new(window, executor, redraw_requester, runtime))
+    let state = Rc::new(AppState::new(executor, redraw_requester.clone(), runtime.clone()));
+    let window_id = window.id();
+    {
+        let win_state = WindowState::new(window, runtime);
+        state.windows.borrow_mut().insert(window_id, win_state);
+    }
+    state.register_redraw_requester_for_test(window_id, redraw_requester);
+    (state, window_id)
 }
 
 fn id(n: u64) -> ElementId {
@@ -100,8 +109,15 @@ type Mouse = Arc<dyn Fn(&MouseEvent, &mut EventCtx) + Send + Sync + 'static>;
 
 /// Install a hit region for `elem` and a down-handler that runs `f` with the
 /// dispatch `EventCtx`.
-fn wire_down_handler(state: &AppState<NoopView>, elem: ElementId, b: Bounds, f: Mouse) {
+fn wire_down_handler(
+    state: &AppState,
+    win: WindowId,
+    elem: ElementId,
+    b: Bounds,
+    f: Mouse,
+) {
     state.install_element_mouse_handlers_for_test(
+        win,
         elem,
         MouseHandlers {
             on_mouse_down: Some(f),
@@ -109,74 +125,77 @@ fn wire_down_handler(state: &AppState<NoopView>, elem: ElementId, b: Bounds, f: 
             on_mouse_up: None,
         },
     );
-    state.hit_test_list.borrow_mut().push(HitRegion::new(elem, b, 0));
+    state.push_hit_region_for_test(win, HitRegion::new(elem, b, 0));
 }
 
 fn check_set_capture_overrides_and_marks_explicit() -> Result<(), String> {
-    let state = make_state();
+    let (state, win) = make_state();
     let a = id(1);
     let b = id(99); // distinct id, no hit region — proves the op, not the auto-set
     wire_down_handler(
         &state,
+        win,
         a,
         bounds(0.0, 0.0, 100.0, 100.0),
         Arc::new(move |_ev, cx| cx.set_capture(b)),
     );
 
-    state.dispatch_mouse_down_for_test((10.0, 10.0), MouseButton::Left, Modifiers::default());
+    state.dispatch_mouse_down_for_test(win, (10.0, 10.0), MouseButton::Left, Modifiers::default());
 
     ensure_eq!(
-        *state.capture_target.borrow(),
+        state.capture_target_for_test(win),
         Some(b),
         "explicit set_capture overrides the mouse-down auto-capture"
     );
     ensure!(
-        *state.explicit_capture.borrow(),
+        state.explicit_capture_for_test(win),
         "set_capture marks the capture explicit"
     );
     Ok(())
 }
 
 fn check_release_capture_clears_target() -> Result<(), String> {
-    let state = make_state();
+    let (state, win) = make_state();
     let a = id(1);
     wire_down_handler(
         &state,
+        win,
         a,
         bounds(0.0, 0.0, 100.0, 100.0),
         Arc::new(|_ev, cx| cx.release_capture()),
     );
 
-    state.dispatch_mouse_down_for_test((10.0, 10.0), MouseButton::Left, Modifiers::default());
+    state.dispatch_mouse_down_for_test(win, (10.0, 10.0), MouseButton::Left, Modifiers::default());
 
     ensure_eq!(
-        *state.capture_target.borrow(),
+        state.capture_target_for_test(win),
         None,
         "release_capture clears the auto-set capture"
     );
     ensure!(
-        !*state.explicit_capture.borrow(),
+        !state.explicit_capture_for_test(win),
         "release_capture clears the explicit flag"
     );
     Ok(())
 }
 
 fn check_explicit_capture_survives_mouse_up() -> Result<(), String> {
-    let state = make_state();
+    let (state, win) = make_state();
     let a = id(1);
     wire_down_handler(
         &state,
+        win,
         a,
         bounds(0.0, 0.0, 100.0, 100.0),
         Arc::new(move |_ev, cx| cx.set_capture(a)),
     );
 
-    state.dispatch_mouse_down_for_test((10.0, 10.0), MouseButton::Left, Modifiers::default());
-    ensure_eq!(*state.capture_target.borrow(), Some(a), "captured on down");
+    state.dispatch_mouse_down_for_test(win, (10.0, 10.0), MouseButton::Left, Modifiers::default());
+    ensure_eq!(state.capture_target_for_test(win), Some(a), "captured on down");
 
-    state.dispatch_mouse_up_for_test((10.0, 10.0), MouseButton::Left, Modifiers::default());
+    state.dispatch_mouse_up_for_test(win, (10.0, 10.0), MouseButton::Left, Modifiers::default());
     ensure_eq!(
-        *state.capture_target.borrow(),
+        state.capture_target_for_test(win),
         Some(a),
         "explicit capture is sticky across mouse-up (multi-step drag)"
     );
@@ -184,43 +203,44 @@ fn check_explicit_capture_survives_mouse_up() -> Result<(), String> {
 }
 
 fn check_unmounted_captured_element_auto_releases() -> Result<(), String> {
-    let state = make_state();
+    let (state, win) = make_state();
     let a = id(1);
     wire_down_handler(
         &state,
+        win,
         a,
         bounds(0.0, 0.0, 100.0, 100.0),
         Arc::new(move |_ev, cx| cx.set_capture(a)),
     );
-    state.dispatch_mouse_down_for_test((10.0, 10.0), MouseButton::Left, Modifiers::default());
-    ensure_eq!(*state.capture_target.borrow(), Some(a), "captured on down");
+    state.dispatch_mouse_down_for_test(win, (10.0, 10.0), MouseButton::Left, Modifiers::default());
+    ensure_eq!(state.capture_target_for_test(win), Some(a), "captured on down");
 
     // Still mounted (hit region present) → capture retained.
-    state.release_capture_if_unmounted_for_test();
+    state.release_capture_if_unmounted_for_test(win);
     ensure_eq!(
-        *state.capture_target.borrow(),
+        state.capture_target_for_test(win),
         Some(a),
         "capture retained while element is still in the hit list"
     );
 
     // Simulate a frame where the element produced no hit region (unmounted).
-    state.hit_test_list.borrow_mut().clear();
-    state.release_capture_if_unmounted_for_test();
+    state.clear_hit_test_list_for_test(win);
+    state.release_capture_if_unmounted_for_test(win);
     ensure_eq!(
-        *state.capture_target.borrow(),
+        state.capture_target_for_test(win),
         None,
         "capture auto-releases when the captured element is unmounted"
     );
     ensure!(
-        !*state.explicit_capture.borrow(),
+        !state.explicit_capture_for_test(win),
         "auto-release also clears the explicit flag"
     );
     Ok(())
 }
 
 fn check_window_id_matches_in_mouse_and_key_handlers() -> Result<(), String> {
-    let state = make_state();
-    let expected = state.window_id_for_test();
+    let (state, win) = make_state();
+    let expected = win;
 
     // Mouse handler. The mouse-handler trait object is `Send + Sync`, so the
     // capture cell must be too — use `Arc<Mutex<_>>`, not `Rc<Cell<_>>`.
@@ -229,11 +249,12 @@ fn check_window_id_matches_in_mouse_and_key_handlers() -> Result<(), String> {
     let a = id(1);
     wire_down_handler(
         &state,
+        win,
         a,
         bounds(0.0, 0.0, 100.0, 100.0),
         Arc::new(move |_ev, cx| *fm.lock().unwrap() = Some(cx.window_id())),
     );
-    state.dispatch_mouse_down_for_test((10.0, 10.0), MouseButton::Left, Modifiers::default());
+    state.dispatch_mouse_down_for_test(win, (10.0, 10.0), MouseButton::Left, Modifiers::default());
     ensure_eq!(
         *from_mouse.lock().unwrap(),
         Some(expected),
@@ -251,6 +272,7 @@ fn check_window_id_matches_in_mouse_and_key_handlers() -> Result<(), String> {
         vec![],
     );
     state.dispatch_key_down_for_test(
+        win,
         KeyCode::KeyA,
         Key::Character("a".into()),
         Modifiers::default(),

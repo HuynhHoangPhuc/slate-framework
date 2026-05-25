@@ -2,14 +2,11 @@
 //!
 //! All four event dispatchers share the focused-chain bubble shape used by
 //! keyboard dispatch — snapshot per-element handlers up-front, then walk
-//! App-level handlers if propagation was not stopped. Each handler runs
-//! with an `EventCtx::with_ime(...)` so element code can mutate its
-//! `ImeState` through `cx.ime_state(id)` without re-borrowing the registry.
+//! App-level handlers if propagation was not stopped.
 //!
 //! `republish_ime_cache` recomputes the snapshot consumed by `WindowImeDelegate`
-//! at the end of `dispatch_ime_preedit` and at the end of every paint pass —
-//! the two deterministic moments the OS sync-query channel must see updated
-//! values. `drain_pending_ime_ops` runs queued [`PendingImeOp`]s before
+//! at the end of `dispatch_ime_preedit` and at the end of every paint pass.
+//! `drain_pending_ime_ops` runs queued [`PendingImeOp`]s before
 //! `apply_pending_focus_op` so Tab-during-composition lands its synthetic
 //! commit on the still-focused element.
 
@@ -25,12 +22,11 @@ use crate::event::{
 };
 use crate::ime::{CachedImeQuery, PendingImeOp};
 use crate::types::ElementId;
-use crate::view::View;
 
 use super::super::state::AppState;
 use super::super::types::AppSignal;
 
-impl<V: View> AppState<V> {
+impl AppState {
     /// Install App-level IME handlers. Called once by `App::run` after
     /// construction, mirrors `install_key_handlers`.
     pub(crate) fn install_ime_handlers(
@@ -47,23 +43,30 @@ impl<V: View> AppState<V> {
     }
 
     /// Recompute the snapshot consumed by [`WindowImeDelegate`] sync queries
-    /// from the currently-focused element's [`ImeState`]. Called at the end of
-    /// `dispatch_ime_preedit` AND at the end of every paint pass — those are
-    /// the two deterministic moments the OS sync-query channel must see
-    /// updated values.
+    /// from the currently-focused element's [`ImeState`].
     ///
-    /// The snapshot includes a bounded text window around the caret so the
-    /// query path can answer `ime_text` without re-entering the registry.
-    pub(crate) fn republish_ime_cache(&self) {
-        // Default → no focused element / no ime-capable element this frame.
+    /// Called at the end of `dispatch_ime_preedit` AND at the end of every
+    /// paint pass — those are the two deterministic moments the OS sync-query
+    /// channel must see updated values.
+    pub(crate) fn republish_ime_cache(&self, window_id: WindowId) {
         let mut snap = CachedImeQuery::default();
 
-        let Some(focused) = self.focus_registry.borrow().focused() else {
-            *self.cached_ime_query.borrow_mut() = snap;
+        let focused = {
+            let guard = self.windows.borrow();
+            guard.get(&window_id).and_then(|w| w.focus_registry.borrow().focused())
+        };
+        let Some(focused) = focused else {
+            let guard = self.windows.borrow();
+            if let Some(win) = guard.get(&window_id) {
+                *win.cached_ime_query.borrow_mut() = snap;
+            }
             return;
         };
 
-        let entry = self.ime_registry.borrow().get(focused);
+        let entry = {
+            let guard = self.windows.borrow();
+            guard.get(&window_id).and_then(|w| w.ime_registry.borrow().get(focused))
+        };
         if let Some(state_rc) = entry
             && let Ok(state) = state_rc.try_borrow()
         {
@@ -71,8 +74,6 @@ impl<V: View> AppState<V> {
             snap.marked_range = state.answer_marked_range();
             snap.selected_range = state.answer_selected_range();
 
-            // Bounded text window: 256 bytes either side of the caret,
-            // snapped to UTF-8 char boundaries so the slice is always valid.
             const HALF: usize = 256;
             let len = state.text.len();
             let mut lo = state.caret.saturating_sub(HALF);
@@ -88,29 +89,37 @@ impl<V: View> AppState<V> {
             }
         }
 
-        *self.cached_ime_query.borrow_mut() = snap;
+        let guard = self.windows.borrow();
+        if let Some(win) = guard.get(&window_id) {
+            *win.cached_ime_query.borrow_mut() = snap;
+        }
     }
 
-    /// Drain queued [`PendingImeOp`]s. Called BEFORE `apply_pending_focus_op`
-    /// so Tab-during-composition lands its synthetic commit on the
-    /// still-focused element.
-    pub(crate) fn drain_pending_ime_ops(&self) {
-        let ops: Vec<PendingImeOp> = self.pending_ime_ops.borrow_mut().drain(..).collect();
+    /// Drain queued [`PendingImeOp`]s for the given window. Called BEFORE
+    /// `apply_pending_focus_op` so Tab-during-composition lands its synthetic
+    /// commit on the still-focused element.
+    pub(crate) fn drain_pending_ime_ops(&self, window_id: WindowId) {
+        let ops: Vec<PendingImeOp> = {
+            let guard = self.windows.borrow();
+            match guard.get(&window_id) {
+                Some(win) => win.pending_ime_ops.borrow_mut().drain(..).collect(),
+                None => return,
+            }
+        };
         for op in ops {
             match op {
                 PendingImeOp::Commit { text, .. } => {
-                    // Synthetic commit — inserts text at the focused
-                    // element's caret + clears the preedit. Does NOT invoke
-                    // user `on_ime_commit` handlers (re-entrancy contract:
-                    // synthetic commits must not invoke user callbacks).
-                    let Some(focused) = self.focus_registry.borrow().focused() else {
-                        continue;
+                    let focused = {
+                        let guard = self.windows.borrow();
+                        guard.get(&window_id).and_then(|w| w.focus_registry.borrow().focused())
                     };
-                    let Some(state_rc) = self.ime_registry.borrow().get(focused) else {
-                        continue;
+                    let Some(focused) = focused else { continue };
+                    let state_rc = {
+                        let guard = self.windows.borrow();
+                        guard.get(&window_id).and_then(|w| w.ime_registry.borrow().get(focused))
                     };
+                    let Some(state_rc) = state_rc else { continue };
                     if let Ok(mut state) = state_rc.try_borrow_mut() {
-                        // Clear preedit first.
                         state.preedit = None;
                         if !text.is_empty() {
                             let caret = state.caret;
@@ -126,136 +135,136 @@ impl<V: View> AppState<V> {
     /// Dispatch `Event::ImeEnabled` — focused-chain bubble, no payload.
     pub(crate) fn dispatch_ime_enabled(&self, window: WindowId) -> AppSignal {
         let has_app_handlers = !self.on_ime_enabled.borrow().is_empty();
-        let chain = self.build_focused_chain();
+        let chain = self.build_focused_chain(window);
         if chain.is_empty() && !has_app_handlers {
             return AppSignal::None;
         }
 
-        let event = ImeLifecycleEvent {
-            timestamp: Instant::now(),
-        };
+        let event = ImeLifecycleEvent { timestamp: Instant::now() };
         let mut stopped = false;
         let mut pending_focus_op: Option<PendingFocusOp> = None;
         let mut pending_capture_op: Option<PendingCaptureOp> = None;
-        let focused = self.focus_registry.borrow().focused();
+
+        let focused = {
+            let guard = self.windows.borrow();
+            guard.get(&window).and_then(|w| w.focus_registry.borrow().focused())
+        };
 
         let element_handlers: SmallVec<[ElementImeLifecycleHandler; 8]> = {
-            let map = self.ime_handler_map.borrow();
-            chain
-                .iter()
-                .filter_map(|id| map.get(id).and_then(|h| h.on_ime_enabled.clone()))
-                .collect()
+            let guard = self.windows.borrow();
+            let Some(win) = guard.get(&window) else { return AppSignal::None };
+            let map = win.ime_handler_map.borrow();
+            chain.iter().filter_map(|id| map.get(id).and_then(|h| h.on_ime_enabled.clone())).collect()
         };
+
         for handler in &element_handlers {
             let id = chain.first().copied().unwrap_or_else(ElementId::root);
+            let ime_rc = {
+                let guard = self.windows.borrow();
+                let Some(win) = guard.get(&window) else { break };
+                win.ime_registry.clone()
+            };
             let mut ctx = EventCtx::new(
-                    &mut stopped,
-                    &mut pending_focus_op,
-                    &mut pending_capture_op,
-                    window,
-                    focused,
+                    &mut stopped, &mut pending_focus_op, &mut pending_capture_op, window, focused,
                 )
-                .with_ime(id, &self.ime_registry);
+                .with_ime(id, &ime_rc);
             handler(&event, &mut ctx);
-            if stopped {
-                break;
-            }
+            if stopped { break; }
         }
 
         if !stopped && has_app_handlers {
             let mut handlers = self.on_ime_enabled.borrow_mut();
             for handler in handlers.iter_mut() {
                 let id = chain.first().copied().unwrap_or_else(ElementId::root);
+                let ime_rc = {
+                    let guard = self.windows.borrow();
+                    let Some(win) = guard.get(&window) else { break };
+                    win.ime_registry.clone()
+                };
                 let mut ctx = EventCtx::new(
-                    &mut stopped,
-                    &mut pending_focus_op,
-                    &mut pending_capture_op,
-                    window,
-                    focused,
-                )
-                    .with_ime(id, &self.ime_registry);
+                        &mut stopped, &mut pending_focus_op, &mut pending_capture_op, window, focused,
+                    )
+                    .with_ime(id, &ime_rc);
                 handler(&event, &mut ctx);
-                if stopped {
-                    break;
-                }
+                if stopped { break; }
             }
             drop(handlers);
         }
 
-        self.drain_pending_ime_ops();
-        self.apply_pending_focus_op(pending_focus_op);
-        self.apply_pending_capture_op(pending_capture_op);
+        self.drain_pending_ime_ops(window);
+        self.apply_pending_focus_op(window, pending_focus_op);
+        self.apply_pending_capture_op(window, pending_capture_op);
         AppSignal::RequestRedraw { window }
     }
 
     /// Dispatch `Event::ImeDisabled` — focused-chain bubble, no payload.
     pub(crate) fn dispatch_ime_disabled(&self, window: WindowId) -> AppSignal {
         let has_app_handlers = !self.on_ime_disabled.borrow().is_empty();
-        let chain = self.build_focused_chain();
+        let chain = self.build_focused_chain(window);
         if chain.is_empty() && !has_app_handlers {
             return AppSignal::None;
         }
 
-        let event = ImeLifecycleEvent {
-            timestamp: Instant::now(),
-        };
+        let event = ImeLifecycleEvent { timestamp: Instant::now() };
         let mut stopped = false;
         let mut pending_focus_op: Option<PendingFocusOp> = None;
         let mut pending_capture_op: Option<PendingCaptureOp> = None;
-        let focused = self.focus_registry.borrow().focused();
+
+        let focused = {
+            let guard = self.windows.borrow();
+            guard.get(&window).and_then(|w| w.focus_registry.borrow().focused())
+        };
 
         let element_handlers: SmallVec<[ElementImeLifecycleHandler; 8]> = {
-            let map = self.ime_handler_map.borrow();
-            chain
-                .iter()
-                .filter_map(|id| map.get(id).and_then(|h| h.on_ime_disabled.clone()))
-                .collect()
+            let guard = self.windows.borrow();
+            let Some(win) = guard.get(&window) else { return AppSignal::None };
+            let map = win.ime_handler_map.borrow();
+            chain.iter().filter_map(|id| map.get(id).and_then(|h| h.on_ime_disabled.clone())).collect()
         };
+
         for handler in &element_handlers {
             let id = chain.first().copied().unwrap_or_else(ElementId::root);
+            let ime_rc = {
+                let guard = self.windows.borrow();
+                let Some(win) = guard.get(&window) else { break };
+                win.ime_registry.clone()
+            };
             let mut ctx = EventCtx::new(
-                    &mut stopped,
-                    &mut pending_focus_op,
-                    &mut pending_capture_op,
-                    window,
-                    focused,
+                    &mut stopped, &mut pending_focus_op, &mut pending_capture_op, window, focused,
                 )
-                .with_ime(id, &self.ime_registry);
+                .with_ime(id, &ime_rc);
             handler(&event, &mut ctx);
-            if stopped {
-                break;
-            }
+            if stopped { break; }
         }
 
         if !stopped && has_app_handlers {
             let mut handlers = self.on_ime_disabled.borrow_mut();
             for handler in handlers.iter_mut() {
                 let id = chain.first().copied().unwrap_or_else(ElementId::root);
+                let ime_rc = {
+                    let guard = self.windows.borrow();
+                    let Some(win) = guard.get(&window) else { break };
+                    win.ime_registry.clone()
+                };
                 let mut ctx = EventCtx::new(
-                    &mut stopped,
-                    &mut pending_focus_op,
-                    &mut pending_capture_op,
-                    window,
-                    focused,
-                )
-                    .with_ime(id, &self.ime_registry);
+                        &mut stopped, &mut pending_focus_op, &mut pending_capture_op, window, focused,
+                    )
+                    .with_ime(id, &ime_rc);
                 handler(&event, &mut ctx);
-                if stopped {
-                    break;
-                }
+                if stopped { break; }
             }
             drop(handlers);
         }
 
-        self.drain_pending_ime_ops();
-        self.apply_pending_focus_op(pending_focus_op);
-        self.apply_pending_capture_op(pending_capture_op);
+        self.drain_pending_ime_ops(window);
+        self.apply_pending_focus_op(window, pending_focus_op);
+        self.apply_pending_capture_op(window, pending_capture_op);
         AppSignal::RequestRedraw { window }
     }
 
     /// Dispatch `Event::ImePreedit` — focused-chain bubble. Republishes the
     /// IME cache at the end so OS sync queries that arrive between paints
-    /// (Windows IMM `WM_IME_REQUEST`) read fresh values.
+    /// read fresh values.
     pub(crate) fn dispatch_ime_preedit(
         &self,
         window: WindowId,
@@ -264,7 +273,7 @@ impl<V: View> AppState<V> {
         selection: Option<std::ops::Range<usize>>,
     ) -> AppSignal {
         let has_app_handlers = !self.on_ime_preedit.borrow().is_empty();
-        let chain = self.build_focused_chain();
+        let chain = self.build_focused_chain(window);
         if chain.is_empty() && !has_app_handlers {
             return AppSignal::None;
         }
@@ -278,66 +287,64 @@ impl<V: View> AppState<V> {
         let mut stopped = false;
         let mut pending_focus_op: Option<PendingFocusOp> = None;
         let mut pending_capture_op: Option<PendingCaptureOp> = None;
-        let focused = self.focus_registry.borrow().focused();
+
+        let focused = {
+            let guard = self.windows.borrow();
+            guard.get(&window).and_then(|w| w.focus_registry.borrow().focused())
+        };
 
         let element_handlers: SmallVec<[ElementImePreeditHandler; 8]> = {
-            let map = self.ime_handler_map.borrow();
-            chain
-                .iter()
-                .filter_map(|id| map.get(id).and_then(|h| h.on_ime_preedit.clone()))
-                .collect()
+            let guard = self.windows.borrow();
+            let Some(win) = guard.get(&window) else { return AppSignal::None };
+            let map = win.ime_handler_map.borrow();
+            chain.iter().filter_map(|id| map.get(id).and_then(|h| h.on_ime_preedit.clone())).collect()
         };
+
         for handler in &element_handlers {
             let id = chain.first().copied().unwrap_or_else(ElementId::root);
+            let ime_rc = {
+                let guard = self.windows.borrow();
+                let Some(win) = guard.get(&window) else { break };
+                win.ime_registry.clone()
+            };
             let mut ctx = EventCtx::new(
-                    &mut stopped,
-                    &mut pending_focus_op,
-                    &mut pending_capture_op,
-                    window,
-                    focused,
+                    &mut stopped, &mut pending_focus_op, &mut pending_capture_op, window, focused,
                 )
-                .with_ime(id, &self.ime_registry);
+                .with_ime(id, &ime_rc);
             handler(&event, &mut ctx);
-            if stopped {
-                break;
-            }
+            if stopped { break; }
         }
 
         if !stopped && has_app_handlers {
             let mut handlers = self.on_ime_preedit.borrow_mut();
             for handler in handlers.iter_mut() {
                 let id = chain.first().copied().unwrap_or_else(ElementId::root);
+                let ime_rc = {
+                    let guard = self.windows.borrow();
+                    let Some(win) = guard.get(&window) else { break };
+                    win.ime_registry.clone()
+                };
                 let mut ctx = EventCtx::new(
-                    &mut stopped,
-                    &mut pending_focus_op,
-                    &mut pending_capture_op,
-                    window,
-                    focused,
-                )
-                    .with_ime(id, &self.ime_registry);
+                        &mut stopped, &mut pending_focus_op, &mut pending_capture_op, window, focused,
+                    )
+                    .with_ime(id, &ime_rc);
                 handler(&event, &mut ctx);
-                if stopped {
-                    break;
-                }
+                if stopped { break; }
             }
             drop(handlers);
         }
 
-        self.drain_pending_ime_ops();
-        self.apply_pending_focus_op(pending_focus_op);
-        self.apply_pending_capture_op(pending_capture_op);
-        // Republish so OS queries arriving before next paint see fresh state.
-        self.republish_ime_cache();
+        self.drain_pending_ime_ops(window);
+        self.apply_pending_focus_op(window, pending_focus_op);
+        self.apply_pending_capture_op(window, pending_capture_op);
+        self.republish_ime_cache(window);
         AppSignal::RequestRedraw { window }
     }
 
-    /// Dispatch `Event::ImeCommit` — focused-chain bubble. Empty-string
-    /// commit is the "clear preedit, no insert" signal; handlers MUST NOT
-    /// call `Signal::set` in that case (contract documented on
-    /// [`ImeCommitEvent`]).
+    /// Dispatch `Event::ImeCommit` — focused-chain bubble.
     pub(crate) fn dispatch_ime_commit(&self, window: WindowId, text: String) -> AppSignal {
         let has_app_handlers = !self.on_ime_commit.borrow().is_empty();
-        let chain = self.build_focused_chain();
+        let chain = self.build_focused_chain(window);
         if chain.is_empty() && !has_app_handlers {
             return AppSignal::None;
         }
@@ -349,54 +356,56 @@ impl<V: View> AppState<V> {
         let mut stopped = false;
         let mut pending_focus_op: Option<PendingFocusOp> = None;
         let mut pending_capture_op: Option<PendingCaptureOp> = None;
-        let focused = self.focus_registry.borrow().focused();
+
+        let focused = {
+            let guard = self.windows.borrow();
+            guard.get(&window).and_then(|w| w.focus_registry.borrow().focused())
+        };
 
         let element_handlers: SmallVec<[ElementImeCommitHandler; 8]> = {
-            let map = self.ime_handler_map.borrow();
-            chain
-                .iter()
-                .filter_map(|id| map.get(id).and_then(|h| h.on_ime_commit.clone()))
-                .collect()
+            let guard = self.windows.borrow();
+            let Some(win) = guard.get(&window) else { return AppSignal::None };
+            let map = win.ime_handler_map.borrow();
+            chain.iter().filter_map(|id| map.get(id).and_then(|h| h.on_ime_commit.clone())).collect()
         };
+
         for handler in &element_handlers {
             let id = chain.first().copied().unwrap_or_else(ElementId::root);
+            let ime_rc = {
+                let guard = self.windows.borrow();
+                let Some(win) = guard.get(&window) else { break };
+                win.ime_registry.clone()
+            };
             let mut ctx = EventCtx::new(
-                    &mut stopped,
-                    &mut pending_focus_op,
-                    &mut pending_capture_op,
-                    window,
-                    focused,
+                    &mut stopped, &mut pending_focus_op, &mut pending_capture_op, window, focused,
                 )
-                .with_ime(id, &self.ime_registry);
+                .with_ime(id, &ime_rc);
             handler(&event, &mut ctx);
-            if stopped {
-                break;
-            }
+            if stopped { break; }
         }
 
         if !stopped && has_app_handlers {
             let mut handlers = self.on_ime_commit.borrow_mut();
             for handler in handlers.iter_mut() {
                 let id = chain.first().copied().unwrap_or_else(ElementId::root);
+                let ime_rc = {
+                    let guard = self.windows.borrow();
+                    let Some(win) = guard.get(&window) else { break };
+                    win.ime_registry.clone()
+                };
                 let mut ctx = EventCtx::new(
-                    &mut stopped,
-                    &mut pending_focus_op,
-                    &mut pending_capture_op,
-                    window,
-                    focused,
-                )
-                    .with_ime(id, &self.ime_registry);
+                        &mut stopped, &mut pending_focus_op, &mut pending_capture_op, window, focused,
+                    )
+                    .with_ime(id, &ime_rc);
                 handler(&event, &mut ctx);
-                if stopped {
-                    break;
-                }
+                if stopped { break; }
             }
             drop(handlers);
         }
 
-        self.drain_pending_ime_ops();
-        self.apply_pending_focus_op(pending_focus_op);
-        self.apply_pending_capture_op(pending_capture_op);
+        self.drain_pending_ime_ops(window);
+        self.apply_pending_focus_op(window, pending_focus_op);
+        self.apply_pending_capture_op(window, pending_capture_op);
         AppSignal::RequestRedraw { window }
     }
 }
@@ -406,18 +415,17 @@ impl<V: View> AppState<V> {
 // only. NEVER traverses the live `ime_registry` (avoids re-entrancy).
 // ---------------------------------------------------------------------------
 
-impl<V: View> WindowImeDelegate for AppState<V> {
-    fn ime_caret_rect(&self, _window_id: WindowId) -> Option<PhysicalRect> {
-        self.cached_ime_query.borrow().caret_client_rect
+impl WindowImeDelegate for AppState {
+    fn ime_caret_rect(&self, window_id: WindowId) -> Option<PhysicalRect> {
+        let guard = self.windows.borrow();
+        guard.get(&window_id).and_then(|w| w.cached_ime_query.borrow().caret_client_rect)
     }
 
-    fn ime_text(&self, _window_id: WindowId, range: std::ops::Range<usize>) -> Option<String> {
-        let cache = self.cached_ime_query.borrow();
+    fn ime_text(&self, window_id: WindowId, range: std::ops::Range<usize>) -> Option<String> {
+        let guard = self.windows.borrow();
+        let win = guard.get(&window_id)?;
+        let cache = win.cached_ime_query.borrow();
         let (window_range, text) = cache.text_window.as_ref()?;
-        // Translate absolute byte range into cached-window-local slice. The
-        // requested range must fit inside the cached window AND land on UTF-8
-        // boundaries; otherwise we report None (the OS will fall back to its
-        // own state, which is the safe default).
         if range.start < window_range.start || range.end > window_range.end {
             return None;
         }
@@ -426,11 +434,13 @@ impl<V: View> WindowImeDelegate for AppState<V> {
         text.get(lo..hi).map(|s| s.to_string())
     }
 
-    fn ime_selected_range(&self, _window_id: WindowId) -> Option<std::ops::Range<usize>> {
-        self.cached_ime_query.borrow().selected_range.clone()
+    fn ime_selected_range(&self, window_id: WindowId) -> Option<std::ops::Range<usize>> {
+        let guard = self.windows.borrow();
+        guard.get(&window_id).and_then(|w| w.cached_ime_query.borrow().selected_range.clone())
     }
 
-    fn ime_marked_range(&self, _window_id: WindowId) -> Option<std::ops::Range<usize>> {
-        self.cached_ime_query.borrow().marked_range.clone()
+    fn ime_marked_range(&self, window_id: WindowId) -> Option<std::ops::Range<usize>> {
+        let guard = self.windows.borrow();
+        guard.get(&window_id).and_then(|w| w.cached_ime_query.borrow().marked_range.clone())
     }
 }

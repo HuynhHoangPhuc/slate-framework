@@ -1,126 +1,89 @@
 //! `AppState` construction and high-level lifecycle handlers.
 //!
-//! - `new`: deferred-init constructor; renderer/text_system/view are filled in
-//!   during `Event::Resumed` by the view factory.
+//! - `new`: constructor; windows map starts empty — callers insert
+//!   `WindowState` entries immediately after (one per platform window).
 //! - `handle_wake`: drain the foreground executor on background-task wake.
-//! - `handle_window_destroyed`: platform close cleanup; idempotent.
+//! - `handle_window_destroyed`: per-window cleanup; last-window-aware quit.
 
-use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use slate_platform::{DefaultWindow, Window, WindowId};
-use slate_reactive::Signal;
-use slate_renderer::Scene;
+use slate_platform::{Window, WindowId};
 
 use crate::executor::{Executor, RedrawRequester};
-use crate::focus::FocusRegistry;
-use crate::hit_test::HitTestList;
 use crate::image_cache::{ImageCache, ImageSystemObserver};
-use crate::ime::{CachedImeQuery, ImeRegistry};
-use crate::layout::LayoutTree;
 use crate::paint_cache::{TextShapingCache, TextShapingCacheObserver};
 use crate::reactive_state::StateRegistry;
 use crate::text_system::TextSystemObserver;
-use crate::view::View;
 
 use super::state::AppState;
-use super::types::{AppSignal, RecoveryState};
+use super::types::AppSignal;
+#[cfg(any(test, feature = "test-hooks"))]
+use super::types::RecoveryState;
 
-impl<V: View> AppState<V> {
-    /// Create a new AppState with uninitialized renderer/text_system/view.
+impl AppState {
+    /// Create a new `AppState`.
     ///
-    /// These are set during `Event::Resumed` via the view factory.
-    /// Wires up the reactive runtime's redraw bridge internally.
-    pub fn new(
-        window: Arc<DefaultWindow>,
-        executor: Executor,
-        redraw_requester: RedrawRequester,
-        runtime: Arc<slate_reactive::Runtime>,
-    ) -> Self {
-        // Wire the reactive runtime's redraw bridge (moved from app.rs closure)
+    /// The `windows` map starts empty. The caller must insert a `WindowState`
+    /// for the initial window immediately after construction. The reactive
+    /// runtime's redraw bridge is wired here: it captures the
+    /// `Arc<Mutex<Vec<RedrawRequester>>>` so it satisfies `Send + Sync` even
+    /// though the `windows` `HashMap` itself is `!Sync`.
+    ///
+    /// Wake-all policy (v1): every registered window is woken synchronously in
+    /// insertion order on each reactive signal change. Per-window subscription
+    /// tagging is post-v1.
+    pub fn new(executor: Executor, _redraw_requester: RedrawRequester, runtime: Arc<slate_reactive::Runtime>) -> Self {
+        let redraw_requesters: Arc<Mutex<Vec<(WindowId, RedrawRequester)>>> =
+            Arc::new(Mutex::new(Vec::new()));
+
+        // Wire the reactive runtime's redraw bridge. The closure captures only
+        // Arc<Mutex<…>> which is Send+Sync, satisfying install_redraw's bound.
+        // On fire it walks all registered windows in insertion order and calls
+        // request() synchronously on each — cheap (non-blocking PostMessage /
+        // setNeedsDisplay) and deterministic for golden-trace stability.
         runtime.install_redraw({
-            let req = redraw_requester.clone();
-            Arc::new(move || req.request())
+            let requesters = Arc::clone(&redraw_requesters);
+            Arc::new(move || {
+                let guard = requesters.lock().unwrap();
+                for (_, req) in guard.iter() {
+                    req.request();
+                }
+            })
         });
 
-        let view_observer_id = runtime.next_observer_id();
         let state_registry = StateRegistry::new(runtime.clone());
 
-        // Create Rc-wrapped caches for observer weak references
+        // Create Rc-wrapped caches for observer weak references.
         let text_system = Rc::new(RefCell::new(None));
         let text_shaping_cache = Rc::new(RefCell::new(TextShapingCache::new()));
 
-        // Create observers with weak references to the caches
         let text_system_observer = Rc::new(TextSystemObserver::new(Rc::downgrade(&text_system)));
         let text_shaping_cache_observer = Rc::new(TextShapingCacheObserver::new(Rc::downgrade(
             &text_shaping_cache,
         )));
 
-        // Image cache + observer
         let image_cache = Rc::new(RefCell::new(ImageCache::new()));
         let image_system_observer = Rc::new(ImageSystemObserver::new(Rc::downgrade(&image_cache)));
 
         Self {
-            renderer: RefCell::new(None),
+            windows: RefCell::new(HashMap::new()),
+            runtime,
+            executor,
             text_system,
-            view: RefCell::new(None),
-
-            layout_tree: RefCell::new(LayoutTree::new()),
-            hit_test_list: RefCell::new(HitTestList::new()),
-            a11y_nodes: RefCell::new(Vec::new()),
-            scene: RefCell::new(Scene::new()),
-
-            handler_map: RefCell::new(HashMap::new()),
-            mouse_handler_map: RefCell::new(HashMap::new()),
-            parent_map: RefCell::new(HashMap::new()),
-            hovered_element: RefCell::new(None),
-            button_state: RefCell::new(0),
-            capture_target: RefCell::new(None),
-            explicit_capture: RefCell::new(false),
-            last_mouse_pos: RefCell::new(None),
-
-            coalesced_move_pos: RefCell::new(None),
-            last_dispatched_move_pos: RefCell::new(None),
-
-            runtime: runtime.clone(),
-            view_observer_id,
-
-            state_registry: RefCell::new(state_registry),
             text_shaping_cache,
-
             text_system_observer,
             text_shaping_cache_observer,
             image_cache,
             image_system_observer,
-
-            executor,
-            redraw_requester,
-            window,
-
-            recovery_state: RefCell::new(RecoveryState::NotLost),
-            skip_draws: Cell::new(false),
-            last_successful_recovery_at: Cell::new(None),
-            last_wgpu_callback_loss_at: Cell::new(None),
-            last_adapter_check_at: Cell::new(None),
-            renderer_generation: Signal::new(runtime, 0u64),
-            rendering: Cell::new(false),
-            pending_quit: Cell::new(false),
-            sync_resize: Cell::new(false),
-            last_resize_size: Cell::new(None),
+            state_registry: RefCell::new(state_registry),
+            redraw_requesters,
+            pending_quit: std::cell::Cell::new(false),
             on_key_down: RefCell::new(Vec::new()),
             on_key_up: RefCell::new(Vec::new()),
             on_text_input: RefCell::new(Vec::new()),
-            key_handler_map: RefCell::new(HashMap::new()),
-            focus_registry: Rc::new(RefCell::new(FocusRegistry::new())),
-            focus_bounds: RefCell::new(HashMap::new()),
-
-            ime_registry: RefCell::new(ImeRegistry::new()),
-            ime_handler_map: RefCell::new(HashMap::new()),
-            ime_registered_ids: RefCell::new(HashSet::new()),
-            cached_ime_query: RefCell::new(CachedImeQuery::default()),
-            pending_ime_ops: RefCell::new(Vec::new()),
             on_ime_preedit: RefCell::new(Vec::new()),
             on_ime_commit: RefCell::new(Vec::new()),
             on_ime_enabled: RefCell::new(Vec::new()),
@@ -128,36 +91,85 @@ impl<V: View> AppState<V> {
         }
     }
 
-    /// Handle background task completion (Event::Wake).
-    pub fn handle_wake(&self) -> AppSignal {
-        self.executor.foreground.poll();
-        AppSignal::RequestRedraw {
-            window: self.window.id(),
-        }
+    /// Register a new window's redraw requester so the reactive wake-all bridge
+    /// can include it. Called after inserting the `WindowState` into `windows`.
+    pub(crate) fn register_redraw_requester(&self, window: WindowId, req: RedrawRequester) {
+        self.redraw_requesters.lock().unwrap().push((window, req));
     }
 
-    /// Handle window close by platform (Event::WindowDestroyed).
-    /// Cleans up view and logs. Idempotent.
-    pub fn handle_window_destroyed(&self) -> AppSignal {
-        log::debug!("WindowDestroyed received in AppState");
-        *self.view.borrow_mut() = None;
-        AppSignal::RequestQuit
+    /// Unregister a window's redraw requester. Called before removing the
+    /// `WindowState` from `windows`.
+    pub(crate) fn unregister_redraw_requester(&self, window: WindowId) {
+        self.redraw_requesters
+            .lock()
+            .unwrap()
+            .retain(|(id, _)| *id != window);
+    }
+
+    /// Handle background task completion (`Event::Wake`).
+    ///
+    /// Polls the foreground executor and requests a redraw on every registered
+    /// window (the executor may have unblocked a reactive effect).
+    pub fn handle_wake(&self) -> AppSignal {
+        self.executor.foreground.poll();
+        // Wake all live windows so any reactive effect that just unblocked gets
+        // a paint tick. The platform's request_redraw is idempotent and cheap.
+        let guard = self.redraw_requesters.lock().unwrap();
+        for (_, req) in guard.iter() {
+            req.request();
+        }
+        drop(guard);
+        AppSignal::None
+    }
+
+    /// Handle window close by platform (`Event::WindowDestroyed`).
+    ///
+    /// Removes the window's entry from `windows` and clears its redraw
+    /// requester. Returns `RequestQuit` only when the last window was closed
+    /// (Win32 platform-default: quit on last-window-close) or `None` on macOS
+    /// (AppKit stays alive — Cmd+Q wired in the example).
+    pub fn handle_window_destroyed(&self, id: WindowId) -> AppSignal {
+        log::debug!("WindowDestroyed for {:?}", id);
+
+        // Drop the WindowState — renderer, view, and all per-window resources
+        // are freed here. This is the only correct place to do it: the borrow
+        // on `windows` is NOT held when user handlers could fire (dispatch
+        // discipline), so removing here is safe.
+        self.unregister_redraw_requester(id);
+        self.windows.borrow_mut().remove(&id);
+
+        let is_last = self.windows.borrow().is_empty();
+        if is_last {
+            #[cfg(target_os = "macos")]
+            return AppSignal::None; // AppKit stays alive; example wires Cmd+Q
+            #[cfg(not(target_os = "macos"))]
+            return AppSignal::RequestQuit; // Win32 platform-default: quit on last-window-close
+        }
+        AppSignal::None
     }
 
     /// Request a redraw on the window with the given id.
     ///
-    /// Resolves the id against the framework's window registry. Today the
-    /// registry holds exactly one entry, so any `window` argument resolves to
-    /// the same backing window; the indirection exists so the per-window state
-    /// lift can swap in a `HashMap<WindowId, _>` lookup without changing
-    /// callers.
+    /// No-op (with a debug log) if the window is not found — this can happen
+    /// in a race between a reactive signal change and a window destroy.
     pub(crate) fn request_redraw_for(&self, window: WindowId) {
-        debug_assert_eq!(
-            window,
-            self.window.id(),
-            "request_redraw_for received an unknown WindowId — framework is single-window today"
-        );
-        let _ = window;
-        self.window.request_redraw();
+        let guard = self.windows.borrow();
+        if let Some(win) = guard.get(&window) {
+            win.window.request_redraw();
+        } else {
+            log::debug!(
+                "request_redraw_for: unknown WindowId {:?} — window may have been destroyed",
+                window
+            );
+        }
+    }
+
+    /// Snapshot the current recovery state for a specific window. Test-only use.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn current_recovery_state_for(&self, window: WindowId) -> Option<RecoveryState> {
+        self.windows
+            .borrow()
+            .get(&window)
+            .map(|w| w.recovery_state.borrow().clone())
     }
 }

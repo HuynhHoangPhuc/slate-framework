@@ -4,7 +4,7 @@
 
 use std::time::Instant;
 
-use slate_platform::{Modifiers, Window, WindowId};
+use slate_platform::{Modifiers, WindowId};
 use smallvec::SmallVec;
 
 use crate::event::{
@@ -12,13 +12,12 @@ use crate::event::{
     PointerEventKind, PointerHandler, ScrollEvent, ScrollHandler,
 };
 use crate::types::{ElementId, Point};
-use crate::view::View;
 
 use super::super::super::state::AppState;
 use super::super::super::types::AppSignal;
 use super::helpers::{ancestors, fire_hover_transitions};
 
-impl<V: View> AppState<V> {
+impl AppState {
     /// Dispatch MouseMoved event.
     pub(crate) fn dispatch_mouse_moved(
         &self,
@@ -34,56 +33,57 @@ impl<V: View> AppState<V> {
             timestamp: Instant::now(),
         };
 
-        // Route through capture_target if captured, else hit-test
-        let captured = *self.capture_target.borrow();
-        let target = if let Some(ct) = captured {
-            Some(ct)
-        } else {
-            self.hit_test_list
-                .borrow()
-                .hit_test(Point::new(position.0, position.1))
-                .map(|r| r.element_id)
+        let (captured, target) = {
+            let guard = self.windows.borrow();
+            let Some(win) = guard.get(&window) else { return AppSignal::None };
+            let cap = *win.capture_target.borrow();
+            let t = if let Some(ct) = cap {
+                Some(ct)
+            } else {
+                win.hit_test_list.borrow()
+                    .hit_test(Point::new(position.0, position.1))
+                    .map(|r| r.element_id)
+            };
+            (cap, t)
         };
 
         if let Some(t) = target {
-            // Collect handlers (clone-before-drop pattern)
             let handlers: SmallVec<[PointerHandler; 8]> = {
-                let hm = self.handler_map.borrow();
-                let pm = self.parent_map.borrow();
+                let guard = self.windows.borrow();
+                let Some(win) = guard.get(&window) else { return AppSignal::None };
+                let hm = win.handler_map.borrow();
+                let pm = win.parent_map.borrow();
                 ancestors(t, &pm)
                     .filter_map(|id| hm.get(&id).and_then(|h| h.on_pointer_event.clone()))
                     .collect()
             };
 
-            // Invoke handlers
             let mut stopped = false;
             let mut pending_focus_op: Option<PendingFocusOp> = None;
             let mut pending_capture_op: Option<PendingCaptureOp> = None;
-            let focused = self.focus_registry.borrow().focused();
+            let focused = {
+                let guard = self.windows.borrow();
+                guard.get(&window).and_then(|w| w.focus_registry.borrow().focused())
+            };
             for handler in &handlers {
                 let mut ctx = EventCtx::new(
-                    &mut stopped,
-                    &mut pending_focus_op,
-                    &mut pending_capture_op,
-                    window,
-                    focused,
+                    &mut stopped, &mut pending_focus_op, &mut pending_capture_op, window, focused,
                 );
                 handler(&pointer_event, &mut ctx);
-                if stopped {
-                    break;
-                }
+                if stopped { break; }
             }
-            self.apply_pending_focus_op(pending_focus_op);
-            self.apply_pending_capture_op(pending_capture_op);
+            self.apply_pending_focus_op(window, pending_focus_op);
+            self.apply_pending_capture_op(window, pending_capture_op);
         }
 
-        *self.coalesced_move_pos.borrow_mut() = Some(position);
-        *self.last_mouse_pos.borrow_mut() = Some(position);
-        // A move while a capture target is set means a button is held (drag in
-        // progress). Request a redraw so the render pass runs
-        // `flush_coalesced_move`, which dispatches the coalesced move to the
-        // drag handler. Idle hover (no capture) stays silent to avoid a
-        // redraw-storm on every pointer move.
+        {
+            let guard = self.windows.borrow();
+            if let Some(win) = guard.get(&window) {
+                *win.coalesced_move_pos.borrow_mut() = Some(position);
+                *win.last_mouse_pos.borrow_mut() = Some(position);
+            }
+        }
+
         if captured.is_some() {
             AppSignal::RequestRedraw { window }
         } else {
@@ -110,41 +110,39 @@ impl<V: View> AppState<V> {
             timestamp: Instant::now(),
         };
 
-        let hit = self
-            .hit_test_list
-            .borrow()
-            .hit_test(Point::new(position.0, position.1));
+        let hit = {
+            let guard = self.windows.borrow();
+            let Some(win) = guard.get(&window) else { return AppSignal::RequestRedraw { window } };
+            win.hit_test_list.borrow().hit_test(Point::new(position.0, position.1))
+        };
 
         if let Some(result) = hit {
-            // Collect handlers (clone-before-drop pattern)
             let handlers: SmallVec<[ScrollHandler; 8]> = {
-                let hm = self.handler_map.borrow();
-                let pm = self.parent_map.borrow();
+                let guard = self.windows.borrow();
+                let Some(win) = guard.get(&window) else { return AppSignal::RequestRedraw { window } };
+                let hm = win.handler_map.borrow();
+                let pm = win.parent_map.borrow();
                 ancestors(result.element_id, &pm)
                     .filter_map(|id| hm.get(&id).and_then(|h| h.on_mouse_scrolled.clone()))
                     .collect()
             };
 
-            // Invoke handlers
             let mut stopped = false;
             let mut pending_focus_op: Option<PendingFocusOp> = None;
             let mut pending_capture_op: Option<PendingCaptureOp> = None;
-            let focused = self.focus_registry.borrow().focused();
+            let focused = {
+                let guard = self.windows.borrow();
+                guard.get(&window).and_then(|w| w.focus_registry.borrow().focused())
+            };
             for handler in &handlers {
                 let mut ctx = EventCtx::new(
-                    &mut stopped,
-                    &mut pending_focus_op,
-                    &mut pending_capture_op,
-                    window,
-                    focused,
+                    &mut stopped, &mut pending_focus_op, &mut pending_capture_op, window, focused,
                 );
                 handler(&scroll_event, &mut ctx);
-                if stopped {
-                    break;
-                }
+                if stopped { break; }
             }
-            self.apply_pending_focus_op(pending_focus_op);
-            self.apply_pending_capture_op(pending_capture_op);
+            self.apply_pending_focus_op(window, pending_focus_op);
+            self.apply_pending_capture_op(window, pending_capture_op);
         }
 
         AppSignal::RequestRedraw { window }
@@ -152,22 +150,23 @@ impl<V: View> AppState<V> {
 
     /// Dispatch MouseExited event.
     pub(crate) fn dispatch_mouse_exited(&self, window: WindowId) -> AppSignal {
-        let old_hover = *self.hovered_element.borrow();
-        if old_hover.is_some() {
-            // Collect handlers (clone-before-drop pattern)
-            let handlers: SmallVec<[PointerHandler; 8]> = {
-                let hm = self.handler_map.borrow();
-                let pm = self.parent_map.borrow();
-                if let Some(id) = old_hover {
-                    ancestors(id, &pm)
-                        .filter_map(|id| hm.get(&id).and_then(|h| h.on_pointer_leave.clone()))
-                        .collect()
-                } else {
-                    SmallVec::new()
-                }
+        let (old_hover, handlers) = {
+            let guard = self.windows.borrow();
+            let Some(win) = guard.get(&window) else { return AppSignal::None };
+            let old_hover = *win.hovered_element.borrow();
+            let handlers: SmallVec<[PointerHandler; 8]> = if let Some(id) = old_hover {
+                let hm = win.handler_map.borrow();
+                let pm = win.parent_map.borrow();
+                ancestors(id, &pm)
+                    .filter_map(|id| hm.get(&id).and_then(|h| h.on_pointer_leave.clone()))
+                    .collect()
+            } else {
+                SmallVec::new()
             };
+            (old_hover, handlers)
+        };
 
-            // Invoke handlers
+        if old_hover.is_some() {
             for handler in &handlers {
                 let event = PointerEvent {
                     kind: PointerEventKind::Leave,
@@ -179,125 +178,171 @@ impl<V: View> AppState<V> {
                 let mut stopped = false;
                 let mut pending_focus_op: Option<PendingFocusOp> = None;
                 let mut pending_capture_op: Option<PendingCaptureOp> = None;
-                let focused = self.focus_registry.borrow().focused();
+                let focused = {
+                    let guard = self.windows.borrow();
+                    guard.get(&window).and_then(|w| w.focus_registry.borrow().focused())
+                };
                 let mut ctx = EventCtx::new(
-                    &mut stopped,
-                    &mut pending_focus_op,
-                    &mut pending_capture_op,
-                    window,
-                    focused,
+                    &mut stopped, &mut pending_focus_op, &mut pending_capture_op, window, focused,
                 );
                 handler(&event, &mut ctx);
-                self.apply_pending_focus_op(pending_focus_op);
-                self.apply_pending_capture_op(pending_capture_op);
+                self.apply_pending_focus_op(window, pending_focus_op);
+                self.apply_pending_capture_op(window, pending_capture_op);
             }
 
-            *self.hovered_element.borrow_mut() = None;
+            let guard = self.windows.borrow();
+            if let Some(win) = guard.get(&window) {
+                *win.hovered_element.borrow_mut() = None;
+            }
         }
-        *self.last_mouse_pos.borrow_mut() = None;
-        *self.coalesced_move_pos.borrow_mut() = None;
+
+        let guard = self.windows.borrow();
+        if let Some(win) = guard.get(&window) {
+            *win.last_mouse_pos.borrow_mut() = None;
+            *win.coalesced_move_pos.borrow_mut() = None;
+        }
         AppSignal::None
     }
 
     /// Flush a coalesced move to drag handlers. Called from the render pass.
-    pub(crate) fn flush_coalesced_move(&self) {
-        if let Some(pos) = self.coalesced_move_pos.borrow_mut().take() {
-            let last_dispatched = *self.last_dispatched_move_pos.borrow();
-            if last_dispatched != Some(pos) {
-                let captured = *self.capture_target.borrow();
-                let target = if let Some(ct) = captured {
-                    Some(ct)
-                } else {
-                    self.hit_test_list
-                        .borrow()
-                        .hit_test(Point::new(pos.0, pos.1))
-                        .map(|r| r.element_id)
-                };
+    pub(crate) fn flush_coalesced_move(&self, window: WindowId) {
+        let pos = {
+            let guard = self.windows.borrow();
+            let Some(win) = guard.get(&window) else { return };
+            win.coalesced_move_pos.borrow_mut().take()
+        };
+        let Some(pos) = pos else { return };
 
-                if let Some(t) = target {
-                    let mouse_event = MouseEvent {
-                        position: pos,
-                        button: None,
-                        modifiers: Modifiers::default(),
-                        timestamp: Instant::now(),
-                    };
-                    // Collect from both surfaces (MouseHandlers first per ancestor,
-                    // then Handlers) under shared stopped flag — mirrors the
-                    // down/up dispatchers so drag tracking on TextField sees the
-                    // move before any broad on_mouse_move below. Focused-surface
-                    // entries carry their owning id for `ImeState` resolution.
-                    let chain: SmallVec<[(Option<ElementId>, MouseHandler); 8]> = {
-                        let hm = self.handler_map.borrow();
-                        let mhm = self.mouse_handler_map.borrow();
-                        let pm = self.parent_map.borrow();
-                        let mut acc: SmallVec<[(Option<ElementId>, MouseHandler); 8]> =
-                            SmallVec::new();
-                        for id in ancestors(t, &pm) {
-                            if let Some(h) = mhm.get(&id).and_then(|h| h.on_mouse_move.clone()) {
-                                acc.push((Some(id), h));
-                            }
-                            if let Some(h) = hm.get(&id).and_then(|h| h.on_mouse_move.clone()) {
-                                acc.push((None, h));
-                            }
-                        }
-                        acc
-                    };
-                    let mut stopped = false;
-                    let mut pending_focus_op: Option<PendingFocusOp> = None;
-                    let mut pending_capture_op: Option<PendingCaptureOp> = None;
-                    let focused = self.focus_registry.borrow().focused();
-                    for (id_opt, handler) in &chain {
-                        let mut ctx = EventCtx::new(
-                            &mut stopped,
-                            &mut pending_focus_op,
-                            &mut pending_capture_op,
-                            self.window.id(),
-                            focused,
-                        );
-                        if let Some(id) = id_opt {
-                            ctx = ctx.with_ime(*id, &self.ime_registry);
-                        }
-                        handler(&mouse_event, &mut ctx);
-                        if stopped {
-                            break;
-                        }
+        let last_dispatched = {
+            let guard = self.windows.borrow();
+            guard.get(&window).and_then(|w| *w.last_dispatched_move_pos.borrow())
+        };
+        if last_dispatched == Some(pos) {
+            return;
+        }
+
+        let (captured, target) = {
+            let guard = self.windows.borrow();
+            let Some(win) = guard.get(&window) else { return };
+            let cap = *win.capture_target.borrow();
+            let t = if let Some(ct) = cap {
+                Some(ct)
+            } else {
+                win.hit_test_list.borrow()
+                    .hit_test(Point::new(pos.0, pos.1))
+                    .map(|r| r.element_id)
+            };
+            (cap, t)
+        };
+
+        if let Some(t) = target {
+            let mouse_event = MouseEvent {
+                position: pos,
+                button: None,
+                modifiers: Modifiers::default(),
+                timestamp: Instant::now(),
+            };
+
+            let chain: SmallVec<[(Option<ElementId>, MouseHandler); 8]> = {
+                let guard = self.windows.borrow();
+                let Some(win) = guard.get(&window) else { return };
+                let hm = win.handler_map.borrow();
+                let mhm = win.mouse_handler_map.borrow();
+                let pm = win.parent_map.borrow();
+                let mut acc: SmallVec<[(Option<ElementId>, MouseHandler); 8]> = SmallVec::new();
+                for id in ancestors(t, &pm) {
+                    if let Some(h) = mhm.get(&id).and_then(|h| h.on_mouse_move.clone()) {
+                        acc.push((Some(id), h));
                     }
-                    self.apply_pending_focus_op(pending_focus_op);
-                    self.apply_pending_capture_op(pending_capture_op);
+                    if let Some(h) = hm.get(&id).and_then(|h| h.on_mouse_move.clone()) {
+                        acc.push((None, h));
+                    }
                 }
+                acc
+            };
 
-                *self.last_dispatched_move_pos.borrow_mut() = Some(pos);
+            let mut stopped = false;
+            let mut pending_focus_op: Option<PendingFocusOp> = None;
+            let mut pending_capture_op: Option<PendingCaptureOp> = None;
+            let focused = {
+                let guard = self.windows.borrow();
+                guard.get(&window).and_then(|w| w.focus_registry.borrow().focused())
+            };
+
+            for (id_opt, handler) in &chain {
+                let ime_rc_opt = if id_opt.is_some() {
+                    let guard = self.windows.borrow();
+                    let Some(win) = guard.get(&window) else { break };
+                    Some(win.ime_registry.clone())
+                } else {
+                    None
+                };
+                let mut ctx = EventCtx::new(
+                    &mut stopped, &mut pending_focus_op, &mut pending_capture_op, window, focused,
+                );
+                if let (Some(id), Some(ime_rc)) = (id_opt, &ime_rc_opt) {
+                    ctx = ctx.with_ime(*id, ime_rc);
+                }
+                handler(&mouse_event, &mut ctx);
+                if stopped { break; }
             }
+            self.apply_pending_focus_op(window, pending_focus_op);
+            self.apply_pending_capture_op(window, pending_capture_op);
+
+            let _ = captured; // used for target resolution above
+        }
+
+        let guard = self.windows.borrow();
+        if let Some(win) = guard.get(&window) {
+            *win.last_dispatched_move_pos.borrow_mut() = Some(pos);
         }
     }
 
     /// Recompute hover target and fire enter/leave transitions. Called from
     /// the render pass after `flush_coalesced_move`.
-    pub(crate) fn update_hover_state(&self) {
-        let current_pos = *self.last_mouse_pos.borrow();
-        let captured = *self.capture_target.borrow();
+    pub(crate) fn update_hover_state(&self, window: WindowId) {
+        let (current_pos, captured, old_hover) = {
+            let guard = self.windows.borrow();
+            let Some(win) = guard.get(&window) else { return };
+            (
+                *win.last_mouse_pos.borrow(),
+                *win.capture_target.borrow(),
+                *win.hovered_element.borrow(),
+            )
+        };
 
         let new_hover = if captured.is_some() {
             captured
         } else if let Some(pos) = current_pos {
-            self.hit_test_list
-                .borrow()
-                .hit_test(Point::new(pos.0, pos.1))
-                .map(|r| r.element_id)
+            let guard = self.windows.borrow();
+            guard.get(&window)
+                .and_then(|win| {
+                    win.hit_test_list.borrow()
+                        .hit_test(Point::new(pos.0, pos.1))
+                        .map(|r| r.element_id)
+                })
         } else {
             None
         };
 
-        let old_hover = *self.hovered_element.borrow();
         if new_hover != old_hover {
+            // Snapshot handler_map + parent_map before calling fire_hover_transitions.
+            let (handler_map_snap, parent_map_snap) = {
+                let guard = self.windows.borrow();
+                let Some(win) = guard.get(&window) else { return };
+                (win.handler_map.borrow().clone(), win.parent_map.borrow().clone())
+            };
             fire_hover_transitions(
                 old_hover,
                 new_hover,
-                &self.handler_map.borrow(),
-                &self.parent_map.borrow(),
-                self.window.id(),
+                &handler_map_snap,
+                &parent_map_snap,
+                window,
             );
-            *self.hovered_element.borrow_mut() = new_hover;
+            let guard = self.windows.borrow();
+            if let Some(win) = guard.get(&window) {
+                *win.hovered_element.borrow_mut() = new_hover;
+            }
         }
     }
 }

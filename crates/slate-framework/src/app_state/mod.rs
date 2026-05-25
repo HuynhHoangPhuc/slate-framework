@@ -23,11 +23,11 @@ mod state;
 #[cfg(any(test, feature = "test-hooks"))]
 mod test_hooks;
 mod types;
-mod window_state;
+pub mod window_state;
 
 pub use state::AppState;
 pub use types::{AppSignal, DeviceLossReason};
 #[cfg(any(test, feature = "test-hooks"))]
 pub use types::RecoveryState;
-// `pub use window_state::WindowState;` re-exported once the lift commit wires
-// it through dispatch — kept private here so commit 1 stays warning-free.
+#[allow(unused_imports)]
+pub use window_state::WindowState;

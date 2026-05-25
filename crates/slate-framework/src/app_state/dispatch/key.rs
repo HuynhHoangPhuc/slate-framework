@@ -16,16 +16,13 @@ use crate::event::{
 };
 use crate::ime::PendingImeOp;
 use crate::types::ElementId;
-use crate::view::View;
 
 use super::super::state::AppState;
 use super::super::types::AppSignal;
 
-impl<V: View> AppState<V> {
+impl AppState {
     /// Install App-level keyboard handlers. Called once by `App::run` after
-    /// construction and before the platform loop starts. Subsequent calls
-    /// replace previously-installed handlers — by design, only `App::run` ever
-    /// calls this and it does so exactly once.
+    /// construction and before the platform loop starts.
     pub(crate) fn install_key_handlers(
         &self,
         on_key_down: Vec<KeyHandler>,
@@ -48,7 +45,7 @@ impl<V: View> AppState<V> {
         is_repeat: bool,
     ) -> AppSignal {
         let has_app_handlers = !self.on_key_down.borrow().is_empty();
-        let chain = self.build_focused_chain();
+        let chain = self.build_focused_chain(window);
         if chain.is_empty() && !has_app_handlers {
             return AppSignal::None;
         }
@@ -63,14 +60,21 @@ impl<V: View> AppState<V> {
         let mut stopped = false;
         let mut pending_focus_op: Option<PendingFocusOp> = None;
         let mut pending_capture_op: Option<PendingCaptureOp> = None;
-        let focused = self.focus_registry.borrow().focused();
+
+        // Snapshot focused element before dispatching.
+        let focused = {
+            let guard = self.windows.borrow();
+            guard.get(&window).and_then(|w| w.focus_registry.borrow().focused())
+        };
 
         // Snapshot per-element handlers up-front so we never hold the
-        // `key_handler_map` borrow while invoking user code (re-entrant
-        // tree mutation must not invalidate our iteration). Pair each
-        // handler with its ElementId so EventCtx can resolve ImeState.
+        // `key_handler_map` borrow while invoking user code.
         let element_handlers: SmallVec<[(ElementId, ElementKeyHandler); 8]> = {
-            let map = self.key_handler_map.borrow();
+            let guard = self.windows.borrow();
+            let Some(win) = guard.get(&window) else {
+                return AppSignal::None;
+            };
+            let map = win.key_handler_map.borrow();
             chain
                 .iter()
                 .filter_map(|id| {
@@ -80,7 +84,15 @@ impl<V: View> AppState<V> {
                 })
                 .collect()
         };
+
+        // Clone Rc<RefCell<ImeRegistry>> per iteration so we can drop the
+        // outer `windows` borrow before invoking user code (borrow discipline).
         for (id, handler) in &element_handlers {
+            let ime_rc = {
+                let guard = self.windows.borrow();
+                let Some(win) = guard.get(&window) else { break };
+                win.ime_registry.clone() // Rc clone; guard drops after this block
+            };
             let mut ctx = EventCtx::new(
                     &mut stopped,
                     &mut pending_focus_op,
@@ -88,7 +100,7 @@ impl<V: View> AppState<V> {
                     window,
                     focused,
                 )
-                .with_ime(*id, &self.ime_registry);
+                .with_ime(*id, &ime_rc);
             handler(&event, &mut ctx);
             if stopped {
                 break;
@@ -113,42 +125,58 @@ impl<V: View> AppState<V> {
             drop(handlers);
         }
 
-        self.apply_pending_focus_op(pending_focus_op);
-        self.apply_pending_capture_op(pending_capture_op);
+        self.apply_pending_focus_op(window, pending_focus_op);
+        self.apply_pending_capture_op(window, pending_capture_op);
 
-        // Tab during active composition must synthetically commit the preedit
-        // on the *still-focused* element before the focus shift. Enqueue +
-        // drain pattern (mutating IME state inline would conflict with the
-        // borrow that `focus_registry` will take a few lines down).
+        // Tab during active composition: synthetically commit the preedit on
+        // the still-focused element before the focus shift. Enqueue + drain
+        // pattern — mutating IME state inline would conflict with the borrow
+        // that focus_registry will take a few lines down.
         if !stopped
             && matches!(event.key, Key::Named(NamedKey::Tab))
-            && let Some(focused) = self.focus_registry.borrow().focused()
         {
-            let preedit_text = self
-                .ime_registry
-                .borrow()
-                .get(focused)
-                .and_then(|s| s.borrow().preedit.as_ref().map(|p| p.text.clone()));
-            if let Some(text) = preedit_text {
-                self.pending_ime_ops
-                    .borrow_mut()
-                    .push(PendingImeOp::Commit { window, text });
-                self.drain_pending_ime_ops();
+            let focused_now = {
+                let guard = self.windows.borrow();
+                guard.get(&window).and_then(|w| w.focus_registry.borrow().focused())
+            };
+            if let Some(focused_id) = focused_now {
+                let preedit_text = {
+                    let guard = self.windows.borrow();
+                    guard.get(&window).and_then(|win| {
+                        win.ime_registry
+                            .borrow()
+                            .get(focused_id)
+                            .and_then(|s| s.borrow().preedit.as_ref().map(|p| p.text.clone()))
+                    })
+                };
+                if let Some(text) = preedit_text {
+                    {
+                        let guard = self.windows.borrow();
+                        if let Some(win) = guard.get(&window) {
+                            win.pending_ime_ops
+                                .borrow_mut()
+                                .push(PendingImeOp::Commit { window, text });
+                        }
+                    }
+                    self.drain_pending_ime_ops(window);
+                }
             }
         }
 
-        // Tab / Shift+Tab default focus shift. Suppressed when any
-        // handler in the chain called `cx.stop_propagation()`. Authors who
-        // want Tab to insert a tab character (text input) intercept here.
+        // Tab / Shift+Tab default focus shift. Suppressed when any handler
+        // called `cx.stop_propagation()`.
         if !stopped && matches!(event.key, Key::Named(NamedKey::Tab)) {
-            let mut registry = self.focus_registry.borrow_mut();
-            let new_id = if event.modifiers.shift {
-                registry.shift_backward()
-            } else {
-                registry.shift_forward()
-            };
-            if let Some(id) = new_id {
-                registry.set_focus(id);
+            let guard = self.windows.borrow();
+            if let Some(win) = guard.get(&window) {
+                let mut registry = win.focus_registry.borrow_mut();
+                let new_id = if event.modifiers.shift {
+                    registry.shift_backward()
+                } else {
+                    registry.shift_forward()
+                };
+                if let Some(id) = new_id {
+                    registry.set_focus(id);
+                }
             }
         }
 
@@ -164,7 +192,7 @@ impl<V: View> AppState<V> {
         modifiers: Modifiers,
     ) -> AppSignal {
         let has_app_handlers = !self.on_key_up.borrow().is_empty();
-        let chain = self.build_focused_chain();
+        let chain = self.build_focused_chain(window);
         if chain.is_empty() && !has_app_handlers {
             return AppSignal::None;
         }
@@ -179,10 +207,18 @@ impl<V: View> AppState<V> {
         let mut stopped = false;
         let mut pending_focus_op: Option<PendingFocusOp> = None;
         let mut pending_capture_op: Option<PendingCaptureOp> = None;
-        let focused = self.focus_registry.borrow().focused();
+
+        let focused = {
+            let guard = self.windows.borrow();
+            guard.get(&window).and_then(|w| w.focus_registry.borrow().focused())
+        };
 
         let element_handlers: SmallVec<[(ElementId, ElementKeyHandler); 8]> = {
-            let map = self.key_handler_map.borrow();
+            let guard = self.windows.borrow();
+            let Some(win) = guard.get(&window) else {
+                return AppSignal::None;
+            };
+            let map = win.key_handler_map.borrow();
             chain
                 .iter()
                 .filter_map(|id| {
@@ -192,7 +228,13 @@ impl<V: View> AppState<V> {
                 })
                 .collect()
         };
+
         for (id, handler) in &element_handlers {
+            let ime_rc = {
+                let guard = self.windows.borrow();
+                let Some(win) = guard.get(&window) else { break };
+                win.ime_registry.clone()
+            };
             let mut ctx = EventCtx::new(
                     &mut stopped,
                     &mut pending_focus_op,
@@ -200,7 +242,7 @@ impl<V: View> AppState<V> {
                     window,
                     focused,
                 )
-                .with_ime(*id, &self.ime_registry);
+                .with_ime(*id, &ime_rc);
             handler(&event, &mut ctx);
             if stopped {
                 break;
@@ -225,8 +267,8 @@ impl<V: View> AppState<V> {
             drop(handlers);
         }
 
-        self.apply_pending_focus_op(pending_focus_op);
-        self.apply_pending_capture_op(pending_capture_op);
+        self.apply_pending_focus_op(window, pending_focus_op);
+        self.apply_pending_capture_op(window, pending_capture_op);
         AppSignal::RequestRedraw { window }
     }
 }

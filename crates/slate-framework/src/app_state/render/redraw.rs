@@ -4,52 +4,76 @@
 //! drives the device-lost recovery state machine and delegates here when the
 //! state machine clears for a normal paint.
 
-use slate_platform::Window;
+use slate_platform::{Window, WindowId};
 
 use crate::context::{LayoutCtx, PaintCtx, PrepaintCtx};
 use crate::layout::{compute_layout, resolve_bounds};
 use crate::render_cx::RenderCx;
 use crate::types::Size;
-use crate::view::View;
 
 use super::super::state::AppState;
 
-impl<V: View> AppState<V> {
-    /// Run the redraw pipeline (layout → prepaint → paint → render).
-    ///
-    /// This is the inner body called by `dispatch_redraw`. The re-entrancy guard
-    /// and device-lost recovery wrapper live in `dispatch_redraw`, not here.
-    pub(crate) fn run_redraw(&self) {
-        // Skip if not initialized
-        if self.renderer.borrow().is_none() {
-            return;
+impl AppState {
+    /// Run the redraw pipeline (layout → prepaint → paint → render) for
+    /// a single window. The re-entrancy guard and device-lost recovery wrapper
+    /// live in `dispatch_redraw`, not here.
+    pub(crate) fn run_redraw(&self, window_id: WindowId) {
+        // All per-window borrows are taken individually below. We never hold
+        // the outer `windows` RefCell borrow across any user callback.
+
+        // Guard: skip if not initialized.
+        {
+            let guard = self.windows.borrow();
+            if guard.get(&window_id).map(|w| w.renderer.borrow().is_none()).unwrap_or(true) {
+                return;
+            }
         }
 
-        // skip_draws gate - suppress one frame after recovery
-        if self.skip_draws.get() {
-            log::debug!(target: "slate::device_lost", "skip_draws active — present suppressed");
-            self.skip_draws.set(false);
-            return;
+        // skip_draws gate — suppress one frame after recovery.
+        {
+            let guard = self.windows.borrow();
+            if let Some(win) = guard.get(&window_id)
+                && win.skip_draws.get()
+            {
+                log::debug!(target: "slate::device_lost", "skip_draws active — present suppressed");
+                win.skip_draws.set(false);
+                return;
+            }
         }
 
-        let (lw, lh) = self.window.logical_size();
-        let scale_factor = self.window.scale_factor();
+        // Snapshot window-size parameters (cheap — no borrow conflict).
+        let (lw, lh, scale_factor, win_id_stamp) = {
+            let guard = self.windows.borrow();
+            match guard.get(&window_id) {
+                Some(win) => {
+                    let (lw, lh) = win.window.logical_size();
+                    let sf = win.window.scale_factor();
+                    (lw, lh, sf, win.window.id())
+                }
+                None => return,
+            }
+        };
 
-        // Drain reactive effects
+        // Drain reactive effects (process-wide, not per-window).
         self.runtime.drain_dirty();
         self.runtime.drain_effects();
 
-        // 1. Build element tree
+        // 1. Build element tree — borrows view + view_observer_id.
         let mut root = {
-            let mut v = self.view.borrow_mut();
+            let guard = self.windows.borrow();
+            let win = match guard.get(&window_id) { Some(w) => w, None => return };
+            let observer_id = win.view_observer_id;
+            let mut v = win.view.borrow_mut();
             let v = v.as_mut().expect("view not initialized");
-            let mut render_cx = RenderCx::new(self.window.id());
-            slate_reactive::with_observer(self.view_observer_id, || v.render(&mut render_cx))
+            let mut render_cx = RenderCx::new(win_id_stamp);
+            slate_reactive::with_observer(observer_id, || v.render(&mut render_cx))
         };
 
-        // 2. Layout pass
+        // 2. Layout pass.
         let root_id = {
-            let mut tree = self.layout_tree.borrow_mut();
+            let guard = self.windows.borrow();
+            let win = match guard.get(&window_id) { Some(w) => w, None => return };
+            let mut tree = win.layout_tree.borrow_mut();
             tree.clear();
 
             let mut ts = self.text_system.borrow_mut();
@@ -61,7 +85,6 @@ impl<V: View> AppState<V> {
                 &self.executor.foreground,
                 scale_factor,
             );
-
             compute_layout(&mut root, &mut cx, Size::new(lw as f32, lh as f32))
         };
 
@@ -70,9 +93,11 @@ impl<V: View> AppState<V> {
             return;
         };
 
-        // 3. Resolve root bounds
+        // 3. Resolve root bounds.
         let root_bounds = {
-            let tree = self.layout_tree.borrow();
+            let guard = self.windows.borrow();
+            let win = match guard.get(&window_id) { Some(w) => w, None => return };
+            let tree = win.layout_tree.borrow();
             resolve_bounds(tree.inner(), root_id)
         };
 
@@ -81,23 +106,26 @@ impl<V: View> AppState<V> {
             return;
         };
 
-        // 4. Prepaint pass
+        // 4. Prepaint pass — needs many simultaneous borrows from WindowState.
         {
-            let tree = self.layout_tree.borrow();
-            let mut hit = self.hit_test_list.borrow_mut();
-            let mut a11y = self.a11y_nodes.borrow_mut();
+            let guard = self.windows.borrow();
+            let win = match guard.get(&window_id) { Some(w) => w, None => return };
+
+            let tree = win.layout_tree.borrow();
+            let mut hit = win.hit_test_list.borrow_mut();
+            let mut a11y = win.a11y_nodes.borrow_mut();
             let mut ts = self.text_system.borrow_mut();
             let ts = ts.as_mut().expect("text system not initialized");
             let mut sr = self.state_registry.borrow_mut();
             let mut tsc = self.text_shaping_cache.borrow_mut();
-            let mut hm = self.handler_map.borrow_mut();
-            let mut mhm = self.mouse_handler_map.borrow_mut();
-            let mut pm = self.parent_map.borrow_mut();
-            let mut khm = self.key_handler_map.borrow_mut();
-            let mut fr = self.focus_registry.borrow_mut();
-            let mut fb = self.focus_bounds.borrow_mut();
-            let mut ihm = self.ime_handler_map.borrow_mut();
-            let mut iri = self.ime_registered_ids.borrow_mut();
+            let mut hm = win.handler_map.borrow_mut();
+            let mut mhm = win.mouse_handler_map.borrow_mut();
+            let mut pm = win.parent_map.borrow_mut();
+            let mut khm = win.key_handler_map.borrow_mut();
+            let mut fr = win.focus_registry.borrow_mut();
+            let mut fb = win.focus_bounds.borrow_mut();
+            let mut ihm = win.ime_handler_map.borrow_mut();
+            let mut iri = win.ime_registered_ids.borrow_mut();
 
             hit.clear();
             a11y.clear();
@@ -109,10 +137,7 @@ impl<V: View> AppState<V> {
             fb.clear();
             ihm.clear();
             iri.clear();
-            // Clear the dirty bit; entries are pruned after the walk
-            // using `ime_registered_ids` so per-element `Rc<RefCell<ImeState>>`
-            // handles survive across frames for surviving elements.
-            self.ime_registry.borrow_mut().clear();
+            win.ime_registry.borrow_mut().clear();
 
             let mut cx = PrepaintCtx::new(
                 tree.inner(),
@@ -129,7 +154,7 @@ impl<V: View> AppState<V> {
                 &mut khm,
                 &mut fr,
                 &mut fb,
-                &self.ime_registry,
+                &win.ime_registry,
                 &mut ihm,
                 &mut iri,
             );
@@ -137,7 +162,6 @@ impl<V: View> AppState<V> {
             cx.init_root_frame();
             root.prepaint(root_bounds, &mut cx);
 
-            // Verify prepaint frames are balanced
             debug_assert!(
                 cx.id_stack.len() == 1,
                 "unbalanced prepaint frames: expected 1 (root), got {}",
@@ -149,29 +173,34 @@ impl<V: View> AppState<V> {
                 cx.a11y_stack.len()
             );
 
-            // Clear focus if the focused element was unmounted this frame.
             fr.prune_missing();
-            // Drop IME entries for unmounted elements.
-            self.ime_registry.borrow_mut().prune_missing(&iri);
-
-            // Auto-release mouse capture if the captured element was unmounted
-            // this frame (no hit region produced). An unmounted element can no
-            // longer receive pointer events, so a sticky explicit capture must
-            // not strand input on a dead id.
-            self.release_capture_if_unmounted(&hit);
+            win.ime_registry.borrow_mut().prune_missing(&iri);
+            AppState::release_capture_if_unmounted(win, &hit);
         }
 
-        // 4a. Coalesced move flush
-        self.flush_coalesced_move();
+        // 4a. Coalesced move flush.
+        self.flush_coalesced_move(window_id);
 
-        // 4b. Hover diff
-        self.update_hover_state();
+        // 4b. Hover diff.
+        self.update_hover_state(window_id);
 
-        // 5. Paint pass
+        // 5. Paint pass.
+        // Clone Rc + Arc so PaintCtx does not borrow through the outer guard,
+        // allowing us to drop the guard before republish_ime_cache.
+        let (ime_rc_for_paint, window_arc_for_paint) = {
+            let guard = self.windows.borrow();
+            match guard.get(&window_id) {
+                Some(w) => (w.ime_registry.clone(), w.window.clone()),
+                None => return,
+            }
+        };
         {
-            let tree = self.layout_tree.borrow();
-            let mut s = self.scene.borrow_mut();
-            let mut r = self.renderer.borrow_mut();
+            let guard = self.windows.borrow();
+            let win = match guard.get(&window_id) { Some(w) => w, None => return };
+
+            let tree = win.layout_tree.borrow();
+            let mut s = win.scene.borrow_mut();
+            let mut r = win.renderer.borrow_mut();
             let r = r.as_mut().expect("renderer not initialized");
             let mut ts = self.text_system.borrow_mut();
             let ts = ts.as_mut().expect("text system not initialized");
@@ -190,42 +219,42 @@ impl<V: View> AppState<V> {
                 queue,
                 &self.executor.foreground,
                 scale_factor,
-                &self.ime_registry,
-                Some(self.window.as_ref()),
+                &ime_rc_for_paint,
+                Some(window_arc_for_paint.as_ref()),
             );
 
             root.paint(root_bounds, &mut cx);
+            // All borrows from guard/win end here as block exits.
+        }
+        self.republish_ime_cache(window_id);
 
-            // Refresh the IME query cache after every paint so the platform
-            // delegate sees the freshly-painted `caret_client_rect`.
-            // NLL drops `cx`'s borrows here since it's not used past this point.
-            self.republish_ime_cache();
-
-            // Focus ring overlay — emitted last so it sits on top of
-            // element content. Only painted when the focused element opted into
-            // a visible ring via `focus_ring(true)` (default for `focusable`).
-            let focused = self.focus_registry.borrow().focused();
+        // Re-borrow for focus ring overlay — emitted last so it sits on top.
+        let guard2 = self.windows.borrow();
+        if let Some(win2) = guard2.get(&window_id) {
+            let focused = win2.focus_registry.borrow().focused();
             if let Some(id) = focused {
-                let registry = self.focus_registry.borrow();
+                let registry = win2.focus_registry.borrow();
                 let show_ring = registry.entry(id).map(|e| e.focus_ring).unwrap_or(false);
                 drop(registry);
-                if show_ring && let Some(info) = self.focus_bounds.borrow().get(&id).copied() {
+                if show_ring
+                    && let Some(info) = win2.focus_bounds.borrow().get(&id).copied()
+                {
+                    let mut s = win2.scene.borrow_mut();
                     crate::focus_ring::emit_focus_ring(&mut s, info);
                 }
             }
         }
+        drop(guard2);
 
-        // 6. Render
-        {
-            let mut s = self.scene.borrow_mut();
-            let mut r = self.renderer.borrow_mut();
+        // Re-borrow for render step.
+        let guard3 = self.windows.borrow();
+        if let Some(win3) = guard3.get(&window_id) {
+            let mut s = win3.scene.borrow_mut();
+            let mut r = win3.renderer.borrow_mut();
             let r = r.as_mut().expect("renderer not initialized");
 
-            // On macOS during a sync-resize tick, present inside AppKit's
-            // open CATransaction so the new framebuffer lands in the same
-            // transaction as the bounds change.
             #[cfg(target_os = "macos")]
-            let render_result = if self.sync_resize.get() {
+            let render_result = if win3.sync_resize.get() {
                 r.render_scene_sync(&mut s)
             } else {
                 r.render_scene(&mut s)
@@ -237,18 +266,19 @@ impl<V: View> AppState<V> {
                 log::warn!("render skipped: {e:?}");
             }
         }
+        drop(guard3);
 
-        // 7. Poll async executor
+        // Poll async executor.
         self.executor.foreground.poll();
 
-        // 8. GC stale state slots
+        // GC stale state slots.
         {
             let mut sr = self.state_registry.borrow_mut();
             sr.advance_frame();
             sr.gc();
         }
 
-        // 9. GC text shaping cache
+        // GC text shaping cache.
         {
             let mut tsc = self.text_shaping_cache.borrow_mut();
             tsc.advance_frame();
