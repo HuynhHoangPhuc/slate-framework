@@ -24,9 +24,9 @@ use slate_renderer::{Renderer, RendererObserver};
 
 use crate::app::AppContext;
 use crate::context::{LayoutCtx, PaintCtx, PrepaintCtx};
+#[cfg(any(test, feature = "test-hooks"))]
 use crate::event::{
-    ImeCommitHandler, ImeLifecycleHandler, ImePreeditHandler, KeyHandler, PendingCaptureOp,
-    PendingFocusOp, TextInputHandler,
+    ImeCommitHandler, ImeLifecycleHandler, ImePreeditHandler, KeyHandler, TextInputHandler,
 };
 use crate::hit_test::HitTestList;
 use crate::layout::{compute_layout, resolve_bounds};
@@ -36,6 +36,7 @@ use crate::types::{ElementId, Size};
 use crate::view::View;
 
 mod dispatch;
+mod focus;
 mod guards;
 mod lifecycle;
 mod state;
@@ -51,38 +52,6 @@ use types::{
 };
 
 impl<V: View> AppState<V> {
-    /// Apply a queued focus op (drained from an `EventCtx` after the handler
-    /// chain unwinds). No-op when `op` is `None`. Per-element key dispatch
-    /// also drains through this same apply point after each handler chain.
-    pub(crate) fn apply_pending_focus_op(&self, op: Option<PendingFocusOp>) {
-        let Some(op) = op else { return };
-        let mut reg = self.focus_registry.borrow_mut();
-        match op {
-            PendingFocusOp::Focus(id) => {
-                reg.set_focus(id);
-            }
-            PendingFocusOp::Blur => reg.clear_focus(),
-        }
-    }
-
-    /// Apply a queued capture op (drained from an `EventCtx` after the handler
-    /// chain unwinds). No-op when `op` is `None`. A `Set` marks the capture
-    /// explicit so it survives mouse-up; `Release` clears both the target and
-    /// the explicit flag.
-    pub(crate) fn apply_pending_capture_op(&self, op: Option<PendingCaptureOp>) {
-        let Some(op) = op else { return };
-        match op {
-            PendingCaptureOp::Set(id) => {
-                *self.capture_target.borrow_mut() = Some(id);
-                *self.explicit_capture.borrow_mut() = true;
-            }
-            PendingCaptureOp::Release => {
-                *self.capture_target.borrow_mut() = None;
-                *self.explicit_capture.borrow_mut() = false;
-            }
-        }
-    }
-
     /// Clear an active capture if its target produced no hit region this frame
     /// (i.e. the element was unmounted). Called from the prepaint pass after
     /// the hit list is rebuilt.
