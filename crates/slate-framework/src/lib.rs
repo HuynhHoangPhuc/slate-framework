@@ -38,6 +38,7 @@ pub mod color;
 pub mod context;
 pub mod element;
 pub mod elements;
+pub mod erased_view;
 pub mod event;
 pub mod executor;
 pub mod focus;
