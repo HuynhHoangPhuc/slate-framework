@@ -14,7 +14,7 @@ use crate::view::View;
 
 use super::super::super::state::AppState;
 use super::super::super::types::AppSignal;
-use super::{ancestors, button_to_bit};
+use super::helpers::{ancestors, button_to_bit};
 
 impl<V: View> AppState<V> {
     /// Dispatch MouseDown event.

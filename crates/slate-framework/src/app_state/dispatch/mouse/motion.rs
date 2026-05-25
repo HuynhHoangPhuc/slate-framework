@@ -16,7 +16,7 @@ use crate::view::View;
 
 use super::super::super::state::AppState;
 use super::super::super::types::AppSignal;
-use super::{ancestors, fire_hover_transitions};
+use super::helpers::{ancestors, fire_hover_transitions};
 
 impl<V: View> AppState<V> {
     /// Dispatch MouseMoved event.
