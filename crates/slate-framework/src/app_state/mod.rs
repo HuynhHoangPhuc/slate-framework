@@ -25,4 +25,6 @@ mod test_hooks;
 mod types;
 
 pub use state::AppState;
-pub use types::{AppSignal, DeviceLossReason, RecoveryState};
+pub use types::{AppSignal, DeviceLossReason};
+#[cfg(any(test, feature = "test-hooks"))]
+pub use types::RecoveryState;
