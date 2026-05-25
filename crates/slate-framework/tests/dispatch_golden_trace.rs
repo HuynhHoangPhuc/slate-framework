@@ -187,7 +187,7 @@ fn elem_raw(e: ElementId) -> u64 {
 fn signal_label(s: AppSignal) -> &'static str {
     match s {
         AppSignal::None => "None",
-        AppSignal::RequestRedraw => "RequestRedraw",
+        AppSignal::RequestRedraw { .. } => "RequestRedraw",
         AppSignal::RequestQuit => "RequestQuit",
     }
 }

@@ -88,7 +88,7 @@ fn focused_element_receives_key_down() {
     );
 
     assert_eq!(*fired.lock().unwrap(), 1);
-    assert_eq!(signal, AppSignal::RequestRedraw);
+    assert!(matches!(signal, AppSignal::RequestRedraw { .. }));
 }
 
 #[test]

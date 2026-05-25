@@ -319,61 +319,74 @@ impl App {
                     } else {
                         #[cfg(all(target_os = "windows", feature = "test-hooks"))]
                         arm_force_device_lost_trigger();
-                        AppSignal::RequestRedraw
+                        AppSignal::RequestRedraw {
+                            window: state_ref.window.id(),
+                        }
                     }
                 }
                 Event::WindowResized { physical_size, .. } => {
                     state_ref.handle_window_resized(physical_size);
                     AppSignal::None
                 }
-                Event::WindowRedrawRequested { .. } => state_ref.dispatch_redraw(),
+                Event::WindowRedrawRequested { window, .. } => state_ref.dispatch_redraw(window),
                 Event::WindowCloseRequested { .. } => AppSignal::RequestQuit,
                 Event::WindowDestroyed { .. } => state_ref.handle_window_destroyed(),
                 Event::Wake => state_ref.handle_wake(),
                 Event::MouseDown {
+                    window,
                     position,
                     button,
                     modifiers,
                     ..
-                } => state_ref.dispatch_mouse_down(position, button, modifiers),
+                } => state_ref.dispatch_mouse_down(window, position, button, modifiers),
                 Event::MouseUp {
+                    window,
                     position,
                     button,
                     modifiers,
                     ..
-                } => state_ref.dispatch_mouse_up(position, button, modifiers),
+                } => state_ref.dispatch_mouse_up(window, position, button, modifiers),
                 Event::MouseMoved {
+                    window,
                     position,
                     modifiers,
                     ..
-                } => state_ref.dispatch_mouse_moved(position, modifiers),
+                } => state_ref.dispatch_mouse_moved(window, position, modifiers),
                 Event::MouseScrolled {
+                    window,
                     position,
                     delta_x,
                     delta_y,
                     precise,
                     modifiers,
                     ..
-                } => state_ref
-                    .dispatch_mouse_scrolled(position, delta_x, delta_y, precise, modifiers),
-                Event::MouseExited { .. } => state_ref.dispatch_mouse_exited(),
-                Event::CaptureLost { .. } => state_ref.dispatch_capture_lost(),
-                Event::DeviceLost { fatal, .. } => state_ref.dispatch_device_lost(fatal),
-                Event::DeviceRestored { .. } => state_ref.dispatch_device_restored(),
+                } => state_ref.dispatch_mouse_scrolled(
+                    window, position, delta_x, delta_y, precise, modifiers,
+                ),
+                Event::MouseExited { window, .. } => state_ref.dispatch_mouse_exited(window),
+                Event::CaptureLost { window, .. } => state_ref.dispatch_capture_lost(window),
+                Event::DeviceLost { window, fatal, .. } => {
+                    state_ref.dispatch_device_lost(window, fatal)
+                }
+                Event::DeviceRestored { window, .. } => state_ref.dispatch_device_restored(window),
                 Event::KeyDown {
+                    window,
                     code,
                     key,
                     modifiers,
                     is_repeat,
                     ..
-                } => state_ref.dispatch_key_down(code, key, modifiers, is_repeat),
+                } => state_ref.dispatch_key_down(window, code, key, modifiers, is_repeat),
                 Event::KeyUp {
+                    window,
                     code,
                     key,
                     modifiers,
                     ..
-                } => state_ref.dispatch_key_up(code, key, modifiers),
-                Event::TextInput { text, .. } => state_ref.dispatch_text_input(text),
+                } => state_ref.dispatch_key_up(window, code, key, modifiers),
+                Event::TextInput { window, text, .. } => {
+                    state_ref.dispatch_text_input(window, text)
+                }
                 Event::ImeEnabled { window, .. } => state_ref.dispatch_ime_enabled(window),
                 Event::ImePreedit {
                     window,
@@ -398,7 +411,7 @@ impl App {
 
             match signal {
                 AppSignal::RequestQuit => platform_ref.quit(),
-                AppSignal::RequestRedraw => state_ref.window.request_redraw(),
+                AppSignal::RequestRedraw { window } => state_ref.request_redraw_for(window),
                 AppSignal::None => {}
             }
         });

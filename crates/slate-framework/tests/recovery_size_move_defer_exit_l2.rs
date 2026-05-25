@@ -95,7 +95,7 @@ fn l2_defer_exit_resumes_recovery() {
             return;
         }
 
-        state.dispatch_redraw();
+        state.dispatch_redraw(state.window_id_for_test());
 
         if initialized.get() && !triggered.get() {
             state.force_renderer_device_lost_luid_migration_for_test();

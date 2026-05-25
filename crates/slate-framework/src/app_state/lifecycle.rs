@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use slate_platform::DefaultWindow;
+use slate_platform::{DefaultWindow, Window, WindowId};
 use slate_reactive::Signal;
 use slate_renderer::Scene;
 
@@ -131,7 +131,9 @@ impl<V: View> AppState<V> {
     /// Handle background task completion (Event::Wake).
     pub fn handle_wake(&self) -> AppSignal {
         self.executor.foreground.poll();
-        AppSignal::RequestRedraw
+        AppSignal::RequestRedraw {
+            window: self.window.id(),
+        }
     }
 
     /// Handle window close by platform (Event::WindowDestroyed).
@@ -140,5 +142,22 @@ impl<V: View> AppState<V> {
         log::debug!("WindowDestroyed received in AppState");
         *self.view.borrow_mut() = None;
         AppSignal::RequestQuit
+    }
+
+    /// Request a redraw on the window with the given id.
+    ///
+    /// Resolves the id against the framework's window registry. Today the
+    /// registry holds exactly one entry, so any `window` argument resolves to
+    /// the same backing window; the indirection exists so the per-window state
+    /// lift can swap in a `HashMap<WindowId, _>` lookup without changing
+    /// callers.
+    pub(crate) fn request_redraw_for(&self, window: WindowId) {
+        debug_assert_eq!(
+            window,
+            self.window.id(),
+            "request_redraw_for received an unknown WindowId — framework is single-window today"
+        );
+        let _ = window;
+        self.window.request_redraw();
     }
 }

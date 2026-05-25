@@ -7,7 +7,7 @@
 
 use std::time::Instant;
 
-use slate_platform::{Key, KeyCode, Modifiers, NamedKey, Window};
+use slate_platform::{Key, KeyCode, Modifiers, NamedKey, WindowId};
 use smallvec::SmallVec;
 
 use crate::event::{
@@ -41,6 +41,7 @@ impl<V: View> AppState<V> {
     /// fall-through if propagation was not stopped. Drains pending focus op.
     pub(crate) fn dispatch_key_down(
         &self,
+        window: WindowId,
         code: KeyCode,
         key: Key,
         modifiers: Modifiers,
@@ -84,7 +85,7 @@ impl<V: View> AppState<V> {
                     &mut stopped,
                     &mut pending_focus_op,
                     &mut pending_capture_op,
-                    self.window.id(),
+                    window,
                     focused,
                 )
                 .with_ime(*id, &self.ime_registry);
@@ -101,7 +102,7 @@ impl<V: View> AppState<V> {
                     &mut stopped,
                     &mut pending_focus_op,
                     &mut pending_capture_op,
-                    self.window.id(),
+                    window,
                     focused,
                 );
                 handler(&event, &mut ctx);
@@ -131,10 +132,7 @@ impl<V: View> AppState<V> {
             if let Some(text) = preedit_text {
                 self.pending_ime_ops
                     .borrow_mut()
-                    .push(PendingImeOp::Commit {
-                        window: self.window.id(),
-                        text,
-                    });
+                    .push(PendingImeOp::Commit { window, text });
                 self.drain_pending_ime_ops();
             }
         }
@@ -154,12 +152,13 @@ impl<V: View> AppState<V> {
             }
         }
 
-        AppSignal::RequestRedraw
+        AppSignal::RequestRedraw { window }
     }
 
     /// Dispatch `KeyUp`: same bubble shape as `dispatch_key_down`, no Tab default.
     pub(crate) fn dispatch_key_up(
         &self,
+        window: WindowId,
         code: KeyCode,
         key: Key,
         modifiers: Modifiers,
@@ -198,7 +197,7 @@ impl<V: View> AppState<V> {
                     &mut stopped,
                     &mut pending_focus_op,
                     &mut pending_capture_op,
-                    self.window.id(),
+                    window,
                     focused,
                 )
                 .with_ime(*id, &self.ime_registry);
@@ -215,7 +214,7 @@ impl<V: View> AppState<V> {
                     &mut stopped,
                     &mut pending_focus_op,
                     &mut pending_capture_op,
-                    self.window.id(),
+                    window,
                     focused,
                 );
                 handler(&event, &mut ctx);
@@ -228,6 +227,6 @@ impl<V: View> AppState<V> {
 
         self.apply_pending_focus_op(pending_focus_op);
         self.apply_pending_capture_op(pending_capture_op);
-        AppSignal::RequestRedraw
+        AppSignal::RequestRedraw { window }
     }
 }

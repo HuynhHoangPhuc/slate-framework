@@ -97,7 +97,7 @@ fn l2_defer_entry_parks_in_deferred_until_stable() {
             return;
         }
 
-        state.dispatch_redraw();
+        state.dispatch_redraw(state.window_id_for_test());
 
         if initialized.get() && !triggered.get() {
             // Force a LuidMigration-origin loss while in size/move.

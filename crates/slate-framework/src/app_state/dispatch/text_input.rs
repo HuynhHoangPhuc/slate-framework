@@ -6,7 +6,7 @@
 
 use std::time::Instant;
 
-use slate_platform::Window;
+use slate_platform::WindowId;
 use smallvec::SmallVec;
 
 use crate::event::{
@@ -20,7 +20,7 @@ use super::super::types::AppSignal;
 
 impl<V: View> AppState<V> {
     /// Dispatch `TextInput`: same bubble shape; composes text from the platform layer.
-    pub(crate) fn dispatch_text_input(&self, text: String) -> AppSignal {
+    pub(crate) fn dispatch_text_input(&self, window: WindowId, text: String) -> AppSignal {
         let has_app_handlers = !self.on_text_input.borrow().is_empty();
         let chain = self.build_focused_chain();
         if chain.is_empty() && !has_app_handlers {
@@ -52,7 +52,7 @@ impl<V: View> AppState<V> {
                     &mut stopped,
                     &mut pending_focus_op,
                     &mut pending_capture_op,
-                    self.window.id(),
+                    window,
                     focused,
                 )
                 .with_ime(*id, &self.ime_registry);
@@ -69,7 +69,7 @@ impl<V: View> AppState<V> {
                     &mut stopped,
                     &mut pending_focus_op,
                     &mut pending_capture_op,
-                    self.window.id(),
+                    window,
                     focused,
                 );
                 handler(&event, &mut ctx);
@@ -82,6 +82,6 @@ impl<V: View> AppState<V> {
 
         self.apply_pending_focus_op(pending_focus_op);
         self.apply_pending_capture_op(pending_capture_op);
-        AppSignal::RequestRedraw
+        AppSignal::RequestRedraw { window }
     }
 }

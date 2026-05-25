@@ -99,7 +99,7 @@ fn destroyed_reason_does_not_trigger_recovery() {
             return;
         }
 
-        state.dispatch_redraw();
+        state.dispatch_redraw(state.window_id_for_test());
 
         // After initialization, fire the callback with Destroyed reason
         if initialized.get() && !fired.get() {
@@ -202,7 +202,7 @@ fn unknown_reason_triggers_recovery_state_machine() {
             return;
         }
 
-        state.dispatch_redraw();
+        state.dispatch_redraw(state.window_id_for_test());
 
         // After initialization, fire the callback with Unknown reason
         if initialized.get() && !fired.get() {

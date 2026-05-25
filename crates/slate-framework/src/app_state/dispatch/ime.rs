@@ -15,7 +15,7 @@
 
 use std::time::Instant;
 
-use slate_platform::{PhysicalRect, Window, WindowId, WindowImeDelegate};
+use slate_platform::{PhysicalRect, WindowId, WindowImeDelegate};
 use smallvec::SmallVec;
 
 use crate::event::{
@@ -124,7 +124,7 @@ impl<V: View> AppState<V> {
     }
 
     /// Dispatch `Event::ImeEnabled` — focused-chain bubble, no payload.
-    pub(crate) fn dispatch_ime_enabled(&self, _window: WindowId) -> AppSignal {
+    pub(crate) fn dispatch_ime_enabled(&self, window: WindowId) -> AppSignal {
         let has_app_handlers = !self.on_ime_enabled.borrow().is_empty();
         let chain = self.build_focused_chain();
         if chain.is_empty() && !has_app_handlers {
@@ -152,7 +152,7 @@ impl<V: View> AppState<V> {
                     &mut stopped,
                     &mut pending_focus_op,
                     &mut pending_capture_op,
-                    self.window.id(),
+                    window,
                     focused,
                 )
                 .with_ime(id, &self.ime_registry);
@@ -170,7 +170,7 @@ impl<V: View> AppState<V> {
                     &mut stopped,
                     &mut pending_focus_op,
                     &mut pending_capture_op,
-                    self.window.id(),
+                    window,
                     focused,
                 )
                     .with_ime(id, &self.ime_registry);
@@ -185,11 +185,11 @@ impl<V: View> AppState<V> {
         self.drain_pending_ime_ops();
         self.apply_pending_focus_op(pending_focus_op);
         self.apply_pending_capture_op(pending_capture_op);
-        AppSignal::RequestRedraw
+        AppSignal::RequestRedraw { window }
     }
 
     /// Dispatch `Event::ImeDisabled` — focused-chain bubble, no payload.
-    pub(crate) fn dispatch_ime_disabled(&self, _window: WindowId) -> AppSignal {
+    pub(crate) fn dispatch_ime_disabled(&self, window: WindowId) -> AppSignal {
         let has_app_handlers = !self.on_ime_disabled.borrow().is_empty();
         let chain = self.build_focused_chain();
         if chain.is_empty() && !has_app_handlers {
@@ -217,7 +217,7 @@ impl<V: View> AppState<V> {
                     &mut stopped,
                     &mut pending_focus_op,
                     &mut pending_capture_op,
-                    self.window.id(),
+                    window,
                     focused,
                 )
                 .with_ime(id, &self.ime_registry);
@@ -235,7 +235,7 @@ impl<V: View> AppState<V> {
                     &mut stopped,
                     &mut pending_focus_op,
                     &mut pending_capture_op,
-                    self.window.id(),
+                    window,
                     focused,
                 )
                     .with_ime(id, &self.ime_registry);
@@ -250,7 +250,7 @@ impl<V: View> AppState<V> {
         self.drain_pending_ime_ops();
         self.apply_pending_focus_op(pending_focus_op);
         self.apply_pending_capture_op(pending_capture_op);
-        AppSignal::RequestRedraw
+        AppSignal::RequestRedraw { window }
     }
 
     /// Dispatch `Event::ImePreedit` — focused-chain bubble. Republishes the
@@ -258,7 +258,7 @@ impl<V: View> AppState<V> {
     /// (Windows IMM `WM_IME_REQUEST`) read fresh values.
     pub(crate) fn dispatch_ime_preedit(
         &self,
-        _window: WindowId,
+        window: WindowId,
         text: String,
         cursor_byte_offset: usize,
         selection: Option<std::ops::Range<usize>>,
@@ -293,7 +293,7 @@ impl<V: View> AppState<V> {
                     &mut stopped,
                     &mut pending_focus_op,
                     &mut pending_capture_op,
-                    self.window.id(),
+                    window,
                     focused,
                 )
                 .with_ime(id, &self.ime_registry);
@@ -311,7 +311,7 @@ impl<V: View> AppState<V> {
                     &mut stopped,
                     &mut pending_focus_op,
                     &mut pending_capture_op,
-                    self.window.id(),
+                    window,
                     focused,
                 )
                     .with_ime(id, &self.ime_registry);
@@ -328,14 +328,14 @@ impl<V: View> AppState<V> {
         self.apply_pending_capture_op(pending_capture_op);
         // Republish so OS queries arriving before next paint see fresh state.
         self.republish_ime_cache();
-        AppSignal::RequestRedraw
+        AppSignal::RequestRedraw { window }
     }
 
     /// Dispatch `Event::ImeCommit` — focused-chain bubble. Empty-string
     /// commit is the "clear preedit, no insert" signal; handlers MUST NOT
     /// call `Signal::set` in that case (contract documented on
     /// [`ImeCommitEvent`]).
-    pub(crate) fn dispatch_ime_commit(&self, _window: WindowId, text: String) -> AppSignal {
+    pub(crate) fn dispatch_ime_commit(&self, window: WindowId, text: String) -> AppSignal {
         let has_app_handlers = !self.on_ime_commit.borrow().is_empty();
         let chain = self.build_focused_chain();
         if chain.is_empty() && !has_app_handlers {
@@ -364,7 +364,7 @@ impl<V: View> AppState<V> {
                     &mut stopped,
                     &mut pending_focus_op,
                     &mut pending_capture_op,
-                    self.window.id(),
+                    window,
                     focused,
                 )
                 .with_ime(id, &self.ime_registry);
@@ -382,7 +382,7 @@ impl<V: View> AppState<V> {
                     &mut stopped,
                     &mut pending_focus_op,
                     &mut pending_capture_op,
-                    self.window.id(),
+                    window,
                     focused,
                 )
                     .with_ime(id, &self.ime_registry);
@@ -397,7 +397,7 @@ impl<V: View> AppState<V> {
         self.drain_pending_ime_ops();
         self.apply_pending_focus_op(pending_focus_op);
         self.apply_pending_capture_op(pending_capture_op);
-        AppSignal::RequestRedraw
+        AppSignal::RequestRedraw { window }
     }
 }
 

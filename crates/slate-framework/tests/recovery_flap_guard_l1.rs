@@ -98,7 +98,7 @@ fn l1_luid_migration_never_gives_up() {
             return;
         }
 
-        state.dispatch_redraw();
+        state.dispatch_redraw(state.window_id_for_test());
 
         // GiveUp at any point is failure.
         if matches!(state.current_recovery_state(), RecoveryState::GiveUp { .. }) {

@@ -394,9 +394,11 @@ fn mouse_move_during_capture_requests_redraw() {
     // A bare move while captured must request a redraw so the render-pass
     // flush_coalesced_move runs and the drag extends the selection. Without
     // this signal, Windows only redraws on the 530 ms blink and the drag stalls.
-    assert_eq!(
-        state.dispatch_mouse_moved_raw_for_test((35.0, 5.0)),
-        AppSignal::RequestRedraw,
+    assert!(
+        matches!(
+            state.dispatch_mouse_moved_raw_for_test((35.0, 5.0)),
+            AppSignal::RequestRedraw { .. }
+        ),
         "drag-in-progress move must request a redraw"
     );
 }

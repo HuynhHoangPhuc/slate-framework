@@ -2,7 +2,10 @@
 
 use std::time::Instant;
 
-use slate_platform::{Modifiers, MouseButton, Window};
+use slate_platform::{Modifiers, MouseButton, WindowId};
+
+// `Window` is intentionally not imported here — `dispatch_mouse_*` now route
+// EventCtx construction off the routed `window: WindowId` (no `self.window.id()`).
 use smallvec::SmallVec;
 
 use crate::event::{
@@ -20,6 +23,7 @@ impl<V: View> AppState<V> {
     /// Dispatch MouseDown event.
     pub(crate) fn dispatch_mouse_down(
         &self,
+        window: WindowId,
         position: (f32, f32),
         button: MouseButton,
         modifiers: Modifiers,
@@ -129,7 +133,7 @@ impl<V: View> AppState<V> {
                     &mut stopped,
                     &mut pending_focus_op,
                     &mut pending_capture_op,
-                    self.window.id(),
+                    window,
                     focused,
                 );
                 if let Some(id) = id_opt {
@@ -152,7 +156,7 @@ impl<V: View> AppState<V> {
                     &mut stopped,
                     &mut pending_focus_op,
                     &mut pending_capture_op,
-                    self.window.id(),
+                    window,
                     focused,
                 );
                 handler(&pointer_event, &mut ctx);
@@ -165,12 +169,13 @@ impl<V: View> AppState<V> {
         }
 
         *self.last_mouse_pos.borrow_mut() = Some(position);
-        AppSignal::RequestRedraw
+        AppSignal::RequestRedraw { window }
     }
 
     /// Dispatch MouseUp event.
     pub(crate) fn dispatch_mouse_up(
         &self,
+        window: WindowId,
         position: (f32, f32),
         button: MouseButton,
         modifiers: Modifiers,
@@ -252,7 +257,7 @@ impl<V: View> AppState<V> {
                     &mut stopped,
                     &mut pending_focus_op,
                     &mut pending_capture_op,
-                    self.window.id(),
+                    window,
                     focused,
                 );
                 if let Some(id) = id_opt {
@@ -275,7 +280,7 @@ impl<V: View> AppState<V> {
                     &mut stopped,
                     &mut pending_focus_op,
                     &mut pending_capture_op,
-                    self.window.id(),
+                    window,
                     focused,
                 );
                 handler(&pointer_event, &mut ctx);
@@ -295,7 +300,7 @@ impl<V: View> AppState<V> {
                     &mut stopped,
                     &mut pending_focus_op,
                     &mut pending_capture_op,
-                    self.window.id(),
+                    window,
                     focused,
                 );
                 handler(&mouse_event, &mut ctx);
@@ -315,7 +320,7 @@ impl<V: View> AppState<V> {
         }
 
         *self.last_mouse_pos.borrow_mut() = Some(position);
-        AppSignal::RequestRedraw
+        AppSignal::RequestRedraw { window }
     }
 
     /// Dispatch CaptureLost event.
@@ -325,7 +330,7 @@ impl<V: View> AppState<V> {
     /// Any `ImeState.dragging` flag set by `mouse_down` must be cleared here
     /// — otherwise the next `mouse_move` over that element would silently
     /// re-extend the selection without a preceding mouse_down.
-    pub(crate) fn dispatch_capture_lost(&self) -> AppSignal {
+    pub(crate) fn dispatch_capture_lost(&self, _window: WindowId) -> AppSignal {
         *self.capture_target.borrow_mut() = None;
         *self.explicit_capture.borrow_mut() = false;
         *self.button_state.borrow_mut() = 0;

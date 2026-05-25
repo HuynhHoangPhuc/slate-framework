@@ -6,6 +6,8 @@
 
 use std::time::Instant;
 
+use slate_platform::WindowId;
+
 // Recovery state machine constants.
 // Test-fast overrides (test-hooks feature) shrink each cycle to ~tens of ms so
 // integration tests can exercise multiple recovery cycles inside a 5-second
@@ -93,9 +95,15 @@ pub enum RecoveryState {
 }
 
 /// Signal returned by dispatch methods to communicate with the event loop.
+///
+/// `RequestRedraw` carries the [`WindowId`] the dispatch was routed for so the
+/// event loop can request a redraw on the correct window. Until per-window
+/// state lift, the framework still owns a single window and every routed id
+/// resolves to that singleton; the payload is the bisectable seam future work
+/// will use to look up per-window state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppSignal {
     None,
     RequestQuit,
-    RequestRedraw,
+    RequestRedraw { window: WindowId },
 }

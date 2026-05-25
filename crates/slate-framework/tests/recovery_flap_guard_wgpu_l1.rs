@@ -90,7 +90,7 @@ fn l1_wgpu_callback_flap_gives_up() {
             return;
         }
 
-        state.dispatch_redraw();
+        state.dispatch_redraw(state.window_id_for_test());
 
         if initialized.get() && losses_fired.get() < 2 {
             let recovered = matches!(state.current_recovery_state(), RecoveryState::NotLost)

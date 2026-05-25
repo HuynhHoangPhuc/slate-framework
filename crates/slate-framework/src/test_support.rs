@@ -174,7 +174,7 @@ impl RecoveryHarness {
                 return;
             }
 
-            let sig = state.dispatch_redraw();
+            let sig = state.dispatch_redraw(state.window_id_for_test());
             if matches!(sig, AppSignal::RequestQuit) {
                 request_quit.set(true);
                 platform.quit();

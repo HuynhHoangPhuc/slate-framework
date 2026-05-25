@@ -6,7 +6,7 @@
 
 use std::time::{Duration, Instant};
 
-use slate_platform::Window;
+use slate_platform::{Window, WindowId};
 
 use crate::view::View;
 
@@ -20,7 +20,7 @@ use super::super::types::{
 impl<V: View> AppState<V> {
     /// Full redraw dispatch with device-lost recovery wrapper + re-entrancy guard.
     /// Returns AppSignal::RequestQuit if recovery exceeds RECOVERY_MAX_ATTEMPTS.
-    pub fn dispatch_redraw(&self) -> AppSignal {
+    pub fn dispatch_redraw(&self, _window: WindowId) -> AppSignal {
         // Phase-2-reopen trace: snapshot guard + flag BEFORE re-entrancy gate
         // so we see every entry, even the bailed-on-rendering=true ones.
         let pre_rendering = self.rendering.get();

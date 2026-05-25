@@ -140,7 +140,7 @@ fn image_survives_device_lost_recovery() {
             return;
         }
 
-        let sig = state.dispatch_redraw();
+        let sig = state.dispatch_redraw(state.window_id_for_test());
         if matches!(sig, AppSignal::RequestQuit) {
             platform.quit();
             return;

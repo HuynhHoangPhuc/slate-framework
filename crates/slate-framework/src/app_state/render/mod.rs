@@ -48,9 +48,7 @@ impl<V: View> AppState<V> {
 // ---------------------------------------------------------------------------
 
 impl<V: View> WindowRenderDelegate for AppState<V> {
-    fn on_resize_sync(&self, _window_id: WindowId, new_size: PhysicalSize) {
-        // Single-window today: window_id ignored.
-
+    fn on_resize_sync(&self, window_id: WindowId, new_size: PhysicalSize) {
         // Hold the sync-resize flag for both the resize and the dispatched
         // redraw so the renderer routes the present through CATransaction::flush()
         // and lands the new framebuffer in AppKit's open resize transaction.
@@ -64,16 +62,16 @@ impl<V: View> WindowRenderDelegate for AppState<V> {
         // RT-2.5: must use dispatch_redraw, not run_redraw — sync resize
         // can still hit device-lost (e.g., GPU reset under heavy load), and
         // bypassing the wrapper would either render garbage or panic.
-        if self.dispatch_redraw() == AppSignal::RequestQuit {
+        if self.dispatch_redraw(window_id) == AppSignal::RequestQuit {
             self.pending_quit.set(true);
         }
     }
 
-    fn on_redraw(&self, _window_id: WindowId) {
+    fn on_redraw(&self, window_id: WindowId) {
         // Same routing as on_resize_sync's redraw step:
         // dispatch_redraw includes the rendering: Cell<bool> guard and the
         // device-lost recovery wrapper. Raw run_redraw is forbidden here.
-        if self.dispatch_redraw() == AppSignal::RequestQuit {
+        if self.dispatch_redraw(window_id) == AppSignal::RequestQuit {
             self.pending_quit.set(true);
         }
     }

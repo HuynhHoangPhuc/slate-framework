@@ -4,7 +4,7 @@
 
 use std::time::Instant;
 
-use slate_platform::{Modifiers, Window};
+use slate_platform::{Modifiers, Window, WindowId};
 use smallvec::SmallVec;
 
 use crate::event::{
@@ -22,6 +22,7 @@ impl<V: View> AppState<V> {
     /// Dispatch MouseMoved event.
     pub(crate) fn dispatch_mouse_moved(
         &self,
+        window: WindowId,
         position: (f32, f32),
         modifiers: Modifiers,
     ) -> AppSignal {
@@ -64,7 +65,7 @@ impl<V: View> AppState<V> {
                     &mut stopped,
                     &mut pending_focus_op,
                     &mut pending_capture_op,
-                    self.window.id(),
+                    window,
                     focused,
                 );
                 handler(&pointer_event, &mut ctx);
@@ -84,7 +85,7 @@ impl<V: View> AppState<V> {
         // drag handler. Idle hover (no capture) stays silent to avoid a
         // redraw-storm on every pointer move.
         if captured.is_some() {
-            AppSignal::RequestRedraw
+            AppSignal::RequestRedraw { window }
         } else {
             AppSignal::None
         }
@@ -93,6 +94,7 @@ impl<V: View> AppState<V> {
     /// Dispatch MouseScrolled event.
     pub(crate) fn dispatch_mouse_scrolled(
         &self,
+        window: WindowId,
         position: (f32, f32),
         delta_x: f32,
         delta_y: f32,
@@ -133,7 +135,7 @@ impl<V: View> AppState<V> {
                     &mut stopped,
                     &mut pending_focus_op,
                     &mut pending_capture_op,
-                    self.window.id(),
+                    window,
                     focused,
                 );
                 handler(&scroll_event, &mut ctx);
@@ -145,11 +147,11 @@ impl<V: View> AppState<V> {
             self.apply_pending_capture_op(pending_capture_op);
         }
 
-        AppSignal::RequestRedraw
+        AppSignal::RequestRedraw { window }
     }
 
     /// Dispatch MouseExited event.
-    pub(crate) fn dispatch_mouse_exited(&self) -> AppSignal {
+    pub(crate) fn dispatch_mouse_exited(&self, window: WindowId) -> AppSignal {
         let old_hover = *self.hovered_element.borrow();
         if old_hover.is_some() {
             // Collect handlers (clone-before-drop pattern)
@@ -182,7 +184,7 @@ impl<V: View> AppState<V> {
                     &mut stopped,
                     &mut pending_focus_op,
                     &mut pending_capture_op,
-                    self.window.id(),
+                    window,
                     focused,
                 );
                 handler(&event, &mut ctx);

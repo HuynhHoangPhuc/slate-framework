@@ -173,7 +173,7 @@ fn ime_preedit_followed_by_commit_updates_signal() {
 
     // --- Step 1: preedit arrives ---
     let sig = state.dispatch_ime_preedit_for_test(window, "你好".into(), 6, None);
-    assert_eq!(sig, AppSignal::RequestRedraw);
+    assert!(matches!(sig, AppSignal::RequestRedraw { .. }));
     {
         let s = ime_rc.borrow();
         assert!(s.preedit.is_some(), "preedit must be set after dispatch");
@@ -186,7 +186,7 @@ fn ime_preedit_followed_by_commit_updates_signal() {
 
     // --- Step 2: commit finalises ---
     let sig = state.dispatch_ime_commit_for_test(window, "你好".into());
-    assert_eq!(sig, AppSignal::RequestRedraw);
+    assert!(matches!(sig, AppSignal::RequestRedraw { .. }));
     {
         let s = ime_rc.borrow();
         assert!(s.preedit.is_none(), "preedit must be cleared after commit");

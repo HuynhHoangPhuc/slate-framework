@@ -93,7 +93,7 @@ fn dispatch_ime_preedit_fires_app_handler() {
     let signal = state.dispatch_ime_preedit_for_test(window, "abc".into(), 3, None);
 
     assert_eq!(fired.get(), 1);
-    assert_eq!(signal, AppSignal::RequestRedraw);
+    assert!(matches!(signal, AppSignal::RequestRedraw { .. }));
 }
 
 #[test]
@@ -270,7 +270,7 @@ fn dispatch_ime_commit_with_text_fires_app_handler() {
     let signal = state.dispatch_ime_commit_for_test(window, "你好".into());
 
     assert_eq!(&*captured.borrow(), "你好");
-    assert_eq!(signal, AppSignal::RequestRedraw);
+    assert!(matches!(signal, AppSignal::RequestRedraw { .. }));
 }
 
 // ---------------------------------------------------------------------------
@@ -296,7 +296,7 @@ fn dispatch_ime_enabled_fires_app_handler() {
     let signal = state.dispatch_ime_enabled_for_test(window);
 
     assert_eq!(fired.get(), 1);
-    assert_eq!(signal, AppSignal::RequestRedraw);
+    assert!(matches!(signal, AppSignal::RequestRedraw { .. }));
 }
 
 #[test]
@@ -318,7 +318,7 @@ fn dispatch_ime_disabled_fires_app_handler() {
     let signal = state.dispatch_ime_disabled_for_test(window);
 
     assert_eq!(fired.get(), 1);
-    assert_eq!(signal, AppSignal::RequestRedraw);
+    assert!(matches!(signal, AppSignal::RequestRedraw { .. }));
 }
 
 // ---------------------------------------------------------------------------

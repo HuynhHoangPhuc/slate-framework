@@ -78,7 +78,7 @@ fn dispatch_key_down_fires_registered_handler() {
     );
 
     assert_eq!(fired.get(), 1);
-    assert_eq!(signal, AppSignal::RequestRedraw);
+    assert!(matches!(signal, AppSignal::RequestRedraw { .. }));
 }
 
 #[test]
@@ -130,7 +130,7 @@ fn dispatch_text_input_passes_string_to_handler() {
     let signal = state.dispatch_text_input_for_test("hello".into());
 
     assert_eq!(*captured.borrow(), "hello");
-    assert_eq!(signal, AppSignal::RequestRedraw);
+    assert!(matches!(signal, AppSignal::RequestRedraw { .. }));
 }
 
 #[test]
@@ -227,5 +227,5 @@ fn keyboard_dispatch_unaffected_by_ime_registry() {
     );
 
     assert_eq!(fired.get(), 1);
-    assert_eq!(signal, AppSignal::RequestRedraw);
+    assert!(matches!(signal, AppSignal::RequestRedraw { .. }));
 }

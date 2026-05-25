@@ -133,7 +133,7 @@ impl<V: View> AppState<V> {
         modifiers: Modifiers,
         is_repeat: bool,
     ) -> AppSignal {
-        self.dispatch_key_down(code, key, modifiers, is_repeat)
+        self.dispatch_key_down(self.window.id(), code, key, modifiers, is_repeat)
     }
 
     /// Dispatch a synthetic `KeyUp` to installed handlers. Test-only.
@@ -143,12 +143,12 @@ impl<V: View> AppState<V> {
         key: Key,
         modifiers: Modifiers,
     ) -> AppSignal {
-        self.dispatch_key_up(code, key, modifiers)
+        self.dispatch_key_up(self.window.id(), code, key, modifiers)
     }
 
     /// Dispatch a synthetic `TextInput` to installed handlers. Test-only.
     pub fn dispatch_text_input_for_test(&self, text: String) -> AppSignal {
-        self.dispatch_text_input(text)
+        self.dispatch_text_input(self.window.id(), text)
     }
 
     /// Dispatch a synthetic `MouseDown` at `position` to installed handlers.
@@ -160,15 +160,16 @@ impl<V: View> AppState<V> {
         button: crate::event::MouseButton,
         modifiers: Modifiers,
     ) -> AppSignal {
-        self.dispatch_mouse_down(position, button, modifiers)
+        self.dispatch_mouse_down(self.window.id(), position, button, modifiers)
     }
 
     /// Dispatch a synthetic `MouseMoved` then flush the coalesced move so the
     /// `on_mouse_move` handlers fire on the same call. Test-only.
     pub fn dispatch_mouse_move_for_test(&self, position: (f32, f32)) -> AppSignal {
-        let _ = self.dispatch_mouse_moved(position, Modifiers::default());
+        let window = self.window.id();
+        let _ = self.dispatch_mouse_moved(window, position, Modifiers::default());
         self.flush_coalesced_move();
-        AppSignal::RequestRedraw
+        AppSignal::RequestRedraw { window }
     }
 
     /// Dispatch a synthetic `MouseMoved` and return its **raw** `AppSignal`
@@ -177,7 +178,7 @@ impl<V: View> AppState<V> {
     /// hover), which `dispatch_mouse_move_for_test` hides by hardcoding
     /// `RequestRedraw`.
     pub fn dispatch_mouse_moved_raw_for_test(&self, position: (f32, f32)) -> AppSignal {
-        self.dispatch_mouse_moved(position, Modifiers::default())
+        self.dispatch_mouse_moved(self.window.id(), position, Modifiers::default())
     }
 
     /// Dispatch a synthetic `MouseUp` at `position`. Test-only.
@@ -187,12 +188,12 @@ impl<V: View> AppState<V> {
         button: crate::event::MouseButton,
         modifiers: Modifiers,
     ) -> AppSignal {
-        self.dispatch_mouse_up(position, button, modifiers)
+        self.dispatch_mouse_up(self.window.id(), position, button, modifiers)
     }
 
     /// Dispatch a synthetic `CaptureLost`. Test-only.
     pub fn dispatch_capture_lost_for_test(&self) -> AppSignal {
-        self.dispatch_capture_lost()
+        self.dispatch_capture_lost(self.window.id())
     }
 
     /// Register a per-element keyboard handler bundle. Test-only — production

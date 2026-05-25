@@ -96,7 +96,7 @@ fn l1_cycle_leak_regression_luid_after_luid() {
             return;
         }
 
-        state.dispatch_redraw();
+        state.dispatch_redraw(state.window_id_for_test());
 
         if let RecoveryState::Recovered { at } = state.current_recovery_state() {
             last_recovered_at.set(Some(at));

@@ -90,7 +90,7 @@ fn l1_upgrade_then_flap_gives_up() {
             return;
         }
 
-        state.dispatch_redraw();
+        state.dispatch_redraw(state.window_id_for_test());
 
         match phase.get() {
             0 if initialized.get() => {

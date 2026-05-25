@@ -3,7 +3,7 @@
 
 use std::rc::Rc;
 
-use slate_platform::{PhysicalSize, Platform, Window};
+use slate_platform::{PhysicalSize, Platform, Window, WindowId};
 use slate_renderer::{Renderer, RendererObserver};
 
 use crate::app::AppContext;
@@ -109,7 +109,7 @@ impl<V: View> AppState<V> {
     }
 
     /// Handle device-lost event from platform.
-    pub(crate) fn dispatch_device_lost(&self, fatal: bool) -> AppSignal {
+    pub(crate) fn dispatch_device_lost(&self, _window: WindowId, fatal: bool) -> AppSignal {
         if fatal {
             log::error!("GPU device lost (fatal) - recovery failed after max attempts");
             AppSignal::RequestQuit
@@ -120,9 +120,9 @@ impl<V: View> AppState<V> {
     }
 
     /// Handle device-restored event from platform.
-    pub(crate) fn dispatch_device_restored(&self) -> AppSignal {
+    pub(crate) fn dispatch_device_restored(&self, window: WindowId) -> AppSignal {
         log::info!("GPU device restored - rendering resumed");
         *self.recovery_state.borrow_mut() = RecoveryState::NotLost;
-        AppSignal::RequestRedraw
+        AppSignal::RequestRedraw { window }
     }
 }
