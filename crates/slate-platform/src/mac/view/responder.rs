@@ -488,6 +488,34 @@ impl MetalView {
     }
 }
 
+impl MetalView {
+    /// `doCommandBySelector:` body. AppKit calls this when the IME refused
+    /// the keystroke.
+    ///
+    /// - Composing path (`keyDown:` deferred the `KeyDown` dispatch): emit
+    ///   the stashed `Event::KeyDown` now so navigation / Escape /
+    ///   IMEs-that-pass-Tab-through still reach the framework. This is also
+    ///   what makes the "Tab commits then focuses" flow work for IMEs that
+    ///   commit-on-Tab — by the time AppKit reaches
+    ///   `doCommandBySelector:(insertTab:)`, the prior `insertText:` already
+    ///   cleared `was_composing` and emitted `ImeCommit`, so the synthesized
+    ///   `KeyDown{Tab}` moves focus *after* the commit on a single press.
+    /// - Non-composing path: `keyDown:` already dispatched `KeyDown`, so
+    ///   `pending_keydown` is `None` and this is a no-op.
+    pub(super) fn responder_do_command_by_selector(&self) {
+        let id = self.ivars().window_id.get();
+        if let Some(pk) = self.ivars().pending_keydown.borrow_mut().take() {
+            dispatch_event(Event::KeyDown {
+                window: id,
+                code: pk.code,
+                key: pk.key,
+                modifiers: pk.modifiers,
+                is_repeat: pk.is_repeat,
+            });
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // WindowDelegate responder method bodies
 // ---------------------------------------------------------------------------
