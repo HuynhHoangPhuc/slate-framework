@@ -117,6 +117,9 @@ impl<T: Send + Sync + 'static> Signal<T> {
         };
 
         for s in subs {
+            #[cfg(feature = "profiling")]
+            crate::profiling::SIGNAL_NOTIFY_COUNT
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             self.inner.runtime.notify_observer(s);
         }
 

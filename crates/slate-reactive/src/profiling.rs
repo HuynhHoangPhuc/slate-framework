@@ -12,10 +12,15 @@
 //!   another effect is already running on the same thread. A non-zero count
 //!   surfaces a synchronous re-entry pattern that can mask cascading writes.
 
+use std::cell::Cell;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub(crate) static SIGNAL_NOTIFY_COUNT: AtomicU64 = AtomicU64::new(0);
 pub(crate) static EFFECT_REENTRY_COUNT: AtomicU64 = AtomicU64::new(0);
+
+thread_local! {
+    static EFFECT_RUN_DEPTH: Cell<u32> = const { Cell::new(0) };
+}
 
 /// Returns the cumulative count of observer dispatches triggered by signal
 /// updates since the last `reset_counters` call.
@@ -33,4 +38,28 @@ pub fn effect_reentry_count() -> u64 {
 pub fn reset_counters() {
     SIGNAL_NOTIFY_COUNT.store(0, Ordering::Relaxed);
     EFFECT_REENTRY_COUNT.store(0, Ordering::Relaxed);
+}
+
+/// RAII guard installed at the top of `EffectInner::run`. Tracks per-thread
+/// effect-run nesting depth and bumps `EFFECT_REENTRY_COUNT` on every
+/// synchronous re-entry (depth >= 2 at enter time).
+pub(crate) struct ReentryGuard;
+
+impl ReentryGuard {
+    pub(crate) fn enter() -> Self {
+        EFFECT_RUN_DEPTH.with(|d| {
+            let prev = d.get();
+            if prev > 0 {
+                EFFECT_REENTRY_COUNT.fetch_add(1, Ordering::Relaxed);
+            }
+            d.set(prev + 1);
+        });
+        Self
+    }
+}
+
+impl Drop for ReentryGuard {
+    fn drop(&mut self) {
+        EFFECT_RUN_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+    }
 }

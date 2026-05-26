@@ -104,6 +104,9 @@ impl Effect {
 impl EffectInner {
     /// Runs the effect closure inside its observer scope.
     pub(crate) fn run(&self) {
+        #[cfg(feature = "profiling")]
+        let _reentry_guard = crate::profiling::ReentryGuard::enter();
+
         with_observer(self.id, || {
             if let Some(closure) = self.closure.lock().as_mut() {
                 closure();

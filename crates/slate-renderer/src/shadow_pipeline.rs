@@ -206,6 +206,10 @@ impl ShadowPipeline {
         pass.set_vertex_buffer(0, unit_quad.slice(..));
         pass.set_vertex_buffer(1, self.instance_buffer.slice(byte_range));
         pass.draw(0..6, 0..(range.end - range.start));
+
+        #[cfg(feature = "profiling")]
+        crate::profiling::PAINT_CMD_COUNT
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub fn capacity_bytes(&self) -> u64 {

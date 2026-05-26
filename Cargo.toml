@@ -5,6 +5,7 @@ members = [
     "crates/slate-renderer",
     "crates/slate-text",
     "crates/slate-framework",
+    "crates/slate-bench",
     "examples/anchor-md-to-png",
     "examples/click-counter",
     "examples/dense-image-gallery",

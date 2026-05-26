@@ -297,6 +297,10 @@ impl ImagePipeline {
         pass.set_vertex_buffer(0, unit_quad.slice(..));
         pass.set_vertex_buffer(1, self.instance_buffer.slice(byte_range));
         pass.draw(0..6, 0..(end - range.start));
+
+        #[cfg(feature = "profiling")]
+        crate::profiling::PAINT_CMD_COUNT
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Current capacity in bytes — exposed for tests / observability.
