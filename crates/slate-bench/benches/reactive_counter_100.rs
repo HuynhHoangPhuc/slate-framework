@@ -23,10 +23,11 @@ fn bench(c: &mut Criterion) {
 
     eprintln!(
         "reactive_counter_100 counters: paint_cmds={} signal_notify={} effect_reentry={} \
-         allocs={}",
+         reentrancy={} allocs={}",
         profiling::paint_cmd_count(),
         profiling::signal_notify_count(),
         profiling::effect_reentry_count(),
+        profiling::reentrancy_count(),
         profiling::alloc_count(),
     );
 }

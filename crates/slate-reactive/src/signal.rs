@@ -111,6 +111,9 @@ impl<T: Send + Sync + 'static> Signal<T> {
 
     /// Drains subscribers and notifies them, then marks the runtime dirty.
     fn notify_subscribers(&self) {
+        #[cfg(feature = "profiling")]
+        crate::profiling::note_signal_set_for_reentry();
+
         let subs: Vec<ObserverId> = {
             let mut g = self.inner.subscribers.lock();
             g.drain().collect()

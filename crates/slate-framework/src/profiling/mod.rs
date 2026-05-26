@@ -12,6 +12,8 @@
 //!
 //! - `signal_notify_count` — observer dispatches from `Signal::set`.
 //! - `effect_reentry_count` — synchronous effect re-entries.
+//! - `reentrancy_count` — `Signal::set` calls observed while an `Effect::run`
+//!   is on the same thread's call stack (write-during-dispatch pattern).
 //! - `paint_cmd_count` — non-empty `pass.draw` emissions across the four
 //!   instanced pipelines.
 //! - `alloc_count` / `dealloc_count` — heap activity, when
@@ -29,7 +31,8 @@ pub use counting_alloc::{
     CountingAllocator, alloc_count, dealloc_count, reset_counters as reset_alloc_counters,
 };
 pub use slate_reactive::profiling::{
-    effect_reentry_count, reset_counters as reset_reactive_counters, signal_notify_count,
+    effect_reentry_count, reentrancy_count, reset_counters as reset_reactive_counters,
+    signal_notify_count,
 };
 pub use slate_renderer::profiling::{
     paint_cmd_count, reset_counters as reset_renderer_counters,
