@@ -1,15 +1,14 @@
-//! Image cache and observer for device-lost recovery.
+//! Image cache for device-lost recovery.
 //!
-//! `ImageCache` holds uploaded image data keyed by content hash. The
-//! `ImageSystemObserver` clears atlas allocations on device-lost while
-//! preserving CPU-side pixel data for re-upload.
+//! `ImageCache` holds uploaded image data keyed by content hash. CPU-side
+//! pixel data survives device-lost; the per-window recovery path calls
+//! `clear_allocations` directly so atlas handles are dropped before the next
+//! re-upload.
 
-use std::cell::RefCell;
 use std::collections::HashMap;
-use std::rc::Weak;
 
 use slate_renderer::atlas::{Atlas, AtlasAllocation};
-use slate_renderer::{RendererObserver, allocate_image, pad_rgba_with_gutter};
+use slate_renderer::{allocate_image, pad_rgba_with_gutter};
 use wgpu::Queue;
 
 /// Cache for uploaded images, keyed by (content_hash, width, height).
@@ -148,30 +147,10 @@ impl Default for ImageCache {
     }
 }
 
-/// Observer that clears ImageCache allocations on device recreation.
-///
-/// Registered with the Renderer; fires when device is successfully rebuilt.
-/// Clears stale AtlasAllocations while preserving pixel data for re-upload.
-pub(crate) struct ImageSystemObserver {
-    inner: Weak<RefCell<ImageCache>>,
-}
-
-impl ImageSystemObserver {
-    /// Create a new observer wrapping a weak ref to the image cache.
-    pub fn new(inner: Weak<RefCell<ImageCache>>) -> Self {
-        Self { inner }
-    }
-}
-
-impl RendererObserver for ImageSystemObserver {
-    fn on_renderer_recreated(&self, generation: u64) {
-        log::debug!(target: "slate::device_lost",
-            "ImageSystemObserver: clearing atlas allocations (gen={})", generation);
-        if let Some(strong) = self.inner.upgrade() {
-            strong.borrow_mut().clear_allocations();
-        }
-    }
-}
+// ImageCache atlas-allocation invalidation on device-lost is handled inline by
+// the recovery path against the affected window's per-window cache, so no
+// `RendererObserver` is required here. See
+// `crate::app_state::render::recovery` for the call site.
 
 #[cfg(test)]
 mod tests {

@@ -27,12 +27,14 @@ use std::time::Instant;
 use slate_platform::{DefaultWindow, PhysicalSize, Window, WindowId};
 use slate_reactive::{ObserverId, Signal};
 use slate_renderer::{Renderer, Scene};
+use slate_text::GlyphCache;
 
 use crate::erased_view::ErasedView;
 use crate::event::{Handlers, ImeHandlers, KeyHandlers, MouseHandlers};
 use crate::focus::FocusRegistry;
 use crate::focus_ring::FocusBounds;
 use crate::hit_test::HitTestList;
+use crate::image_cache::ImageCache;
 use crate::ime::{CachedImeQuery, ImeRegistry, PendingImeOp};
 use crate::layout::LayoutTree;
 use crate::types::{AccessibilityNode, ElementId};
@@ -51,6 +53,18 @@ pub struct WindowState {
     // -- Deferred init (filled by Event::Resumed) ------------------------
     pub renderer: RefCell<Option<Renderer>>,
     pub view: RefCell<Option<Box<dyn ErasedView>>>,
+
+    // -- Per-window atlas-scoped caches ---------------------------------
+    /// Glyph cache paired with this window's `Renderer.glyph_atlas`. Keeping
+    /// it per-window prevents cross-window `AllocId` collisions (would
+    /// surface as text corruption when multiple windows paint into separate
+    /// atlases). CPU-side state is cleared inline by the recovery path when
+    /// this window's renderer is rebuilt.
+    pub(crate) glyph_cache: RefCell<GlyphCache>,
+    /// Image cache paired with this window's `Renderer.image_atlas`. Same
+    /// per-atlas invariant as `glyph_cache`. `clear_allocations` is called
+    /// on device-lost to drop stale atlas handles while keeping CPU pixels.
+    pub(crate) image_cache: RefCell<ImageCache>,
 
     // -- Per-frame state -------------------------------------------------
     pub layout_tree: RefCell<LayoutTree>,
@@ -145,6 +159,8 @@ impl WindowState {
             window,
             renderer: RefCell::new(None),
             view: RefCell::new(None),
+            glyph_cache: RefCell::new(GlyphCache::new()),
+            image_cache: RefCell::new(ImageCache::new()),
             layout_tree: RefCell::new(LayoutTree::new()),
             hit_test_list: RefCell::new(HitTestList::new()),
             a11y_nodes: RefCell::new(Vec::new()),

@@ -208,11 +208,16 @@ impl AppState {
             s.clear();
 
             let (glyph_atlas, image_atlas, queue) = r.atlases_and_queue();
-            let mut ic = self.image_cache.borrow_mut();
+            // Per-window caches paired with per-window atlases. Mixing them
+            // across windows produces token-collision glyph corruption — see
+            // WindowState::glyph_cache docs.
+            let mut gc = win.glyph_cache.borrow_mut();
+            let mut ic = win.image_cache.borrow_mut();
             let mut cx = PaintCtx::new(
                 tree.inner(),
                 &mut s,
                 ts,
+                &mut gc,
                 glyph_atlas,
                 image_atlas,
                 &mut ic,

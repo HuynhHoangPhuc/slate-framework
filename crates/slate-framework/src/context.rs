@@ -13,6 +13,7 @@ use std::collections::HashMap;
 
 use slate_renderer::atlas::Atlas;
 use slate_renderer::scene::Scene;
+use slate_text::GlyphCache;
 use taffy::TaffyTree;
 
 use crate::event::{Handlers, ImeHandlers, KeyHandlers, MouseHandlers};
@@ -435,13 +436,19 @@ pub struct PaintCtx<'a> {
     pub taffy: &'a TaffyTree<NodeContext>,
     /// GPU scene receiving render primitives.
     pub scene: &'a mut Scene,
-    /// Text system (mutable for glyph cache updates).
+    /// Text system (process-wide font cache; no longer holds GlyphCache).
     pub text: &'a mut TextSystem,
-    /// Glyph atlas for texture storage.
+    /// Per-window glyph cache, paired with `glyph_atlas`. MUST be the cache
+    /// owned by the same `WindowState` whose `Renderer` owns `glyph_atlas` —
+    /// see `WindowState::glyph_cache` for the cross-window corruption
+    /// invariant this enforces.
+    pub glyph_cache: &'a mut GlyphCache,
+    /// Per-window glyph atlas for texture storage.
     pub glyph_atlas: &'a mut Atlas,
-    /// Image atlas for image texture storage.
+    /// Per-window image atlas for image texture storage.
     pub image_atlas: &'a mut Atlas,
-    /// Image cache for uploaded image management.
+    /// Per-window image cache, paired with `image_atlas`. Same per-atlas
+    /// invariant as `glyph_cache`.
     pub(crate) image_cache: &'a mut ImageCache,
     /// GPU queue for texture uploads.
     pub queue: &'a wgpu::Queue,
@@ -467,6 +474,7 @@ impl<'a> PaintCtx<'a> {
         taffy: &'a TaffyTree<NodeContext>,
         scene: &'a mut Scene,
         text: &'a mut TextSystem,
+        glyph_cache: &'a mut GlyphCache,
         glyph_atlas: &'a mut Atlas,
         image_atlas: &'a mut Atlas,
         image_cache: &'a mut ImageCache,
@@ -480,6 +488,7 @@ impl<'a> PaintCtx<'a> {
             taffy,
             scene,
             text,
+            glyph_cache,
             glyph_atlas,
             image_atlas,
             image_cache,

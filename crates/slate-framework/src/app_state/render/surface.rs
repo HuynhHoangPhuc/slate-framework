@@ -67,15 +67,12 @@ impl AppState {
 
         log::info!("renderer and text system ready for window {:?}", window_id);
 
-        // Register cache invalidation observers on the new renderer.
-        renderer.register_observer(
-            Rc::downgrade(&self.text_system_observer) as std::rc::Weak<dyn RendererObserver>
-        );
+        // Register cache invalidation observer on the new renderer. Only the
+        // process-wide `text_shaping_cache` is shared and needs observer-driven
+        // invalidation; `glyph_cache` and `image_cache` are per-window in
+        // `WindowState` and are cleared inline during recovery.
         renderer.register_observer(
             Rc::downgrade(&self.text_shaping_cache_observer) as std::rc::Weak<dyn RendererObserver>
-        );
-        renderer.register_observer(
-            Rc::downgrade(&self.image_system_observer) as std::rc::Weak<dyn RendererObserver>
         );
 
         let renderer_gen = renderer.current_generation();

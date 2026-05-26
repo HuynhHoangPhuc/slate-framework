@@ -3,11 +3,8 @@
 //! `TextSystem` hides the platform-specific `TextBackend` behind `#[cfg]`
 //! so Element, Context, and tree types remain non-generic.
 
-use std::cell::RefCell;
 use std::marker::PhantomData;
-use std::rc::Weak;
 
-use slate_renderer::RendererObserver;
 use slate_renderer::atlas::Atlas;
 use slate_renderer::scene::GlyphInstance;
 use slate_text::backend::Font;
@@ -34,13 +31,20 @@ compile_error!(
 ///
 /// `TextSystem` is explicitly `!Send` via `PhantomData<*const ()>`.
 /// DirectWrite is apartment-threaded; we keep parity across platforms.
+///
+/// # Multi-window note
+///
+/// The glyph cache used to live on `TextSystem` but does NOT anymore: its
+/// values are `AllocId`s scoped to a specific `Atlas`, and each window owns
+/// its own renderer/atlas pair. A process-shared cache would hand window B
+/// an `AllocId` allocated in window A's atlas, producing token-collision
+/// glyph corruption on cross-window paints. Each `WindowState` now owns
+/// its own `GlyphCache` and passes it through `PaintCtx`.
 pub struct TextSystem {
     #[cfg(target_os = "macos")]
     backend: CoreTextBackend,
     #[cfg(target_os = "windows")]
     backend: DirectWriteBackend,
-
-    glyph_cache: GlyphCache,
 
     // Red-team Finding 5: Explicit !Send marker.
     // CoreText is thread-safe and windows-rs IDWriteFactory is Send,
@@ -60,7 +64,6 @@ impl TextSystem {
             backend: CoreTextBackend::new()?,
             #[cfg(target_os = "windows")]
             backend: DirectWriteBackend::new()?,
-            glyph_cache: GlyphCache::new(),
             _not_send: PhantomData,
         })
     }
@@ -159,20 +162,27 @@ impl TextSystem {
 
     /// Rasterize a shaped text run to GPU glyph instances.
     ///
+    /// `glyph_cache` and `atlas` MUST belong to the same window: the cache stores
+    /// `AllocId`s scoped to `atlas`. Mixing a cache from window A with window B's
+    /// atlas yields token-collision corruption.
+    ///
     /// # Arguments
     ///
     /// * `font` - Font used for rasterization
     /// * `shaped` - Pre-shaped line of text
     /// * `baseline_lpx` - Baseline position `[x, y]` in logical pixels
     /// * `color` - Text color as premultiplied RGBA
-    /// * `atlas` - GPU atlas for glyph storage
+    /// * `glyph_cache` - Per-window glyph cache paired with `atlas`
+    /// * `atlas` - Per-window GPU atlas for glyph storage
     /// * `queue` - GPU queue for upload commands
+    #[allow(clippy::too_many_arguments)]
     pub fn rasterize_text_run(
-        &mut self,
+        &self,
         font: &PlatformFont,
         shaped: &ShapedLine,
         baseline_lpx: [f32; 2],
         color: [f32; 4],
+        glyph_cache: &mut GlyphCache,
         atlas: &mut Atlas,
         queue: &wgpu::Queue,
     ) -> Result<Vec<GlyphInstance>, TextError> {
@@ -182,12 +192,7 @@ impl TextSystem {
             baseline_lpx,
             color,
         };
-        builder.build(shaped, &mut self.glyph_cache, atlas, queue)
-    }
-
-    /// Get mutable access to the glyph cache (for advanced use cases).
-    pub fn glyph_cache_mut(&mut self) -> &mut GlyphCache {
-        &mut self.glyph_cache
+        builder.build(shaped, glyph_cache, atlas, queue)
     }
 }
 
@@ -223,33 +228,7 @@ impl PlatformFont {
 // Note: !Send verification via compile-fail test; see tests/compile-fail/text_system_send.rs.
 // PhantomData<*const ()> marker enforces !Send at compile time.
 
-// ---------------------------------------------------------------------------
-// RendererObserver implementation for cache invalidation
-// ---------------------------------------------------------------------------
-
-/// Observer that clears GlyphCache CPU state on device recreation.
-///
-/// Registered with the Renderer; fires when device is successfully rebuilt.
-/// Clears stale AllocIds from the GlyphCache that reference the old atlas.
-pub struct TextSystemObserver {
-    inner: Weak<RefCell<Option<TextSystem>>>,
-}
-
-impl TextSystemObserver {
-    /// Create a new observer wrapping a weak ref to the text system.
-    pub fn new(inner: Weak<RefCell<Option<TextSystem>>>) -> Self {
-        Self { inner }
-    }
-}
-
-impl RendererObserver for TextSystemObserver {
-    fn on_renderer_recreated(&self, generation: u64) {
-        log::debug!(target: "slate::device_lost",
-            "TextSystemObserver: clearing GlyphCache CPU state (gen={})", generation);
-        if let Some(strong) = self.inner.upgrade()
-            && let Some(ts) = strong.borrow_mut().as_mut()
-        {
-            ts.glyph_cache_mut().clear_cpu_state();
-        }
-    }
-}
+// GlyphCache CPU-state invalidation on device-lost is handled inline by the
+// recovery path against the affected window's per-window `GlyphCache`, so no
+// `RendererObserver` is required from the text-system side. See
+// `crate::app_state::render::recovery` for the call site.

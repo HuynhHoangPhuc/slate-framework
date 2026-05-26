@@ -32,6 +32,7 @@ use crate::executor::Executor;
 use crate::focus::FocusRegistry;
 use crate::focus_ring::FocusBounds;
 use crate::hit_test::HitTestList;
+use slate_text::GlyphCache;
 use crate::image_cache::ImageCache;
 use crate::ime::ImeRegistry;
 use crate::layout::LayoutTree;
@@ -90,6 +91,9 @@ pub struct HeadlessApp {
 
     // Image cache for uploaded images
     image_cache: ImageCache,
+
+    // Glyph cache (atlas-scoped; pairs with `glyph_atlas`).
+    glyph_cache: GlyphCache,
 
     // Event handler collection (for headless testing parity)
     handler_map: HashMap<ElementId, Handlers>,

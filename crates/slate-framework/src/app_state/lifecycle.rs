@@ -17,10 +17,8 @@ use slate_platform::{
 
 use crate::app::AppContext;
 use crate::executor::{Executor, RedrawRequester};
-use crate::image_cache::{ImageCache, ImageSystemObserver};
 use crate::paint_cache::{TextShapingCache, TextShapingCacheObserver};
 use crate::reactive_state::StateRegistry;
-use crate::text_system::TextSystemObserver;
 
 use super::state::{AppState, ErasedViewFactory, PendingWindowCreate};
 use super::types::AppSignal;
@@ -66,17 +64,16 @@ impl AppState {
 
         let state_registry = StateRegistry::new(runtime.clone());
 
-        // Create Rc-wrapped caches for observer weak references.
+        // Shared, atlas-independent caches.
         let text_system = Rc::new(RefCell::new(None));
         let text_shaping_cache = Rc::new(RefCell::new(TextShapingCache::new()));
 
-        let text_system_observer = Rc::new(TextSystemObserver::new(Rc::downgrade(&text_system)));
         let text_shaping_cache_observer = Rc::new(TextShapingCacheObserver::new(Rc::downgrade(
             &text_shaping_cache,
         )));
 
-        let image_cache = Rc::new(RefCell::new(ImageCache::new()));
-        let image_system_observer = Rc::new(ImageSystemObserver::new(Rc::downgrade(&image_cache)));
+        // GlyphCache + ImageCache live per-window (in WindowState) because
+        // they store atlas-scoped AllocIds and each window owns its own atlas.
 
         Self {
             windows: RefCell::new(HashMap::new()),
@@ -84,10 +81,7 @@ impl AppState {
             executor,
             text_system,
             text_shaping_cache,
-            text_system_observer,
             text_shaping_cache_observer,
-            image_cache,
-            image_system_observer,
             state_registry: RefCell::new(state_registry),
             redraw_requesters,
             pending_quit: std::cell::Cell::new(false),

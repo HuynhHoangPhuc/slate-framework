@@ -31,10 +31,9 @@ use crate::event::{
     ImeCommitHandler, ImeLifecycleHandler, ImePreeditHandler, KeyHandler, TextInputHandler,
 };
 use crate::executor::{Executor, RedrawRequester};
-use crate::image_cache::{ImageCache, ImageSystemObserver};
 use crate::paint_cache::{TextShapingCache, TextShapingCacheObserver};
 use crate::reactive_state::StateRegistry;
-use crate::text_system::{TextSystem, TextSystemObserver};
+use crate::text_system::TextSystem;
 
 use super::window_state::WindowState;
 
@@ -67,16 +66,17 @@ pub struct AppState {
     pub executor: Executor,
 
     // Shared text subsystem (process-wide font cache).
+    //
+    // Note: `TextShapingCache` is atlas-independent (stores positioned glyph
+    // IDs only) and remains shared. `GlyphCache` and `ImageCache` are NOT
+    // shared — they hold atlas-scoped `AllocId`s, so each window owns its own
+    // in `WindowState`.
     pub text_system: Rc<RefCell<Option<TextSystem>>>,
     pub text_shaping_cache: Rc<RefCell<TextShapingCache>>,
 
-    // Device-lost cache invalidation observers (held to keep alive).
-    pub text_system_observer: Rc<TextSystemObserver>,
+    // Device-lost cache invalidation observer for `text_shaping_cache` (the
+    // only remaining shared cache that needs clearing on renderer recreate).
     pub text_shaping_cache_observer: Rc<TextShapingCacheObserver>,
-
-    // Image cache + observer (shared; content-keyed).
-    pub(crate) image_cache: Rc<RefCell<ImageCache>>,
-    pub(crate) image_system_observer: Rc<ImageSystemObserver>,
 
     // Shared per-window state registry.
     // Each window's elements are keyed by their (window-scoped) ElementId.

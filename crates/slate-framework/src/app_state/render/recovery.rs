@@ -135,22 +135,20 @@ impl AppState {
                     }
                 }
 
-                // Register cache-invalidation observers on the now-installed renderer.
+                // Register the shared text-shaping cache observer on the
+                // now-installed renderer and clear this window's per-window
+                // caches inline (their atlas was destroyed with the old
+                // renderer; entries reference dead AllocIds).
                 {
                     let guard = self.windows.borrow();
                     if let Some(win) = guard.get(&window_id) {
+                        win.glyph_cache.borrow_mut().clear_cpu_state();
+                        win.image_cache.borrow_mut().clear_allocations();
+
                         let r = win.renderer.borrow();
                         let r = r.as_ref().expect("renderer just assigned");
                         r.register_observer(
-                            Rc::downgrade(&self.text_system_observer)
-                                as std::rc::Weak<dyn RendererObserver>,
-                        );
-                        r.register_observer(
                             Rc::downgrade(&self.text_shaping_cache_observer)
-                                as std::rc::Weak<dyn RendererObserver>,
-                        );
-                        r.register_observer(
-                            Rc::downgrade(&self.image_system_observer)
                                 as std::rc::Weak<dyn RendererObserver>,
                         );
                         // Fire only on recovery: caches built against the dead device

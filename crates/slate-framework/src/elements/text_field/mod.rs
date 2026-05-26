@@ -452,6 +452,7 @@ impl Element for TextField {
             &shaped,
             [baseline_x, baseline_y],
             self.style.color,
+            cx.glyph_cache,
             cx.glyph_atlas,
             cx.queue,
         ) {

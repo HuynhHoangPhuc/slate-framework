@@ -145,6 +145,7 @@ pub(super) fn paint(
             &vline.line,
             baseline,
             style.color,
+            cx.glyph_cache,
             cx.glyph_atlas,
             cx.queue,
         ) {

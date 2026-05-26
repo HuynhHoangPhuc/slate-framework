@@ -116,6 +116,7 @@ impl HeadlessApp {
                 self.layout_tree.inner(),
                 &mut self.scene,
                 &mut self.text_system,
+                &mut self.glyph_cache,
                 &mut self.glyph_atlas,
                 &mut self.image_atlas,
                 &mut self.image_cache,

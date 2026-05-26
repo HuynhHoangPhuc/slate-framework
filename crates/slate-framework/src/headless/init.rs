@@ -12,6 +12,7 @@ use wgpu::{
 
 use slate_reactive::Runtime;
 use slate_renderer::atlas::{Atlas, Format};
+use slate_text::GlyphCache;
 use slate_renderer::glyph_pipeline::GlyphPipeline;
 use slate_renderer::image_pipeline::ImagePipeline;
 use slate_renderer::instanced_rect_pipeline::InstancedRectPipeline;
@@ -167,6 +168,9 @@ impl HeadlessApp {
         // Image cache
         let image_cache = ImageCache::new();
 
+        // Glyph cache (atlas-scoped; pairs with `glyph_atlas`).
+        let glyph_cache = GlyphCache::new();
+
         Ok(Self {
             device,
             queue,
@@ -196,6 +200,7 @@ impl HeadlessApp {
             state_registry,
             text_shaping_cache,
             image_cache,
+            glyph_cache,
             handler_map,
             mouse_handler_map: HashMap::new(),
             parent_map,
