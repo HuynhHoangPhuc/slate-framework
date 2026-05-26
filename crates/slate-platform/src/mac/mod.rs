@@ -55,10 +55,27 @@ thread_local! {
 }
 
 /// Dispatch an `Event` through the thread-local handler. No-op if none installed.
+///
+/// `try_borrow_mut` tolerates re-entrant dispatch. `AppContext::create_window`
+/// can drive synchronous AppKit callbacks (window-shown, frame-change,
+/// view-did-move-to-window) that funnel back into `dispatch_event` while the
+/// outer handler still holds the borrow. A `borrow_mut` here would panic and
+/// abort the process. Re-entrant events are dropped with a trace log; the
+/// dynamic-create path republishes the window state post-unwind so no
+/// essential signal is lost.
 pub(crate) fn dispatch_event(event: Event) {
-    HANDLER.with(|h| {
-        if let Some(handler) = h.borrow_mut().as_mut() {
-            handler(event);
+    HANDLER.with(|h| match h.try_borrow_mut() {
+        Ok(mut guard) => {
+            if let Some(handler) = guard.as_mut() {
+                handler(event);
+            }
+        }
+        Err(_) => {
+            log::trace!(
+                target: "slate::mac",
+                "dispatch_event: re-entrant call, event dropped: {:?}",
+                event
+            );
         }
     });
 }
