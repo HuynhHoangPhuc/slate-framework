@@ -30,7 +30,7 @@ pub use platform::WinPlatform;
 pub use window::WinWindow;
 
 use std::cell::Cell;
-use std::sync::atomic::{AtomicIsize, Ordering};
+use std::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
 
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_APP};
@@ -131,6 +131,37 @@ pub(crate) fn next_window_id() -> WindowId {
         c.set(id + 1);
         WindowId(id)
     })
+}
+
+/// Process-wide count of live native windows.
+///
+/// Incremented by `WinWindow::new` and decremented inside `WM_DESTROY`. The
+/// message loop posts `WM_QUIT` only when the destroyed window was the last
+/// one — multi-window apps survive single-window closes.
+static LIVE_WINDOW_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+pub(crate) fn increment_live_window_count() {
+    LIVE_WINDOW_COUNT.fetch_add(1, Ordering::AcqRel);
+}
+
+/// Decrement the live-window count and return the value AFTER the decrement.
+/// Saturates at zero so a stray double-destroy cannot underflow.
+pub(crate) fn decrement_live_window_count() -> usize {
+    let mut current = LIVE_WINDOW_COUNT.load(Ordering::Acquire);
+    loop {
+        if current == 0 {
+            return 0;
+        }
+        match LIVE_WINDOW_COUNT.compare_exchange_weak(
+            current,
+            current - 1,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => return current - 1,
+            Err(actual) => current = actual,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

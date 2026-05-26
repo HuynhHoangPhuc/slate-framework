@@ -22,7 +22,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SetWindowLongPtrW, WM_CLOSE, WM_DESTROY, WM_NCCREATE, WM_NCDESTROY,
 };
 
-use super::{REDRAW_TIMER_ID, WM_APP_WAKE, clear_wake_hwnd, dispatch_event};
+use super::{
+    REDRAW_TIMER_ID, WM_APP_WAKE, clear_wake_hwnd, decrement_live_window_count, dispatch_event,
+};
 use crate::{Event, WindowId, WindowImeDelegate, WindowRenderDelegate};
 
 // ---------------------------------------------------------------------------
@@ -121,8 +123,14 @@ impl WinWindowInner {
                     let _ = unsafe { KillTimer(Some(hwnd), REDRAW_TIMER_ID) };
                 }
                 dispatch_event(Event::WindowDestroyed { window: self.id });
-                // SAFETY: PostQuitMessage is always safe to call from a WM_DESTROY handler.
-                unsafe { PostQuitMessage(0) };
+                // Only end the message pump for the LAST surviving window.
+                // Earlier waves wired `PostQuitMessage(0)` unconditionally,
+                // which torpedoed every multi-window scenario the moment any
+                // single window closed.
+                if decrement_live_window_count() == 0 {
+                    // SAFETY: PostQuitMessage is always safe to call.
+                    unsafe { PostQuitMessage(0) };
+                }
                 LRESULT(0)
             }
             _ if msg == WM_APP_WAKE => {

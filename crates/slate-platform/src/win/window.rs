@@ -27,7 +27,9 @@ use windows::core::PCWSTR;
 
 use super::message_loop::WinWindowInner;
 use super::platform::CLASS_NAME;
-use super::{REDRAW_TIMER_ID, next_window_id, register_wake_hwnd, to_wide};
+use super::{
+    REDRAW_TIMER_ID, increment_live_window_count, next_window_id, register_wake_hwnd, to_wide,
+};
 use crate::{Window, WindowId, WindowImeDelegate, WindowOptions, WindowRenderDelegate};
 
 // ---------------------------------------------------------------------------
@@ -44,6 +46,10 @@ pub struct WinWindow {
 impl WinWindow {
     pub(crate) fn new(opts: &WindowOptions, hinstance: HINSTANCE) -> Arc<Self> {
         let id = next_window_id();
+        // Track the live-window count so `WM_DESTROY` only posts `WM_QUIT` for
+        // the last surviving native window. Multi-window apps need this to
+        // outlive a single window close.
+        increment_live_window_count();
         let title_w = to_wide(&opts.title);
 
         // Cache a DXGI factory up-front so per-redraw LUID probes don't
