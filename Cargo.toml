@@ -15,6 +15,7 @@ members = [
     "examples/reactive-counter",
     "examples/recovery-gallery",
     "examples/textarea",
+    "examples/two-window-counters",
     "examples/win-dcomp-spike",
 ]
 resolver = "2"
