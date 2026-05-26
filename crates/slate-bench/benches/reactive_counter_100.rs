@@ -2,7 +2,10 @@
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use slate_bench::{headless_app, scenes::reactive_counter_100};
-use slate_framework::profiling;
+use slate_framework::profiling::{self, CountingAllocator};
+
+#[global_allocator]
+static ALLOC: CountingAllocator = CountingAllocator;
 
 fn bench(c: &mut Criterion) {
     let mut app = headless_app();
