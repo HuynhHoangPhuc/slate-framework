@@ -20,7 +20,7 @@ use wgpu::{
 
 use crate::layer_ordering::{DefaultPainterOrder, LayerOrdering, ScenePrimitive};
 use crate::scene::Scene;
-use crate::surface_target::{ConfigureError, FrameAcquireError};
+use crate::surface_target::{CompositionTarget, ConfigureError, FrameAcquireError};
 
 use super::{RenderError, Renderer};
 
