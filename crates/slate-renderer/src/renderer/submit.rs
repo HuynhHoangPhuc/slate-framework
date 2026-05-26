@@ -20,7 +20,12 @@ use wgpu::{
 
 use crate::layer_ordering::{DefaultPainterOrder, LayerOrdering, ScenePrimitive};
 use crate::scene::Scene;
-use crate::surface_target::{CompositionTarget, ConfigureError, FrameAcquireError};
+use crate::surface_target::{ConfigureError, FrameAcquireError};
+// On macOS, `Renderer.target` is the concrete `Box<MacSurface>` (not a trait
+// object), so the trait must be in scope to call `acquire_frame`, `configure`,
+// and `present`. On Windows the field is already `Box<dyn CompositionTarget>`.
+#[cfg(target_os = "macos")]
+use crate::surface_target::CompositionTarget;
 
 use super::{RenderError, Renderer};
 
