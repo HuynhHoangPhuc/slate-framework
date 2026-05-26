@@ -46,14 +46,19 @@ impl AppState {
 
         // Wire the reactive runtime's redraw bridge. The closure captures only
         // Arc<Mutex<…>> which is Send+Sync, satisfying install_redraw's bound.
-        // On fire it walks all registered windows in insertion order and calls
-        // request() synchronously on each — cheap (non-blocking PostMessage /
-        // setNeedsDisplay) and deterministic for golden-trace stability.
+        //
+        // Per-window RedrawRequesters all wrap the same `wake_run_loop`
+        // function (on Win32: PostMessage(WM_APP_WAKE)). Calling them in a loop
+        // posts N identical wake messages per signal change. On multi-window
+        // apps that combines with the wake handler (which re-posts once per
+        // window) into an exponential WM_APP_WAKE flood that starves WM_PAINT.
+        // Fire wake exactly once per signal change: the wake handler will
+        // then InvalidateRect every live window.
         runtime.install_redraw({
             let requesters = Arc::clone(&redraw_requesters);
             Arc::new(move || {
                 let guard = requesters.lock().unwrap();
-                for (_, req) in guard.iter() {
+                if let Some((_, req)) = guard.first() {
                     req.request();
                 }
             })
@@ -202,13 +207,16 @@ impl AppState {
     /// window (the executor may have unblocked a reactive effect).
     pub fn handle_wake(&self) -> AppSignal {
         self.executor.foreground.poll();
-        // Wake all live windows so any reactive effect that just unblocked gets
-        // a paint tick. The platform's request_redraw is idempotent and cheap.
-        let guard = self.redraw_requesters.lock().unwrap();
-        for (_, req) in guard.iter() {
-            req.request();
+        // Invalidate every live window directly (InvalidateRect / setNeedsDisplay).
+        // Earlier versions called `req.request()` here, which on Win32 posts a
+        // fresh WM_APP_WAKE per window — that recursively re-enters this handler
+        // and on N>1 windows turns into a runaway WM_APP_WAKE flood that
+        // starves WM_PAINT. Direct invalidation requests a paint tick without
+        // re-posting the wake message.
+        let guard = self.windows.borrow();
+        for win in guard.values() {
+            win.window.request_redraw();
         }
-        drop(guard);
         AppSignal::None
     }
 

@@ -8,8 +8,13 @@
 //!    instances for both windows (shared-state partition)
 //!  - `handle_window_destroyed` returns no quit signal while one window
 //!    survives, then the platform-appropriate signal once the last window closes
-//!  - the reactive wake-all bridge notifies **every** registered requester,
-//!    not just the one associated with the signal's origin window
+//!  - the reactive wake bridge posts exactly one wake per signal change
+//!    (single PostMessage on Win32); fan-out to every window happens later
+//!    inside `handle_wake`, which invalidates each live window directly.
+//!    Posting one wake per registered requester recurses through the wake
+//!    handler and floods the OS message queue with WM_APP_WAKE, starving
+//!    WM_PAINT — the multi-window hang reproduced when both windows shared
+//!    a `RedrawRequester` wrapping `wake_run_loop`.
 //!
 //! Runs cross-platform under `harness = false` so its `fn main` executes on
 //! the process main thread. Required on macOS for `MainThreadMarker`.
@@ -290,7 +295,7 @@ fn check_last_window_destroy_semantics() -> Result<(), String> {
 // Test: reactive wake-all bridge notifies all registered requesters
 // ---------------------------------------------------------------------------
 
-fn check_redraw_bridge_wakes_all_windows() -> Result<(), String> {
+fn check_redraw_bridge_wakes_once_per_signal_change() -> Result<(), String> {
     let platform = DefaultPlatform::new();
 
     let window_a = platform.create_window(WindowOptions {
@@ -357,15 +362,23 @@ fn check_redraw_bridge_wakes_all_windows() -> Result<(), String> {
     let after_a = *count_a.lock().unwrap();
     let after_b = *count_b.lock().unwrap();
 
+    // New contract (Win32 WM_APP_WAKE flood fix): the install_redraw bridge
+    // wakes exactly ONCE per signal change. Fan-out to every window happens
+    // inside `handle_wake`, not at the install_redraw layer. Fanning out
+    // here previously turned N>=2 windows into an exponential WM_APP_WAKE
+    // flood that starved WM_PAINT.
+    //
+    // Window A's requester (first in the Vec) is the one woken; window B's
+    // requester is intentionally NOT called by the bridge.
     ensure!(
-        after_a > before_a,
-        "window A requester must be notified when a signal changes (before={}, after={})",
+        after_a == before_a + 1,
+        "wake bridge must fire exactly once for window A (before={}, after={})",
         before_a,
         after_a,
     );
     ensure!(
-        after_b > before_b,
-        "window B requester must be notified when a signal changes (before={}, after={})",
+        after_b == before_b,
+        "wake bridge must NOT iterate per-window requesters (would re-introduce WM_APP_WAKE flood); window B count must stay at {} (after={})",
         before_b,
         after_b,
     );
@@ -455,7 +468,7 @@ fn main() {
         ("capture_state_is_per_window", check_capture_state_is_per_window),
         ("focus_state_is_per_window", check_focus_state_is_per_window),
         ("last_window_destroy_semantics", check_last_window_destroy_semantics),
-        ("redraw_bridge_wakes_all_windows", check_redraw_bridge_wakes_all_windows),
+        ("redraw_bridge_wakes_once_per_signal_change", check_redraw_bridge_wakes_once_per_signal_change),
         ("mouse_move_dispatch_is_per_window", check_mouse_move_dispatch_is_per_window),
         ("key_dispatch_routes_to_correct_window", check_key_dispatch_routes_to_correct_window),
     ];

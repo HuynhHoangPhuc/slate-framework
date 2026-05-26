@@ -99,8 +99,32 @@ pub fn wake_run_loop() {
 
 pub(crate) fn dispatch_event(event: Event) {
     HANDLER.with(|h| {
-        if let Some(handler) = h.borrow_mut().as_mut() {
-            handler(event);
+        // try_borrow_mut to tolerate re-entrant dispatch.
+        //
+        // `CreateWindowExW` synchronously fires WM_NCCREATE → WM_CREATE →
+        // WM_WINDOWPOSCHANGED → WM_SIZE through wndproc on the same thread
+        // before returning. If a user handler calls `AppContext::create_window`
+        // (the dynamic mid-loop create API), the resulting `CreateWindowExW`
+        // re-enters this funnel while the outer handler still holds the
+        // borrow. A `borrow_mut` here would panic and abort the process.
+        //
+        // The dropped events are non-essential for the dynamic create path:
+        // `drain_pending_window_creates` calls `init_surfaces` after the
+        // outer handler unwinds, which queries the live window for its size
+        // and requests its first redraw directly.
+        match h.try_borrow_mut() {
+            Ok(mut guard) => {
+                if let Some(handler) = guard.as_mut() {
+                    handler(event);
+                }
+            }
+            Err(_) => {
+                log::trace!(
+                    target: "slate::win",
+                    "dispatch_event: re-entrant call, event dropped: {:?}",
+                    event
+                );
+            }
         }
     });
 }

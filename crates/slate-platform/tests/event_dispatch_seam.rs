@@ -47,6 +47,33 @@ fn lifecycle_events_reach_handler_with_window_id() {
 }
 
 #[test]
+fn reentrant_dispatch_does_not_panic() {
+    // Win32 reproduction: a handler that triggers `CreateWindowExW` re-enters
+    // `dispatch_event` through wndproc (WM_NCCREATE → WM_SIZE) while the outer
+    // handler still holds the HANDLER borrow. A naive `borrow_mut` panics here
+    // and the wndproc trampoline turns the panic into `process::abort` — the
+    // exact crash from the Ctrl+N path in the two-window example. The funnel
+    // must drop the re-entrant event instead of panicking.
+    let outer_count: Rc<RefCell<usize>> = Rc::new(RefCell::new(0));
+    let counter = Rc::clone(&outer_count);
+
+    install_event_handler_for_test(Box::new(move |event| {
+        *counter.borrow_mut() += 1;
+        if let Event::WindowCloseRequested { .. } = event {
+            // Simulate the CreateWindowExW → synchronous wndproc re-entry.
+            dispatch_event_for_test(Event::WindowDestroyed { window: WindowId(99) });
+        }
+    }));
+
+    dispatch_event_for_test(Event::WindowCloseRequested { window: WindowId(1) });
+    clear_event_handler_for_test();
+
+    // Outer event was delivered exactly once; the re-entrant inner event is
+    // silently dropped (the contract documented on `dispatch_event`).
+    assert_eq!(*outer_count.borrow(), 1, "re-entrant event must be dropped, not double-delivered or panic");
+}
+
+#[test]
 fn dispatch_is_noop_after_handler_cleared() {
     let recorded: Rc<RefCell<usize>> = Rc::new(RefCell::new(0));
     let sink = Rc::clone(&recorded);
