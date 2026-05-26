@@ -1,6 +1,7 @@
 //! MetalView and WindowDelegate — AppKit view and delegate callbacks.
 
 mod render;
+mod resize;
 mod responder;
 
 use std::cell::{Cell, RefCell};
@@ -16,10 +17,8 @@ use objc2_foundation::{
     MainThreadMarker, NSArray, NSAttributedString, NSAttributedStringKey, NSNotification, NSObject,
     NSObjectProtocol, NSPoint, NSRange, NSRangePointer, NSRect, NSSize, NSUInteger,
 };
-use super::{
-    dispatch_event, ffi_boundary, post_redraw_event, unregister_window, with_window_delegate,
-};
-use crate::{Event, Key, KeyCode, Modifiers, PhysicalSize, WindowId};
+use super::{dispatch_event, ffi_boundary, unregister_window};
+use crate::{Event, Key, KeyCode, Modifiers, WindowId};
 
 // ---------------------------------------------------------------------------
 // MetalView — custom NSView backed by CAMetalLayer
@@ -99,58 +98,30 @@ define_class!(
             self.render_draw_rect(_rect);
         }
 
-        /// Live-resize hook: AppKit calls setFrameSize: once per drag tick
-        /// inside an open implicit CATransaction. We let super update the
-        /// view bounds (the transaction stays open), then — while still
-        /// inside the selector — dispatch a sync resize + render. The
-        /// renderer's present_sync calls CATransaction::flush() to commit
-        /// the open transaction with the new framebuffer in place. Without
-        /// this the new bounds commit one selector before the new pixels
-        /// land, producing the right/bottom edge flash.
-        ///
-        /// Gated on live_resize so steady-state size-from-code paths
-        /// (programmatic frame changes) flow through windowDidResize:
-        /// instead and aren't pulled onto the sync-present path unnecessarily.
+        /// Live-resize tick. Super updates view bounds; post-super sync resize
+        /// in `resize.rs` keeps the framebuffer in step with the open
+        /// CATransaction so right/bottom edges don't flash stale pixels.
         #[unsafe(method(setFrameSize:))]
         fn set_frame_size(&self, size: NSSize) {
             // SAFETY: NSView::setFrameSize: takes NSSize; super signature matches.
             let _: () = unsafe { msg_send![super(self), setFrameSize: size] };
-            ffi_boundary(|| {
-                if !self.ivars().live_resize.get() {
-                    return;
-                }
-                let scale = self.window().map(|w| w.backingScaleFactor()).unwrap_or(1.0);
-                let pw = (size.width * scale).round() as u32;
-                let ph = (size.height * scale).round() as u32;
-                if pw == 0 || ph == 0 {
-                    return;
-                }
-                let id = self.ivars().window_id.get();
-                with_window_delegate(id, |d| {
-                    d.on_resize_sync(id, PhysicalSize::new(pw, ph))
-                });
-            });
+            self.resize_set_frame_size(size);
         }
 
-        /// AppKit signals start of live resize. Sets the gate so the
-        /// setFrameSize: override above only dispatches during a drag.
+        /// AppKit signals start of live resize. Body in `resize.rs`.
         #[unsafe(method(viewWillStartLiveResize))]
         fn view_will_start_live_resize(&self) {
             // SAFETY: super signature is `- (void)viewWillStartLiveResize`.
             let _: () = unsafe { msg_send![super(self), viewWillStartLiveResize] };
-            ffi_boundary(|| {
-                self.ivars().live_resize.set(true);
-            });
+            self.resize_view_will_start_live_resize();
         }
 
-        /// AppKit signals end of live resize. Clears the gate.
+        /// AppKit signals end of live resize. Body in `resize.rs`.
         #[unsafe(method(viewDidEndLiveResize))]
         fn view_did_end_live_resize(&self) {
             // SAFETY: super signature is `- (void)viewDidEndLiveResize`.
             let _: () = unsafe { msg_send![super(self), viewDidEndLiveResize] };
-            ffi_boundary(|| {
-                self.ivars().live_resize.set(false);
-            });
+            self.resize_view_did_end_live_resize();
         }
 
         // -----------------------------------------------------------------------
@@ -434,34 +405,10 @@ define_class!(
 
     // SAFETY: NSWindowDelegate has no additional safety requirements.
     unsafe impl NSWindowDelegate for WindowDelegate {
-        /// Called after the window has been resized.
+        /// Called after the window has been resized. Body in `resize.rs`.
         #[unsafe(method(windowDidResize:))]
         fn window_did_resize(&self, notification: &NSNotification) {
-            let id = self.ivars().window_id.get();
-            ffi_boundary(|| {
-                // Retrieve the physical size from the notification's NSWindow object.
-                if let Some(win) = notification
-                    .object()
-                    .and_then(|obj| obj.downcast::<NSWindow>().ok())
-                {
-                    let frame = win.contentView().map(|v| v.frame()).unwrap_or(NSRect::ZERO);
-                    let scale = win.backingScaleFactor();
-                    let lw = frame.size.width.round() as u32;
-                    let lh = frame.size.height.round() as u32;
-                    let pw = (frame.size.width * scale).round() as u32;
-                    let ph = (frame.size.height * scale).round() as u32;
-                    // Sync delegate first so framebuffer is ready before observers see resize.
-                    with_window_delegate(id, |d| d.on_resize_sync(id, PhysicalSize::new(pw, ph)));
-                    dispatch_event(Event::WindowResized {
-                        window: id,
-                        logical_size: (lw, lh),
-                        physical_size: (pw, ph),
-                        scale_factor: scale,
-                    });
-                    // Ensure redraw is scheduled after resize.
-                    post_redraw_event(id);
-                }
-            });
+            self.resize_window_did_resize(notification);
         }
 
         /// Called when the user (or code) requests the window to close.
@@ -492,43 +439,11 @@ define_class!(
         }
 
         /// Called when the window's backing scale factor changes (e.g. user
-        /// drags the window between displays of different DPI). Re-syncs the
-        /// `CAMetalLayer.contentsScale` so subsequent renders match the new
-        /// physical pixel density.
+        /// drags the window between displays of different DPI). Body in
+        /// `resize.rs`.
         #[unsafe(method(windowDidChangeBackingProperties:))]
         fn window_did_change_backing_properties(&self, notification: &NSNotification) {
-            let id = self.ivars().window_id.get();
-            ffi_boundary(|| {
-                let Some(win) = notification
-                    .object()
-                    .and_then(|obj| obj.downcast::<NSWindow>().ok())
-                else {
-                    return;
-                };
-                let scale = win.backingScaleFactor();
-                if let Some(view) = win.contentView() {
-                    // Update contentsScale FIRST — before invoking sync delegate.
-                    if let Some(layer) = view.layer() {
-                        layer.setContentsScale(scale);
-                    }
-                    // Drawable size in physical pixels follows the new scale.
-                    let frame = view.frame();
-                    let lw = frame.size.width.round() as u32;
-                    let lh = frame.size.height.round() as u32;
-                    let pw = (frame.size.width * scale).round() as u32;
-                    let ph = (frame.size.height * scale).round() as u32;
-                    // Sync delegate second — contentsScale is now correct.
-                    with_window_delegate(id, |d| d.on_resize_sync(id, PhysicalSize::new(pw, ph)));
-                    dispatch_event(Event::WindowResized {
-                        window: id,
-                        logical_size: (lw, lh),
-                        physical_size: (pw, ph),
-                        scale_factor: scale,
-                    });
-                    // Ensure redraw is scheduled after scale change.
-                    post_redraw_event(id);
-                }
-            });
+            self.resize_window_did_change_backing_properties(notification);
         }
 
         /// Called when the window's occlusion state changes. Body in
