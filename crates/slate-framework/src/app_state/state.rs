@@ -23,8 +23,10 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-use slate_platform::WindowId;
+use slate_platform::{DefaultPlatform, DefaultWindow, WindowId};
 
+use crate::app::AppContext;
+use crate::erased_view::ErasedView;
 use crate::event::{
     ImeCommitHandler, ImeLifecycleHandler, ImePreeditHandler, KeyHandler, TextInputHandler,
 };
@@ -35,6 +37,19 @@ use crate::reactive_state::StateRegistry;
 use crate::text_system::{TextSystem, TextSystemObserver};
 
 use super::window_state::WindowState;
+
+/// Type-erased view factory used both for the initial window's lazy `Event::Resumed`
+/// init and for windows pushed onto `pending_window_creates` by
+/// `AppContext::create_window`.
+pub(crate) type ErasedViewFactory = Box<dyn FnMut(&AppContext) -> Box<dyn ErasedView>>;
+
+/// A window that has been created (HWND/NSWindow allocated) but not yet
+/// fully wired into `windows`/`redraw_requesters`/delegates. Drained inside
+/// `App::run` after each event dispatch.
+pub(crate) struct PendingWindowCreate {
+    pub window: Arc<DefaultWindow>,
+    pub view_factory: ErasedViewFactory,
+}
 
 /// Slimmed shared application state.
 ///
@@ -78,6 +93,19 @@ pub struct AppState {
 
     // Process-level quit flag. Producers: recovery exhaustion, last-window-close.
     pub pending_quit: std::cell::Cell<bool>,
+
+    // Platform handle, installed by `App::run` immediately before entering
+    // the event loop. `None` for unit tests that exercise AppState without
+    // a real platform. Used by `AppContext::create_window` so a handler can
+    // request a new HWND/NSWindow without piping the platform through every
+    // dispatch path.
+    pub(crate) platform: RefCell<Option<Rc<DefaultPlatform>>>,
+
+    // Windows allocated by `AppContext::create_window` mid-dispatch. Drained
+    // in `App::run` AFTER the event handler unwinds so the new WindowState
+    // insertion never aliases the outer `windows.borrow()` taken by the
+    // dispatch path.
+    pub(crate) pending_window_creates: RefCell<Vec<PendingWindowCreate>>,
 
     // App-level keyboard handler vecs (shared across windows by design).
     pub(super) on_key_down: RefCell<Vec<KeyHandler>>,

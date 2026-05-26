@@ -10,18 +10,23 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-use slate_platform::{Window, WindowId};
+use slate_platform::{
+    DefaultPlatform, DefaultWindow, Window, WindowId, WindowImeDelegate, WindowRenderDelegate,
+    wake_run_loop,
+};
 
+use crate::app::AppContext;
 use crate::executor::{Executor, RedrawRequester};
 use crate::image_cache::{ImageCache, ImageSystemObserver};
 use crate::paint_cache::{TextShapingCache, TextShapingCacheObserver};
 use crate::reactive_state::StateRegistry;
 use crate::text_system::TextSystemObserver;
 
-use super::state::AppState;
+use super::state::{AppState, ErasedViewFactory, PendingWindowCreate};
 use super::types::AppSignal;
 #[cfg(any(test, feature = "test-hooks"))]
 use super::types::RecoveryState;
+use super::window_state::WindowState;
 
 impl AppState {
     /// Create a new `AppState`.
@@ -81,6 +86,8 @@ impl AppState {
             state_registry: RefCell::new(state_registry),
             redraw_requesters,
             pending_quit: std::cell::Cell::new(false),
+            platform: RefCell::new(None),
+            pending_window_creates: RefCell::new(Vec::new()),
             on_key_down: RefCell::new(Vec::new()),
             on_key_up: RefCell::new(Vec::new()),
             on_text_input: RefCell::new(Vec::new()),
@@ -95,6 +102,89 @@ impl AppState {
     /// can include it. Called after inserting the `WindowState` into `windows`.
     pub(crate) fn register_redraw_requester(&self, window: WindowId, req: RedrawRequester) {
         self.redraw_requesters.lock().unwrap().push((window, req));
+    }
+
+    /// Install the platform handle so `AppContext::create_window` can allocate
+    /// new platform windows mid-dispatch. Called once by `App::run` immediately
+    /// before entering the event loop.
+    pub(crate) fn install_platform(&self, platform: Rc<DefaultPlatform>) {
+        *self.platform.borrow_mut() = Some(platform);
+    }
+
+    /// Wire a freshly-allocated platform window into `AppState`:
+    ///   1. Construct + insert `WindowState`.
+    ///   2. Register a `RedrawRequester` so the reactive wake-all bridge fans
+    ///      out to this window.
+    ///   3. Install the shared render + IME delegates as `Weak<dyn …>` (same
+    ///      Rc-clone-then-coerce dance as the first window in `App::run`).
+    ///
+    /// Used by both the pre-`run` `App::create_window` path and the mid-loop
+    /// `AppContext::create_window` drain path. The renderer is **not** built
+    /// here — `init_surfaces` does that, called by the caller after the
+    /// `Event::Resumed` rendezvous (pre-run) or immediately at drain time
+    /// (dynamic).
+    pub(crate) fn install_window(self: &Rc<Self>, window: Arc<DefaultWindow>) {
+        let id = window.id();
+
+        // 1. Insert WindowState.
+        let win_state = WindowState::new(window.clone(), self.runtime.clone());
+        self.windows.borrow_mut().insert(id, win_state);
+
+        // 2. Register a redraw requester for the reactive wake-all bridge.
+        let redraw_requester = RedrawRequester::new(wake_run_loop);
+        self.register_redraw_requester(id, redraw_requester);
+
+        // 3. Install delegates. CANNOT use `as Weak<dyn …>` — unsizing
+        // coercions don't trigger on `as`. Must Rc::clone-then-coerce
+        // via let-binding, then downgrade. Identical SAFETY argument as
+        // the first-window path in `App::run`.
+        let dyn_strong: Rc<dyn WindowRenderDelegate> = self.clone();
+        let dyn_weak = Rc::downgrade(&dyn_strong);
+        window.set_render_delegate(dyn_weak);
+        drop(dyn_strong);
+
+        let ime_strong: Rc<dyn WindowImeDelegate> = self.clone();
+        let ime_weak = Rc::downgrade(&ime_strong);
+        window.set_ime_delegate(ime_weak);
+        drop(ime_strong);
+    }
+
+    /// Drain `pending_window_creates` and finish wiring each window:
+    ///   1. `install_window` (state insert + delegates).
+    ///   2. `init_surfaces` (renderer + text system + view).
+    ///
+    /// Called by `App::run` after every event dispatch. Idempotent: an empty
+    /// queue is a no-op. The drain takes ownership before iterating so a
+    /// reactive effect fired by `init_surfaces` cannot re-push and deadlock.
+    pub(crate) fn drain_pending_window_creates(
+        self: &Rc<Self>,
+        cx: &AppContext,
+        platform: &DefaultPlatform,
+    ) {
+        let drained: Vec<PendingWindowCreate> =
+            self.pending_window_creates.borrow_mut().drain(..).collect();
+        for mut pending in drained {
+            let id = pending.window.id();
+            self.install_window(pending.window);
+            if let Err(e) = self.init_surfaces(id, &mut pending.view_factory, cx, platform) {
+                log::error!("drain_pending_window_creates: init_surfaces failed for {:?}: {}", id, e);
+            }
+        }
+    }
+
+    /// Push a window onto the pending-create queue. Returns the `WindowId`
+    /// of the (already-allocated) platform window so a caller can store it
+    /// before the drain step finishes wiring it.
+    pub(crate) fn push_pending_window_create(
+        &self,
+        window: Arc<DefaultWindow>,
+        view_factory: ErasedViewFactory,
+    ) -> WindowId {
+        let id = window.id();
+        self.pending_window_creates
+            .borrow_mut()
+            .push(PendingWindowCreate { window, view_factory });
+        id
     }
 
     /// Unregister a window's redraw requester. Called before removing the

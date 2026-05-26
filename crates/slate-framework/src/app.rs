@@ -7,12 +7,10 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use slate_platform::{
-    DefaultPlatform, DefaultWindow, Event, Platform, Window, WindowImeDelegate, WindowOptions,
-    WindowRenderDelegate, wake_run_loop,
+    DefaultPlatform, DefaultWindow, Event, Platform, Window, WindowId, WindowOptions, wake_run_loop,
 };
 
-use crate::app_state::{AppSignal, AppState};
-use crate::app_state::window_state::WindowState;
+use crate::app_state::{AppSignal, AppState, ErasedViewFactory};
 use crate::erased_view::ErasedView;
 use crate::event::{
     EventCtx, ImeCommitEvent, ImeCommitHandler, ImeLifecycleEvent, ImeLifecycleHandler,
@@ -60,9 +58,50 @@ impl AppContext {
         self.runtime.clone()
     }
 
+    /// Open a new window from inside an event handler.
+    ///
+    /// The platform window (HWND on Win32, NSWindow on AppKit) is allocated
+    /// **synchronously** so we can return a stable [`WindowId`] right away.
+    /// The framework-side bring-up — `WindowState` insertion, delegate
+    /// install, renderer + view init — is **deferred** to the dispatch drain
+    /// step at the end of the current event so it never aliases the
+    /// `windows.borrow()` already taken by the in-flight handler.
+    ///
+    /// Returns `None` only when called from a context where the framework
+    /// has dropped its platform handle (post-`run`, or a unit-test
+    /// `AppContext::new_for_test`).
+    pub fn create_window<V: View + 'static>(
+        &self,
+        opts: WindowOptions,
+        mut view_fn: impl FnMut(&AppContext) -> V + 'static,
+    ) -> Option<WindowId> {
+        let weak = self.state.as_ref()?;
+        let state = weak.upgrade()?;
+        let platform_rc = state.platform.borrow().clone()?;
+        let window = platform_rc.create_window(opts);
+        let cx_clone = self.clone();
+        let factory: ErasedViewFactory = Box::new(move |_cx: &AppContext| -> Box<dyn ErasedView> {
+            Box::new(view_fn(&cx_clone))
+        });
+        Some(state.push_pending_window_create(window, factory))
+    }
+
     /// Get the background executor for spawning async tasks.
     pub fn background_executor(&self) -> BackgroundExecutor {
         self.background_executor.clone()
+    }
+
+    /// Request the run loop to exit at the next event tick.
+    ///
+    /// Sets the shared `pending_quit` flag that `App::run` checks before each
+    /// dispatch. Idempotent. Required by examples that drive their own quit
+    /// affordance (`AppKit` keeps the app alive after last-window-close, so
+    /// macOS examples must wire Cmd+Q explicitly). No-op outside of a live
+    /// `App::run` (e.g. `new_for_test` constructions).
+    pub fn request_quit(&self) {
+        let Some(weak) = &self.state else { return };
+        let Some(state) = weak.upgrade() else { return };
+        state.pending_quit.set(true);
     }
 
     /// Set focus to `id` in the given window immediately (outside-handler
@@ -116,13 +155,22 @@ impl AppContext {
     }
 }
 
+/// A window registered before `App::run` but not yet wired into `AppState`.
+/// Built by `App::create_window`, materialised inside `App::run` alongside
+/// the first window.
+struct PendingPreRunWindow {
+    window: Arc<DefaultWindow>,
+    view_factory: ErasedViewFactory,
+}
+
 /// Application container.
 ///
 /// Owns all framework resources: platform, window, executor,
 /// layout tree, hit-test list, accessibility tree, and text system.
 pub struct App {
-    platform: DefaultPlatform,
+    platform: Rc<DefaultPlatform>,
     window: Arc<DefaultWindow>,
+    pending_windows: Vec<PendingPreRunWindow>,
     on_key_down: Vec<KeyHandler>,
     on_key_up: Vec<KeyHandler>,
     on_text_input: Vec<TextInputHandler>,
@@ -137,12 +185,13 @@ impl App {
     ///
     /// The renderer and text system are initialized lazily on `Event::Resumed`.
     pub fn new(options: WindowOptions) -> Self {
-        let platform = DefaultPlatform::new();
+        let platform = Rc::new(DefaultPlatform::new());
         let window = platform.create_window(options);
 
         Self {
             platform,
             window,
+            pending_windows: Vec::new(),
             on_key_down: Vec::new(),
             on_key_up: Vec::new(),
             on_text_input: Vec::new(),
@@ -151,6 +200,33 @@ impl App {
             on_ime_enabled: Vec::new(),
             on_ime_disabled: Vec::new(),
         }
+    }
+
+    /// Open an additional window before entering the run loop.
+    ///
+    /// The platform window is allocated immediately so the returned
+    /// [`WindowId`] is usable straight away (e.g. capturing it in a handler
+    /// closure registered via [`App::on_key_down`]). `WindowState` insertion,
+    /// delegate install, and renderer init are deferred until inside
+    /// [`App::run`] so the first window and any pre-run extras come up in a
+    /// single rendezvous on `Event::Resumed`.
+    ///
+    /// The `view_fn` is erased to `Box<dyn ErasedView>` at registration so
+    /// `AppState` does not need to be generic over `V`.
+    pub fn create_window<V: View + 'static>(
+        &mut self,
+        opts: WindowOptions,
+        mut view_fn: impl FnMut(&AppContext) -> V + 'static,
+    ) -> WindowId {
+        let window = self.platform.create_window(opts);
+        let id = window.id();
+        let factory: ErasedViewFactory =
+            Box::new(move |cx: &AppContext| -> Box<dyn ErasedView> { Box::new(view_fn(cx)) });
+        self.pending_windows.push(PendingPreRunWindow {
+            window,
+            view_factory: factory,
+        });
+        id
     }
 
     /// Register an App-level handler for `KeyDown` events. Multiple handlers
@@ -236,6 +312,7 @@ impl App {
         let App {
             platform,
             window,
+            pending_windows,
             on_key_down,
             on_key_up,
             on_text_input,
@@ -260,13 +337,15 @@ impl App {
             runtime.clone(),
         ));
 
-        // Insert the initial window into the windows map.
-        let window_id = window.id();
-        {
-            let win_state = WindowState::new(window.clone(), runtime.clone());
-            state.windows.borrow_mut().insert(window_id, win_state);
-        }
-        state.register_redraw_requester(window_id, redraw_requester);
+        // Install platform handle so `AppContext::create_window` can allocate
+        // additional platform windows mid-dispatch.
+        state.install_platform(platform.clone());
+
+        // Wire the FIRST window (its WindowState, redraw requester, and
+        // render+IME delegates) using the same helper the dynamic
+        // `AppContext::create_window` path uses.
+        let first_window_id = window.id();
+        state.install_window(window.clone());
 
         let cx = AppContext {
             runtime,
@@ -283,33 +362,25 @@ impl App {
             on_ime_disabled,
         );
 
-        // Install render delegate on the platform window.
-        //
-        // CANNOT write: `Rc::downgrade(&state) as Weak<dyn WindowRenderDelegate>`.
-        // Per Rust Reference (unsized coercions): unsizing coercions are triggered
-        // in coercion sites (let-bindings, fn args, struct fields) but NOT by `as`
-        // casts. The ONLY working path: build an explicit Rc<dyn WindowRenderDelegate>
-        // via Rc::clone-then-coerce in a let-binding, then downgrade it.
-        let dyn_strong: Rc<dyn WindowRenderDelegate> = state.clone();
-        let dyn_weak = Rc::downgrade(&dyn_strong);
-        window.set_render_delegate(dyn_weak);
-        drop(dyn_strong); // strong ref no longer needed; `state` keeps AppState alive.
-
-        // Install IME delegate via the same Rc<dyn …>-via-let-binding
-        // dance. Identical SAFETY argument as above.
-        let ime_strong: Rc<dyn WindowImeDelegate> = state.clone();
-        let ime_weak = Rc::downgrade(&ime_strong);
-        window.set_ime_delegate(ime_weak);
-        drop(ime_strong);
-
-        let platform_ref = &platform;
-        let state_ref = state.clone();
-
-        // Wrap the typed view factory into a type-erased factory for init_surfaces.
+        // Wrap the FIRST window's typed view factory into a type-erased one.
         let cx_clone = cx.clone();
-        let mut erased_factory = move |_cx: &AppContext| -> Box<dyn ErasedView> {
-            Box::new(view_fn(&cx_clone))
-        };
+        let first_erased: ErasedViewFactory = Box::new(
+            move |_cx: &AppContext| -> Box<dyn ErasedView> { Box::new(view_fn(&cx_clone)) },
+        );
+
+        // Wire each pre-`run` window (registered via `App::create_window`) and
+        // build the (id, erased_factory) list consumed on Event::Resumed.
+        let mut resumed_factories: Vec<(WindowId, ErasedViewFactory)> =
+            Vec::with_capacity(1 + pending_windows.len());
+        resumed_factories.push((first_window_id, first_erased));
+        for pre in pending_windows {
+            let id = pre.window.id();
+            state.install_window(pre.window);
+            resumed_factories.push((id, pre.view_factory));
+        }
+
+        let platform_ref = &*platform;
+        let state_ref = state.clone();
 
         platform.run(move |event| {
             // Check pending_quit flag from sync delegate path.
@@ -326,7 +397,7 @@ impl App {
                     target: "slate::test_hooks",
                     "SLATE_FORCE_DEVICE_LOST_MS elapsed - firing force_renderer_device_lost"
                 );
-                let fired = state_ref.force_renderer_device_lost(window_id);
+                let fired = state_ref.force_renderer_device_lost(first_window_id);
                 log::warn!(
                     target: "slate::test_hooks",
                     "force_renderer_device_lost returned fired={fired}"
@@ -335,15 +406,26 @@ impl App {
 
             let signal = match event {
                 Event::Resumed => {
-                    if state_ref
-                        .init_surfaces(window_id, &mut erased_factory, &cx, platform_ref)
-                        .is_err()
-                    {
+                    // Initialise renderer + view for every window registered
+                    // before `run` (first + any `App::create_window` extras).
+                    // If ANY window fails to come up, request quit.
+                    let mut had_failure = false;
+                    for (id, factory) in resumed_factories.iter_mut() {
+                        if state_ref
+                            .init_surfaces(*id, factory, &cx, platform_ref)
+                            .is_err()
+                        {
+                            had_failure = true;
+                        }
+                    }
+                    if had_failure {
                         AppSignal::RequestQuit
                     } else {
                         #[cfg(all(target_os = "windows", feature = "test-hooks"))]
                         arm_force_device_lost_trigger();
-                        AppSignal::RequestRedraw { window: window_id }
+                        AppSignal::RequestRedraw {
+                            window: first_window_id,
+                        }
                     }
                 }
                 Event::WindowResized { window, physical_size, .. } => {
@@ -352,11 +434,11 @@ impl App {
                 }
                 Event::WindowRedrawRequested { window, .. } => state_ref.dispatch_redraw(window),
                 Event::WindowCloseRequested { .. } => {
-                    // Platform sends close-requested before destroy. We queue a
-                    // quit signal — the actual `WindowDestroyed` will confirm it.
-                    // For the initial single-window case this is effectively the
-                    // same as RequestQuit.
-                    AppSignal::RequestQuit
+                    // Let the platform proceed with destroy; the last-window
+                    // quit decision is owned by `handle_window_destroyed`,
+                    // which sees the post-destroy windows map and applies the
+                    // platform-default policy (Win32 quits, AppKit stays alive).
+                    AppSignal::None
                 }
                 Event::WindowDestroyed { window, .. } => state_ref.handle_window_destroyed(window),
                 Event::Wake => state_ref.handle_wake(),
@@ -441,6 +523,11 @@ impl App {
                 AppSignal::RequestRedraw { window } => state_ref.request_redraw_for(window),
                 AppSignal::None => {}
             }
+
+            // Drain any windows requested mid-dispatch via
+            // `AppContext::create_window`. Borrow on `windows` taken by the
+            // handler has been released by this point.
+            state_ref.drain_pending_window_creates(&cx, platform_ref);
         });
     }
 }
