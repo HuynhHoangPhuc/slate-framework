@@ -23,6 +23,9 @@ mod owner;
 mod runtime;
 mod signal;
 
+#[cfg(feature = "profiling")]
+pub mod profiling;
+
 pub use effect::Effect;
 pub use ids::{EffectId, ObserverId, SignalId};
 pub use memo::Memo;

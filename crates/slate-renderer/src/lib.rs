@@ -49,6 +49,9 @@ pub mod shadow_pipeline;
 pub mod surface_target;
 pub mod units;
 
+#[cfg(feature = "profiling")]
+pub mod profiling;
+
 // Platform-specific modules (internal)
 #[cfg(target_os = "macos")]
 pub(crate) mod mac_surface;

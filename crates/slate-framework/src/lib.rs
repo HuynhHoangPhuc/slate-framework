@@ -49,6 +49,8 @@ pub(crate) mod image_cache;
 pub mod ime;
 pub mod layout;
 pub(crate) mod paint_cache;
+#[cfg(feature = "profiling")]
+pub mod profiling;
 pub(crate) mod reactive_state;
 pub mod reactive_value;
 pub mod render_cx;

@@ -8,6 +8,13 @@ repository.workspace = true
 authors.workspace = true
 description = "Reactive primitives for Slate UI framework"
 
+[features]
+default = []
+# Enables in-process profiling counters (signal-notify, effect-reentry) on
+# atomic statics. Counters compile out of the default build via per-call-site
+# `#[cfg(feature = "profiling")]` gates.
+profiling = []
+
 [dependencies]
 parking_lot.workspace = true
 log.workspace = true

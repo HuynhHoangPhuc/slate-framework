@@ -14,6 +14,10 @@ categories = ["gui", "graphics", "rendering::graphics-api"]
 [features]
 default = []
 test-hooks = []
+# Enables in-process profiling counters (paint-cmd) on an atomic static.
+# Counters compile out of the default build via per-call-site
+# `#[cfg(feature = "profiling")]` gates.
+profiling = []
 
 [dependencies]
 slate-platform = { path = "../slate-platform", version = "0.0.2" }

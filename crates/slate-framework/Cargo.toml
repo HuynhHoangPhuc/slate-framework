@@ -47,6 +47,11 @@ insta.workspace = true
 default = []
 tokio = ["dep:tokio", "dep:async-compat"]
 test-hooks = ["slate-renderer/test-hooks", "slate-platform/test-hooks"]
+# Unified profiling surface. Re-exports per-crate counters
+# (`slate-reactive::profiling`, `slate-renderer::profiling`) and owns the
+# optional counting allocator. Default-build is byte-equivalent because every
+# counter increment sits behind a `#[cfg(feature = "profiling")]` gate.
+profiling = ["slate-reactive/profiling", "slate-renderer/profiling"]
 
 # Dispatch suites for the multi-line TextArea run their `fn main` on the process
 # main thread (`harness = false`) so the real platform + a 1×1 window construct
