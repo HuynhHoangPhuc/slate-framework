@@ -25,7 +25,7 @@ unicode-segmentation.workspace = true
 
 # Phase 4 async runtime (pinned to latest stable 2026-05-07)
 smol = "=2.0.2"
-async-compat = { version = "=0.2.4", optional = true }
+async-compat = { version = "=0.2.5", optional = true }
 tokio = { version = "=1.52.0", features = ["rt"], optional = true }
 
 # Shared workspace deps
