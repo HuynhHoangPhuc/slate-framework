@@ -77,6 +77,8 @@ pub struct ShadowPipeline {
 }
 
 impl ShadowPipeline {
+    /// Construct the shadow pipeline against the given `device`, `surface_format`,
+    /// and viewport bind group layout.
     pub fn new(
         device: &Device,
         surface_format: TextureFormat,
@@ -212,6 +214,7 @@ impl ShadowPipeline {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
+    /// Returns the current size of the instance buffer in bytes.
     pub fn capacity_bytes(&self) -> u64 {
         self.instance_capacity_bytes
     }

@@ -160,9 +160,13 @@ const _: () = assert!(core::mem::size_of::<GlyphInstance>() == 64);
 /// `RenderPass::draw_indexed`/`draw` without truncation worry.
 #[derive(Clone, Debug, Default)]
 pub struct Layer {
+    /// Range into [`Scene::rects`] belonging to this layer.
     pub rects: Range<u32>,
+    /// Range into [`Scene::shadows`] belonging to this layer.
     pub shadows: Range<u32>,
+    /// Range into [`Scene::images`] belonging to this layer.
     pub images: Range<u32>,
+    /// Range into [`Scene::glyphs`] belonging to this layer.
     pub glyphs: Range<u32>,
 }
 
@@ -192,10 +196,15 @@ impl Layer {
 /// growth.
 #[derive(Debug, Default)]
 pub struct Scene {
+    /// All rectangle instances across every layer, indexed by [`Layer::rects`].
     pub rects: Vec<RectInstance>,
+    /// All shadow instances across every layer, indexed by [`Layer::shadows`].
     pub shadows: Vec<ShadowInstance>,
+    /// All image instances across every layer, indexed by [`Layer::images`].
     pub images: Vec<ImageInstance>,
+    /// All glyph instances across every layer, indexed by [`Layer::glyphs`].
     pub glyphs: Vec<GlyphInstance>,
+    /// One [`Layer`] per painter's-algorithm pass, in draw order.
     pub layers: Vec<Layer>,
     /// Tracks whether the last entry in `layers` is still being filled. A
     /// `push_*` with no open layer auto-creates layer 0; `push_layer()`
@@ -248,6 +257,7 @@ impl Scene {
         l.rects.is_empty() && l.shadows.is_empty() && l.images.is_empty() && l.glyphs.is_empty()
     }
 
+    /// Push a rectangle into the currently-open layer (opens layer 0 if none).
     pub fn push_rect(&mut self, inst: RectInstance) {
         self.ensure_open_layer();
         self.rects.push(inst);
@@ -255,18 +265,21 @@ impl Scene {
         self.layers.last_mut().unwrap().rects.end = len_as_u32(self.rects.len());
     }
 
+    /// Push a shadow into the currently-open layer (opens layer 0 if none).
     pub fn push_shadow(&mut self, inst: ShadowInstance) {
         self.ensure_open_layer();
         self.shadows.push(inst);
         self.layers.last_mut().unwrap().shadows.end = len_as_u32(self.shadows.len());
     }
 
+    /// Push an image into the currently-open layer (opens layer 0 if none).
     pub fn push_image(&mut self, inst: ImageInstance) {
         self.ensure_open_layer();
         self.images.push(inst);
         self.layers.last_mut().unwrap().images.end = len_as_u32(self.images.len());
     }
 
+    /// Push a glyph into the currently-open layer (opens layer 0 if none).
     pub fn push_glyph(&mut self, inst: GlyphInstance) {
         self.ensure_open_layer();
         self.glyphs.push(inst);

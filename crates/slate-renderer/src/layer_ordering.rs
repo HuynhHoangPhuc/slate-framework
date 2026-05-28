@@ -5,9 +5,13 @@
 /// One drawable primitive class within a layer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScenePrimitive {
+    /// Box-shadow primitive (drawn first, behind everything else).
     Shadow,
+    /// Solid / gradient rectangle primitive.
     Rect,
+    /// Text glyph primitive.
     Glyph,
+    /// Raster image primitive.
     Image,
 }
 

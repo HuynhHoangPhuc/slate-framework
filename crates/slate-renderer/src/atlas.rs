@@ -86,7 +86,12 @@ pub enum AtlasError {
     OutOfSpace,
     /// Caller asked for a region larger than the page itself.
     #[error("requested {requested:?} exceeds atlas page size {max}")]
-    TooLarge { requested: (u32, u32), max: u32 },
+    TooLarge {
+        /// Requested allocation size in pixels (width, height).
+        requested: (u32, u32),
+        /// Atlas page side length in pixels.
+        max: u32,
+    },
 }
 
 /// Successful allocation result. `uv_rect = [u_min, v_min, u_max, v_max]`
@@ -98,8 +103,11 @@ pub enum AtlasError {
 /// from a fresh one — but a recycled slot always carries a newer `token`.
 #[derive(Debug, Clone, Copy)]
 pub struct AtlasAllocation {
+    /// UV rectangle `[u_min, v_min, u_max, v_max]` in `[0, 1]` page-relative coordinates.
     pub uv_rect: [f32; 4],
+    /// etagere allocator slot id; recycled on eviction (pair with `token` for liveness).
     pub alloc_id: AllocId,
+    /// Monotonic per-allocation stamp (never reused). Use for stale-handle detection.
     pub token: u64,
 }
 
@@ -373,7 +381,7 @@ impl Atlas {
     }
 
     /// The atlas page texture itself. Exposed for `copy_texture_to_buffer`
-    /// readback in tests; production code should bind via [`texture_view`].
+    /// readback in tests; production code should bind via [`Self::texture_view`].
     pub fn texture(&self) -> &Texture {
         &self.texture
     }

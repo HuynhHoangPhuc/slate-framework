@@ -1,3 +1,5 @@
+#![deny(missing_docs)]
+
 //! GPU renderer for the slate-framework UI framework, built on `wgpu`.
 //!
 //! The primary entry point is [`Renderer::render_scene`], which takes a

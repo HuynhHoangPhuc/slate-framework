@@ -11,9 +11,9 @@
 //!
 //! - This file owns the [`Renderer`] struct, ctor, surface lifecycle (resize /
 //!   minimize), atlas accessors, and error types.
-//! - [`device_lost`] holds all device-lost state, the wgpu callback installer,
+//! - `device_lost` holds all device-lost state, the wgpu callback installer,
 //!   and the observer registry.
-//! - [`submit`] holds the per-frame render path.
+//! - `submit` holds the per-frame render path.
 //! - `pipeline_*` submodules wrap per-pipeline construction so the ctor stays
 //!   linear and pipeline init order is the single source of truth here.
 
@@ -377,14 +377,19 @@ impl Renderer {
 /// Error constructing a [`Renderer`].
 #[derive(thiserror::Error, Debug)]
 pub enum RendererError {
+    /// No GPU adapter that satisfies the backend / surface requirements was found.
     #[error("no compatible GPU adapter found — check drivers and backend support")]
     NoAdapter,
+    /// Underlying `wgpu::Instance::create_surface` returned an error.
     #[error("failed to create wgpu surface: {0}")]
     Surface(#[from] wgpu::CreateSurfaceError),
+    /// `Adapter::request_device` rejected the device descriptor.
     #[error("failed to open GPU device: {0}")]
     Device(#[from] RequestDeviceError),
+    /// Failed to obtain a raw window handle from the platform `Window`.
     #[error("raw window handle error: {0}")]
     RawHandle(String),
+    /// `Surface::configure` failed for the initial swap-chain configuration.
     #[error("failed to configure surface: {0}")]
     Configure(String),
 }
@@ -392,12 +397,16 @@ pub enum RendererError {
 /// Error occurring during [`Renderer::render`].
 #[derive(thiserror::Error, Debug)]
 pub enum RenderError {
+    /// Frame acquisition timed out — the OS did not return a swap-chain image in time.
     #[error("frame acquisition timed out")]
     Timeout,
+    /// Window is occluded; the frame was dropped this tick.
     #[error("window is occluded")]
     Occluded,
+    /// Swap-chain image acquisition failed for an unspecified reason.
     #[error("failed to acquire surface texture: {0}")]
     AcquireFailed(String),
+    /// GPU device was lost (driver reset, TDR, adapter change) — caller must rebuild.
     #[error("device lost: {0}")]
     DeviceLost(String),
 }

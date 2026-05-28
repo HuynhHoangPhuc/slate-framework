@@ -7,8 +7,8 @@
 //! # Contract
 //!
 //! **IMPORTANT:** `on_renderer_recreated` implementations MUST NOT call back
-//! into [`Renderer`] methods. Doing so would re-borrow the `observers` RefCell
-//! and panic. Implementations should only clear their own internal state.
+//! into [`crate::Renderer`] methods. Doing so would re-borrow the `observers`
+//! RefCell and panic. Implementations should only clear their own internal state.
 
 /// Trait for receiving renderer recreation notifications.
 ///
