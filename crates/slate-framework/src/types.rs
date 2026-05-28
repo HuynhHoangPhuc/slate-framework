@@ -5,13 +5,17 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// A point in 2D space (logical points).
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub struct Point {
+    /// X coordinate in logical points.
     pub x: f32,
+    /// Y coordinate in logical points.
     pub y: f32,
 }
 
 impl Point {
+    /// Origin (0, 0).
     pub const ZERO: Self = Self { x: 0.0, y: 0.0 };
 
+    /// Construct a [`Point`] from its `x` and `y` coordinates.
     pub const fn new(x: f32, y: f32) -> Self {
         Self { x, y }
     }
@@ -20,16 +24,20 @@ impl Point {
 /// A 2D size (logical points).
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub struct Size {
+    /// Width in logical points.
     pub width: f32,
+    /// Height in logical points.
     pub height: f32,
 }
 
 impl Size {
+    /// Zero-size (width = 0, height = 0).
     pub const ZERO: Self = Self {
         width: 0.0,
         height: 0.0,
     };
 
+    /// Construct a [`Size`] from its `width` and `height`.
     pub const fn new(width: f32, height: f32) -> Self {
         Self { width, height }
     }
@@ -38,20 +46,25 @@ impl Size {
 /// A rectangular region in logical points.
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub struct Bounds {
+    /// Top-left corner.
     pub origin: Point,
+    /// Width and height.
     pub size: Size,
 }
 
 impl Bounds {
+    /// Zero-bounds (origin = (0, 0), size = (0, 0)).
     pub const ZERO: Self = Self {
         origin: Point::ZERO,
         size: Size::ZERO,
     };
 
+    /// Construct a [`Bounds`] from an `origin` and `size`.
     pub const fn new(origin: Point, size: Size) -> Self {
         Self { origin, size }
     }
 
+    /// Construct a [`Bounds`] from explicit `x`, `y`, `width`, `height`.
     pub fn from_origin_size(x: f32, y: f32, width: f32, height: f32) -> Self {
         Self {
             origin: Point::new(x, y),
@@ -93,13 +106,18 @@ impl Bounds {
 /// Edge insets (top, right, bottom, left) — used for padding/margin.
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub struct Edges<T: Copy + Default> {
+    /// Top edge inset.
     pub top: T,
+    /// Right edge inset.
     pub right: T,
+    /// Bottom edge inset.
     pub bottom: T,
+    /// Left edge inset.
     pub left: T,
 }
 
 impl<T: Copy + Default> Edges<T> {
+    /// Construct an [`Edges`] from explicit top / right / bottom / left values.
     pub const fn new(top: T, right: T, bottom: T, left: T) -> Self {
         Self {
             top,
@@ -109,6 +127,7 @@ impl<T: Copy + Default> Edges<T> {
         }
     }
 
+    /// Construct an [`Edges`] with the same value on every side.
     pub const fn all(value: T) -> Self {
         Self {
             top: value,
@@ -118,6 +137,7 @@ impl<T: Copy + Default> Edges<T> {
         }
     }
 
+    /// Construct an [`Edges`] with one value for top/bottom and another for left/right.
     pub const fn symmetric(vertical: T, horizontal: T) -> Self {
         Self {
             top: vertical,
@@ -130,7 +150,10 @@ impl<T: Copy + Default> Edges<T> {
 
 /// Opaque handle to a Taffy layout node.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct LayoutId(pub taffy::NodeId);
+pub struct LayoutId(
+    /// Underlying Taffy node identifier.
+    pub taffy::NodeId,
+);
 
 impl From<taffy::NodeId> for LayoutId {
     fn from(id: taffy::NodeId) -> Self {
@@ -151,7 +174,10 @@ static ELEMENT_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 ///
 /// Used for persistent state, hit-testing, and accessibility.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct ElementId(pub u64);
+pub struct ElementId(
+    /// Underlying numeric identifier.
+    pub u64,
+);
 
 impl ElementId {
     /// Generate the next unique ElementId (monotonic counter).
@@ -194,9 +220,19 @@ impl ElementId {
 #[derive(Clone, Debug, Default)]
 pub enum NodeContext {
     /// Laid-out text — width/height are pre-shaped, no further measure needed.
-    Text { width_lpx: f32, height_lpx: f32 },
+    Text {
+        /// Pre-shaped width in logical pixels.
+        width_lpx: f32,
+        /// Pre-shaped height in logical pixels.
+        height_lpx: f32,
+    },
     /// Image with intrinsic size.
-    Image { width_lpx: f32, height_lpx: f32 },
+    Image {
+        /// Intrinsic width in logical pixels.
+        width_lpx: f32,
+        /// Intrinsic height in logical pixels.
+        height_lpx: f32,
+    },
     /// Container — Taffy computes from style + children.
     #[default]
     None,
@@ -206,6 +242,7 @@ pub enum NodeContext {
 ///
 /// Standard ARIA roles for v1 widget set. Maps to accesskit::Role.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+#[allow(missing_docs)] // ARIA role identifiers — names track the standard
 pub enum AccessibilityRole {
     #[default]
     Unknown,
@@ -216,6 +253,7 @@ pub enum AccessibilityRole {
     Group,
     /// Heading with semantic level (1-6).
     Heading {
+        /// Heading level (1-6, where 1 is the most prominent).
         level: u8,
     },
     Image,
@@ -303,6 +341,7 @@ pub struct AccessibilityRelationships {
 /// slider, scroll). Extensions stay additive per the semver discipline
 /// in `docs/a11y-contract.md`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[allow(missing_docs)] // AT action identifiers — names track the standard
 pub enum AccessibilityAction {
     Click,
     Focus,

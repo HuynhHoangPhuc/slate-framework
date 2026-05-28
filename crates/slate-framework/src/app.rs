@@ -168,6 +168,21 @@ struct PendingPreRunWindow {
 ///
 /// Owns all framework resources: platform, window, executor,
 /// layout tree, hit-test list, accessibility tree, and text system.
+///
+/// # Examples
+///
+/// ```ignore
+/// use slate_framework::{App, WindowOptions, Text, View, RenderCx, AnyElement, IntoAny};
+///
+/// struct HelloView;
+/// impl View for HelloView {
+///     fn render(&mut self, _cx: &mut RenderCx) -> AnyElement {
+///         Text::new("Hello, Slate!").into_any()
+///     }
+/// }
+///
+/// App::new(WindowOptions::default()).run(|_cx| HelloView);
+/// ```
 pub struct App {
     platform: Rc<DefaultPlatform>,
     window: Arc<DefaultWindow>,

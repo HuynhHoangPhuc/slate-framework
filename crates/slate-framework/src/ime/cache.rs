@@ -46,5 +46,10 @@ pub enum PendingImeOp {
     /// `on_ime_commit` handlers: this op is itself drained from within the
     /// dispatch unwind, so re-entering the handler chain here would risk
     /// re-entrant borrows of the same element state.
-    Commit { window: WindowId, text: String },
+    Commit {
+        /// Target window.
+        window: WindowId,
+        /// Text to commit at the caret.
+        text: String,
+    },
 }

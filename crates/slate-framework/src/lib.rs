@@ -1,3 +1,5 @@
+#![deny(missing_docs)]
+
 //! slate-framework — GPU-accelerated Rust UI framework.
 //!
 //! This crate provides the Element-based UI framework built on top of
@@ -122,7 +124,7 @@ pub use view::{IntoAny, View};
 /// Curated re-exports of Taffy layout enums used by Slate styles.
 ///
 /// These are the public layout primitives — `TaffyTree` itself is hidden.
-/// TODO(v1.1): mirror as Slate-owned enums + From<TaffyEnum> impls to enable backend swap.
+/// TODO(v1.1): mirror as Slate-owned enums + `From<TaffyEnum>` impls to enable backend swap.
 pub mod layout_types {
     pub use taffy::{AlignItems, FlexDirection, FlexWrap, JustifyContent};
 }

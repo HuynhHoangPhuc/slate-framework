@@ -28,9 +28,12 @@ pub enum TextWrap {
 /// Text alignment within the container.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TextAlign {
+    /// Left-align text (default).
     #[default]
     Left,
+    /// Center-align text.
     Center,
+    /// Right-align text.
     Right,
 }
 

@@ -39,6 +39,7 @@ pub trait View: 'static {
 ///
 /// Implemented via `IntoElement`, provides a convenient `.into_any()` method.
 pub trait IntoAny {
+    /// Consume `self` and wrap it as an [`AnyElement`].
     fn into_any(self) -> AnyElement;
 }
 

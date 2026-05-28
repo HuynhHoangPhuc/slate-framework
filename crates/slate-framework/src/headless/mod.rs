@@ -114,14 +114,19 @@ pub struct HeadlessApp {
 /// Error creating or rendering with HeadlessApp.
 #[derive(thiserror::Error, Debug)]
 pub enum HeadlessError {
+    /// No GPU adapter that supports the headless surface format was found.
     #[error("no compatible GPU adapter found")]
     NoAdapter,
+    /// `Adapter::request_device` rejected the device descriptor.
     #[error("failed to open GPU device: {0}")]
     Device(#[from] RequestDeviceError),
+    /// Failed to initialize the text shaping/rasterization backend.
     #[error("text system init failed: {0}")]
     TextSystem(String),
+    /// Mapping the readback buffer for CPU access failed.
     #[error("buffer mapping failed")]
     BufferMapping,
+    /// Image dimensions are zero or exceed renderer limits.
     #[error("invalid image dimensions")]
     InvalidDimensions,
 }

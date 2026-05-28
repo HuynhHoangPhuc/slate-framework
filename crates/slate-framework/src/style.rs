@@ -71,20 +71,25 @@ pub enum Overflow {
 /// Size constraint with min/max.
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub struct SizeConstraint {
+    /// Width constraint.
     pub width: Length,
+    /// Height constraint.
     pub height: Length,
 }
 
 impl SizeConstraint {
+    /// Auto on both axes — let layout determine the size.
     pub const AUTO: Self = Self {
         width: Length::Auto,
         height: Length::Auto,
     };
 
+    /// Construct from explicit width and height [`Length`]s.
     pub const fn new(width: Length, height: Length) -> Self {
         Self { width, height }
     }
 
+    /// Construct from pixel width and height.
     pub const fn px(width: f32, height: f32) -> Self {
         Self {
             width: Length::Px(width),
@@ -99,30 +104,41 @@ impl SizeConstraint {
 /// Grid properties to be added in future versions.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Style {
-    // Display
+    /// Display mode (Flex, Grid, None).
     pub display: DisplayMode,
 
-    // Flexbox
+    /// Flex main-axis direction.
     pub flex_direction: FlexDirection,
+    /// Cross-axis item alignment.
     pub align_items: AlignItems,
+    /// Main-axis content distribution.
     pub justify_content: JustifyContent,
+    /// Whether items wrap onto multiple lines.
     pub flex_wrap: FlexWrap,
+    /// Flex grow factor.
     pub flex_grow: f32,
+    /// Flex shrink factor.
     pub flex_shrink: f32,
+    /// Flex basis (initial main-axis size).
     pub flex_basis: Length,
 
-    // Spacing
+    /// Inner padding on each edge.
     pub padding: Edges<Length>,
+    /// Outer margin on each edge.
     pub margin: Edges<Length>,
+    /// Gap between children in logical pixels.
     pub gap: f32,
 
-    // Sizing
+    /// Preferred size constraint.
     pub size: SizeConstraint,
+    /// Minimum size constraint.
     pub min_size: SizeConstraint,
+    /// Maximum size constraint.
     pub max_size: SizeConstraint,
 
-    // Positioning
+    /// Positioning mode (Relative, Absolute).
     pub position: Position,
+    /// Overflow handling (Visible, Hidden, Scroll).
     pub overflow: Overflow,
 }
 

@@ -13,7 +13,7 @@
 //! Like [`TextField`](crate::elements::TextField), TextArea implements `Element`
 //! directly rather than wrapping a `Div` tree, because the caret overlay must be
 //! emitted in the same paint pass as the glyphs after layout. The byte-aware
-//! [`MultilineLayout`](slate_text::MultilineLayout) is built once in
+//! `slate_text::MultilineLayout` is built once in
 //! `request_layout` (to size the Taffy leaf) and reused in `paint`.
 
 mod handlers;

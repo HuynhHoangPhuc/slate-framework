@@ -2,13 +2,12 @@
 //!
 //! Each window owns one boxed `ErasedView`. The framework's `AppState` is no
 //! longer monomorphised on a single `V: View` — heterogeneous per-window views
-//! coexist by being type-erased at the [`WindowState`] boundary.
+//! coexist by being type-erased at the internal `WindowState` boundary.
 //!
 //! Mirrors the `View` trait exactly. If `View` grows methods, `ErasedView`
 //! grows alongside (semver-additive within this crate). Current shape:
 //! a single `render` method (see `view.rs:30-36`).
 //!
-//! [`WindowState`]: crate::app_state::window_state::WindowState
 //! [`View`]: crate::view::View
 
 use crate::element::AnyElement;
