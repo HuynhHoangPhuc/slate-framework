@@ -12,6 +12,6 @@ publish = false
 test-hooks = ["slate-framework/test-hooks"]
 
 [dependencies]
-slate-framework = { path = "../../crates/slate-framework", version = "0.0.2" }
+slate-framework = { path = "../../crates/slate-framework", version = "1.0.0" }
 env_logger.workspace = true
 log.workspace = true

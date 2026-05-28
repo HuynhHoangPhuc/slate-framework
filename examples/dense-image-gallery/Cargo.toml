@@ -10,6 +10,6 @@ authors.workspace = true
 publish = false
 
 [dependencies]
-slate-framework = { path = "../../crates/slate-framework", version = "0.0.2" }
+slate-framework = { path = "../../crates/slate-framework", version = "1.0.0" }
 log.workspace = true
 env_logger.workspace = true

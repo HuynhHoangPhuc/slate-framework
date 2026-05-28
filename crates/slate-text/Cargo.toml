@@ -1,15 +1,18 @@
 [package]
 name = "slate-text"
-description = "Native text shaping and rasterization for Slate UI framework"
+description = "Native text shaping and rasterization for the slate-framework UI framework"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+readme = "README.md"
+keywords = ["text", "font", "shaping", "glyph", "gui"]
+categories = ["gui", "graphics", "rendering"]
 
 [dependencies]
-slate-renderer = { path = "../slate-renderer", version = "0.0.2" }
+slate-renderer = { path = "../slate-renderer", version = "1.0.0" }
 thiserror.workspace = true
 log.workspace = true
 wgpu.workspace = true

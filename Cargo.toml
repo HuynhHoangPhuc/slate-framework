@@ -22,7 +22,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.0.2"
+version = "1.0.0"
 edition = "2024"
 rust-version = "1.95"
 license = "MIT OR Apache-2.0"
@@ -31,7 +31,7 @@ authors = ["Phuc Huynh <huynhhoangphuc@proton.me>"]
 
 [workspace.dependencies]
 # Workspace internal crates
-slate-reactive = { path = "crates/slate-reactive", version = "0.0.2" }
+slate-reactive = { path = "crates/slate-reactive", version = "1.0.0" }
 # All deps pinned to latest stable as of 2026-05-04.
 # Bump deliberately; record reason in commit message.
 # wgpu pinned to exact patch (Phase 1 prereq, red-team P0-5): wgpu pre-1.0

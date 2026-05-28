@@ -6,7 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "Reactive primitives for Slate UI framework"
+description = "Reactive primitives (signals, memos, effects) for the slate-framework UI framework"
+readme = "README.md"
+keywords = ["reactive", "signals", "ui", "gui", "framework"]
+categories = ["gui", "rust-patterns"]
 
 [features]
 default = []
