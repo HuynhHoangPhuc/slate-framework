@@ -1,3 +1,5 @@
+#![deny(missing_docs)]
+
 //! Platform abstraction for window + event loop.
 //!
 //! Implementations: macOS (`objc2-app-kit`), Windows (`windows-rs`).
@@ -13,6 +15,7 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 /// One `Platform` per process. `run` enters the OS-native event loop and
 /// blocks until [`Platform::quit`] is invoked.
 pub trait Platform: 'static {
+    /// Platform-specific window handle type.
     type Window: Window;
 
     /// Initialize the platform layer (e.g. shared `NSApplication` on
@@ -57,6 +60,7 @@ pub trait Window: HasWindowHandle + HasDisplayHandle + 'static {
     /// Schedule a redraw. The next `Event::WindowRedrawRequested` for
     /// this window will fire after the OS draws the next frame.
     fn request_redraw(&self);
+    /// Set the window title bar text.
     fn set_title(&self, title: &str);
     /// Begin closing the window. The `WindowDestroyed` event fires
     /// asynchronously when the OS releases native resources.
@@ -126,12 +130,16 @@ pub trait Window: HasWindowHandle + HasDisplayHandle + 'static {
     }
 }
 
+/// Configuration for creating a window via [`Platform::create_window`].
 #[derive(Clone, Debug)]
 pub struct WindowOptions {
+    /// Initial window title.
     pub title: String,
     /// Logical size in points.
     pub size: (u32, u32),
+    /// Minimum interactive resize size in points; `None` lets the OS choose.
     pub min_size: Option<(u32, u32)>,
+    /// Whether the user can resize the window via drag handles.
     pub resizable: bool,
     /// Whether the window is visible on creation. `false` produces a borderless,
     /// disabled, off-screen window suitable for headless DXGI/swap-chain tests.
@@ -154,14 +162,21 @@ impl Default for WindowOptions {
     }
 }
 
+/// Opaque, stable identifier for routing events to a window.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct WindowId(pub u64);
+pub struct WindowId(
+    /// Underlying numeric handle (platform-assigned).
+    pub u64,
+);
 
 /// Mouse button identifier.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum MouseButton {
+    /// Primary (left) button.
     Left,
+    /// Secondary (right) button.
     Right,
+    /// Tertiary (middle / wheel) button.
     Middle,
     /// Additional buttons (X1=0, X2=1, etc.). Values beyond 4 are clamped.
     Other(u8),
@@ -170,9 +185,13 @@ pub enum MouseButton {
 /// Modifier key state at event time.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct Modifiers {
+    /// Shift key pressed.
     pub shift: bool,
+    /// Control key pressed.
     pub ctrl: bool,
+    /// Alt / Option key pressed.
     pub alt: bool,
+    /// Meta / Command / Windows key pressed.
     pub meta: bool,
 }
 
@@ -183,6 +202,7 @@ pub struct Modifiers {
 /// (Dvorak, AZERTY, etc).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
+#[allow(missing_docs)] // self-documenting positional key identifiers
 pub enum KeyCode {
     KeyA,
     KeyB,
@@ -272,6 +292,7 @@ pub enum KeyCode {
 /// Used inside [`Key::Named`] for keys like Enter, Tab, arrows, function keys.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
+#[allow(missing_docs)] // self-documenting key identifiers
 pub enum NamedKey {
     Enter,
     Tab,
@@ -313,29 +334,44 @@ pub enum NamedKey {
 /// `SmolStr` if profiling demands it.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Key {
+    /// Produced text (e.g., `"A"`, `"é"`, `"🦀"`).
     Character(String),
+    /// Non-textual logical key (Enter, arrows, F-keys, modifiers).
     Named(NamedKey),
+    /// Key did not map to any recognised value.
     Unidentified,
 }
 
+/// Platform-dispatched event delivered to the [`Platform::run`] handler.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum Event {
     /// Sent once after platform init, before the first paint.
     Resumed,
+    /// Window's drawable area resized or display scale changed.
     WindowResized {
+        /// Target window.
         window: WindowId,
+        /// New logical size in points.
         logical_size: (u32, u32),
+        /// New physical size in device pixels.
         physical_size: (u32, u32),
+        /// Backing scale factor (1.0 standard, 2.0 Retina, etc.).
         scale_factor: f64,
     },
+    /// User clicked the window close button or requested OS-level close.
     WindowCloseRequested {
+        /// Target window.
         window: WindowId,
     },
+    /// Window's native resources have been released; the [`WindowId`] is now invalid.
     WindowDestroyed {
+        /// Target window.
         window: WindowId,
     },
+    /// OS asks the application to redraw the window now.
     WindowRedrawRequested {
+        /// Target window.
         window: WindowId,
     },
     /// Background task completed; poll foreground executor and consider redraw.
@@ -345,42 +381,62 @@ pub enum Event {
     // -------------------------------------------------------------------------
     // Mouse events
     // -------------------------------------------------------------------------
+    /// Mouse button pressed.
     MouseDown {
+        /// Target window.
         window: WindowId,
         /// Logical position in view coordinates (top-left origin).
         position: (f32, f32),
+        /// Button that transitioned to pressed.
         button: MouseButton,
+        /// Modifier key state at event time.
         modifiers: Modifiers,
     },
+    /// Mouse button released.
     MouseUp {
+        /// Target window.
         window: WindowId,
+        /// Logical position in view coordinates.
         position: (f32, f32),
+        /// Button that transitioned to released.
         button: MouseButton,
+        /// Modifier key state at event time.
         modifiers: Modifiers,
     },
+    /// Mouse cursor moved over the window.
     MouseMoved {
+        /// Target window.
         window: WindowId,
+        /// New logical position in view coordinates.
         position: (f32, f32),
+        /// Modifier key state at event time.
         modifiers: Modifiers,
     },
     /// Scroll wheel or trackpad scroll gesture.
     /// Positive delta_y = scroll up (content moves down, wheel rolled away).
     MouseScrolled {
+        /// Target window.
         window: WindowId,
+        /// Logical position in view coordinates.
         position: (f32, f32),
+        /// Horizontal scroll delta.
         delta_x: f32,
+        /// Vertical scroll delta.
         delta_y: f32,
         /// True for trackpad/Magic Mouse (pixel precision), false for discrete wheel (line-based).
         precise: bool,
+        /// Modifier key state at event time.
         modifiers: Modifiers,
     },
     /// Cursor exited the window bounds. Framework synthesizes Enter from hit-test diff.
     MouseExited {
+        /// Target window.
         window: WindowId,
     },
     /// Windows-only: system stole mouse capture (e.g. Alt-Tab, another app took focus).
     /// Framework should clear its capture_target state when this fires.
     CaptureLost {
+        /// Target window.
         window: WindowId,
     },
     // -------------------------------------------------------------------------
@@ -389,26 +445,34 @@ pub enum Event {
     /// Physical key pressed. Carries both the layout-independent [`KeyCode`]
     /// and the logical [`Key`] value.
     KeyDown {
+        /// Target window.
         window: WindowId,
         /// Physical key (layout-independent positional code).
         code: KeyCode,
         /// Logical key value (layout + modifier applied).
         key: Key,
+        /// Modifier key state at event time.
         modifiers: Modifiers,
         /// True if generated by OS auto-repeat (key held down).
         is_repeat: bool,
     },
     /// Physical key released.
     KeyUp {
+        /// Target window.
         window: WindowId,
+        /// Physical key (layout-independent positional code).
         code: KeyCode,
+        /// Logical key value (layout + modifier applied).
         key: Key,
+        /// Modifier key state at event time.
         modifiers: Modifiers,
     },
     /// Composed text from a single keypress (or surrogate pair on Windows).
     /// IME pre-edit is routed via `ImePreedit` / `ImeCommit` / `ImeEnabled` / `ImeDisabled`.
     TextInput {
+        /// Target window.
         window: WindowId,
+        /// Text produced by the input event.
         text: String,
     },
     // -------------------------------------------------------------------------
@@ -419,6 +483,7 @@ pub enum Event {
     /// transition) or `WM_IME_STARTCOMPOSITION` (Windows, 1:1).
     /// Always paired with a later [`Event::ImeDisabled`].
     ImeEnabled {
+        /// Target window.
         window: WindowId,
     },
     /// IME composition in progress — replaces any prior preedit.
@@ -426,9 +491,13 @@ pub enum Event {
     /// `selection`, when present, is the IME-highlighted target-converted
     /// range (UTF-8 byte range into `text`).
     ImePreedit {
+        /// Target window.
         window: WindowId,
+        /// Current preedit text.
         text: String,
+        /// UTF-8 byte offset of the caret within `text`.
         cursor_byte_offset: usize,
+        /// IME-highlighted target-converted range, when present.
         selection: Option<core::ops::Range<usize>>,
     },
     /// IME composition finalised. `text` is the committed text to insert
@@ -436,7 +505,9 @@ pub enum Event {
     /// insert" event** (macOS `unmarkText`) — framework consumers should
     /// only clear the preedit overlay and skip `Signal::set`.
     ImeCommit {
+        /// Target window.
         window: WindowId,
+        /// Text to insert at the caret (may be empty).
         text: String,
     },
     /// IME composition session ended. Fires exactly once per session at
@@ -444,6 +515,7 @@ pub enum Event {
     /// 1:1) / window destroy with active composition (synthesised).
     /// Always preceded by [`Event::ImeEnabled`].
     ImeDisabled {
+        /// Target window.
         window: WindowId,
     },
     // -------------------------------------------------------------------------
@@ -452,11 +524,14 @@ pub enum Event {
     /// GPU device was lost (driver reset, TDR, adapter change).
     /// If `fatal: true`, recovery failed after max attempts - app should close window.
     DeviceLost {
+        /// Target window.
         window: WindowId,
+        /// True when recovery failed after max attempts — close the window.
         fatal: bool,
     },
     /// GPU device was successfully recovered after a device-lost event.
     DeviceRestored {
+        /// Target window.
         window: WindowId,
     },
 }

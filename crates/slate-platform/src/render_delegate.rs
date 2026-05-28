@@ -42,11 +42,14 @@ use crate::WindowId;
 /// Distinct from logical size (which is divided by scale factor).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
 pub struct PhysicalSize {
+    /// Width in physical pixels.
     pub width: u32,
+    /// Height in physical pixels.
     pub height: u32,
 }
 
 impl PhysicalSize {
+    /// Construct a [`PhysicalSize`] from explicit width / height in physical pixels.
     pub const fn new(width: u32, height: u32) -> Self {
         Self { width, height }
     }
@@ -78,13 +81,18 @@ impl From<PhysicalSize> for (u32, u32) {
 /// via `convertRectToScreen:`; Windows → client coords as-is).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
 pub struct PhysicalRect {
+    /// X coordinate of the top-left corner in physical pixels.
     pub x: i32,
+    /// Y coordinate of the top-left corner in physical pixels.
     pub y: i32,
+    /// Width in physical pixels.
     pub width: u32,
+    /// Height in physical pixels.
     pub height: u32,
 }
 
 impl PhysicalRect {
+    /// Construct a [`PhysicalRect`] from explicit origin and size.
     pub const fn new(x: i32, y: i32, width: u32, height: u32) -> Self {
         Self {
             x,
