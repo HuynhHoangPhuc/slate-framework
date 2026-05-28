@@ -67,7 +67,7 @@ pub struct ShapedWord {
 /// zero further shaping calls — so re-wrap on a resize is pure arithmetic.
 ///
 /// Every ASCII space (U+0020) is preserved as its own glyph (see
-/// [`shape_words_in`]); empty input yields an empty list, but a whitespace-only
+/// `shape_words_in`); empty input yields an empty list, but a whitespace-only
 /// string yields a single space-run item.
 ///
 /// [`wrap_shaped_words`]: super::wrap_shaped_words

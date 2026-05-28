@@ -6,7 +6,7 @@
 //!
 //! - [`shape_document`] splits `text` at UAX #14 mandatory breaks (`\n`, `\r`,
 //!   `\r\n`, VT, FF, NEL, U+2028, U+2029) into paragraphs, shapes each
-//!   paragraph's words exactly once (reusing [`shape_words_in`]), and keeps the
+//!   paragraph's words exactly once (reusing `shape_words_in`), and keeps the
 //!   absolute byte coverage of each paragraph (the trailing terminator, of any
 //!   byte length, is folded into the preceding paragraph so coverage is
 //!   gap-free).
@@ -27,7 +27,6 @@
 //! - **Over-wide word**: a word wider than `max_width` is broken at grapheme
 //!   (cluster) boundaries so no glyph run exceeds the box (no clip this round).
 //!
-//! [`shape_words_in`]: crate::paragraph::shape_words_in
 
 use std::ops::Range;
 

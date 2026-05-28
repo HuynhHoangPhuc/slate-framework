@@ -87,6 +87,7 @@ impl PresentError {
 }
 
 #[derive(Debug, thiserror::Error)]
+#[allow(dead_code)] // variants reserved for surface-acquire failure paths
 pub enum FrameAcquireError {
     /// Swap chain is mid-resize / window resized between configure and
     /// acquire — drop the frame and reconfigure on the next tick.

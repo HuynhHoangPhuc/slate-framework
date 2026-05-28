@@ -37,6 +37,19 @@ use crate::types::{FontDescriptor, FontMetrics, GlyphBitmap, GlyphBounds, Shaped
 ///
 /// Implementations are NOT required to be `Send` or `Sync`. DirectWrite uses
 /// apartment threading; use a single backend instance per thread.
+///
+/// # Examples
+///
+/// ```no_run
+/// use slate_text::TextBackend;
+///
+/// # fn demo<B: TextBackend>(backend: &mut B) -> Result<(), slate_text::TextError> {
+/// let font = backend.load_font("Helvetica", 16.0, 1.0)?;
+/// let shaped = backend.shape_line(&font, "Hello, world!")?;
+/// let _width_lpx = shaped.width_lpx;
+/// # Ok(())
+/// # }
+/// ```
 pub trait TextBackend {
     /// Platform-specific font type.
     type Font: Font;

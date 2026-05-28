@@ -1,3 +1,5 @@
+#![deny(missing_docs)]
+
 //! Native text shaping and rasterization for Slate.
 //!
 //! This crate provides platform-native text rendering via CoreText (macOS) and

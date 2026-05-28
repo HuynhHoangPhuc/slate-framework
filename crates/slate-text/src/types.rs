@@ -219,10 +219,14 @@ impl FontId {
 /// Font style variant.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub enum FontStyle {
+    /// Regular (upright, normal weight).
     #[default]
     Regular,
+    /// Italic (slanted) variant.
     Italic,
+    /// Bold (heavy weight) variant.
     Bold,
+    /// Bold italic (slanted + heavy weight) variant.
     BoldItalic,
 }
 

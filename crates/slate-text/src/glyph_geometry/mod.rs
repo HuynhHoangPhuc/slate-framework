@@ -17,11 +17,11 @@
 //! [`Affinity`](crate::types::Affinity) selects which — the run that *starts*
 //! there (downstream, the default) or the run that *ends* there (upstream).
 //!
-//! - [`shape_utils`]: grapheme-snap helpers.
-//! - [`bidi_runs`]: run-aware geometry primitives shared by caret + hit-test.
-//! - [`caret`]: logical byte → visual caret x, caret motion, line edges,
+//! - `shape_utils`: grapheme-snap helpers.
+//! - `bidi_runs`: run-aware geometry primitives shared by caret + hit-test.
+//! - `caret`: logical byte → visual caret x, caret motion, line edges,
 //!   selection rects.
-//! - [`hit_test`]: visual x → logical byte.
+//! - `hit_test`: visual x → logical byte.
 
 mod bidi_runs;
 mod caret;

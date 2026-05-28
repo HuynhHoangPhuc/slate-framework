@@ -81,7 +81,7 @@ pub fn byte_at_pixel_x(line: &ShapedLine, text: &str, x_lpx: f32) -> usize {
 /// last run outside the line), then resolves the caret inside that run by the
 /// midpoint rule over its candidate boundaries. Candidates are the run's
 /// distinct cluster starts plus the run end; their within-run x is computed by
-/// [`within_run_caret_x`], so the same rule handles LTR and RTL uniformly.
+/// `within_run_caret_x`, so the same rule handles LTR and RTL uniformly.
 ///
 /// Public for the multi-line hit-test paths. No `text` argument: candidate
 /// carets come from glyph clusters, which are already grapheme boundaries.

@@ -1,8 +1,8 @@
 //! Single-paragraph shape → wrap → paint pipeline.
 //!
-//! - [`shape`]: bidi/UAX-14 segmentation + per-word native shaping ([`ShapedWord`]).
-//! - [`wrap`]: greedy first-fit and visual-line assembly into [`ShapedLine`].
-//! - [`paint`]: paint-time post-processors (alignment offset, ellipsis truncation).
+//! - `shape`: bidi/UAX-14 segmentation + per-word native shaping ([`ShapedWord`]).
+//! - `wrap`: greedy first-fit and visual-line assembly into [`ShapedLine`].
+//! - `paint`: paint-time post-processors (alignment offset, ellipsis truncation).
 //!
 //! The two-stage pipeline ([`shape_words`] + [`wrap_shaped_words`]) lets callers
 //! re-fit on a width change without re-shaping. [`greedy_wrap`] chains both for
