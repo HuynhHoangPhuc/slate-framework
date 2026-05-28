@@ -18,6 +18,9 @@
 //!   instanced pipelines.
 //! - `alloc_count` / `dealloc_count` — heap activity, when
 //!   [`CountingAllocator`] is installed as `#[global_allocator]`.
+//! - `view_render_count` — `View::render` invocations from the redraw pipeline.
+//! - `view_render_ns` / `compute_layout_ns` / `paint_ns` / `present_ns` —
+//!   cumulative nanoseconds across the four redraw phases.
 //!
 //! # Reset semantics
 //!
@@ -26,9 +29,13 @@
 //! multiple threads are safe but the values reflect process-wide activity.
 
 pub mod counting_alloc;
+pub mod redraw_counters;
 
 pub use counting_alloc::{
     CountingAllocator, alloc_count, dealloc_count, reset_counters as reset_alloc_counters,
+};
+pub use redraw_counters::{
+    compute_layout_ns, paint_ns, present_ns, view_render_count, view_render_ns,
 };
 pub use slate_reactive::profiling::{
     effect_reentry_count, reentrancy_count, reset_counters as reset_reactive_counters,
@@ -38,9 +45,10 @@ pub use slate_renderer::profiling::{
     paint_cmd_count, reset_counters as reset_renderer_counters,
 };
 
-/// Resets every profiling counter (reactive, renderer, allocator) to zero.
+/// Resets every profiling counter (reactive, renderer, allocator, redraw) to zero.
 pub fn reset_counters() {
     reset_reactive_counters();
     reset_renderer_counters();
     reset_alloc_counters();
+    redraw_counters::reset_counters();
 }

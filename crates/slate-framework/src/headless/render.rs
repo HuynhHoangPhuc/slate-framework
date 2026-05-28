@@ -28,6 +28,8 @@ impl HeadlessApp {
         let h = self.height;
 
         // 1. Layout pass
+        #[cfg(feature = "profiling")]
+        let _layout_start = std::time::Instant::now();
         self.layout_tree.clear();
         let root_id = {
             let mut cx = LayoutCtx::new(
@@ -38,6 +40,8 @@ impl HeadlessApp {
             );
             compute_layout(&mut root, &mut cx, Size::new(w as f32, h as f32))
         };
+        #[cfg(feature = "profiling")]
+        crate::profiling::redraw_counters::record_layout(_layout_start.elapsed());
 
         let Some(root_id) = root_id else {
             log::warn!("HeadlessApp: layout computation failed");
@@ -110,6 +114,8 @@ impl HeadlessApp {
         self.text_shaping_cache.gc();
 
         // 4. Paint pass
+        #[cfg(feature = "profiling")]
+        let _paint_start = std::time::Instant::now();
         self.scene.clear();
         {
             let mut cx = PaintCtx::new(
@@ -132,8 +138,12 @@ impl HeadlessApp {
         self.ime_registry
             .borrow_mut()
             .prune_missing(&self.ime_registered_ids);
+        #[cfg(feature = "profiling")]
+        crate::profiling::redraw_counters::record_paint(_paint_start.elapsed());
 
         // 5. GPU render
+        #[cfg(feature = "profiling")]
+        let _present_start = std::time::Instant::now();
         self.scene.finish();
         self.image_atlas.begin_frame();
         self.glyph_atlas.begin_frame();
@@ -252,6 +262,8 @@ impl HeadlessApp {
 
         drop(data);
         self.staging_buffer.unmap();
+        #[cfg(feature = "profiling")]
+        crate::profiling::redraw_counters::record_present(_present_start.elapsed());
 
         // image crate expects sRGB, which matches our target_texture format
         RgbaImage::from_raw(w, h, pixels).ok_or(HeadlessError::InvalidDimensions)
@@ -276,8 +288,12 @@ impl HeadlessApp {
     pub fn render_view<V: View>(&mut self, view: &mut V) -> Result<RgbaImage, HeadlessError> {
         // Build element tree inside observer scope for reactive subscriptions
         let mut render_cx = crate::RenderCx::new(slate_platform::WindowId(0));
+        #[cfg(feature = "profiling")]
+        let _vr_start = std::time::Instant::now();
         let root =
             slate_reactive::with_observer(self.observer_id, || view.render(&mut render_cx));
+        #[cfg(feature = "profiling")]
+        crate::profiling::redraw_counters::record_view_render(_vr_start.elapsed());
         self.render(root)
     }
 }

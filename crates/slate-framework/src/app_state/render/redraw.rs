@@ -59,6 +59,8 @@ impl AppState {
         self.runtime.drain_effects();
 
         // 1. Build element tree — borrows view + view_observer_id.
+        #[cfg(feature = "profiling")]
+        let _vr_start = std::time::Instant::now();
         let mut root = {
             let guard = self.windows.borrow();
             let win = match guard.get(&window_id) { Some(w) => w, None => return };
@@ -68,8 +70,12 @@ impl AppState {
             let mut render_cx = RenderCx::new(win_id_stamp);
             slate_reactive::with_observer(observer_id, || v.render(&mut render_cx))
         };
+        #[cfg(feature = "profiling")]
+        crate::profiling::redraw_counters::record_view_render(_vr_start.elapsed());
 
         // 2. Layout pass.
+        #[cfg(feature = "profiling")]
+        let _layout_start = std::time::Instant::now();
         let root_id = {
             let guard = self.windows.borrow();
             let win = match guard.get(&window_id) { Some(w) => w, None => return };
@@ -87,6 +93,8 @@ impl AppState {
             );
             compute_layout(&mut root, &mut cx, Size::new(lw as f32, lh as f32))
         };
+        #[cfg(feature = "profiling")]
+        crate::profiling::redraw_counters::record_layout(_layout_start.elapsed());
 
         let Some(root_id) = root_id else {
             log::warn!("layout computation failed");
@@ -187,6 +195,8 @@ impl AppState {
         // 5. Paint pass.
         // Clone Rc + Arc so PaintCtx does not borrow through the outer guard,
         // allowing us to drop the guard before republish_ime_cache.
+        #[cfg(feature = "profiling")]
+        let _paint_start = std::time::Instant::now();
         let (ime_rc_for_paint, window_arc_for_paint) = {
             let guard = self.windows.borrow();
             match guard.get(&window_id) {
@@ -250,8 +260,12 @@ impl AppState {
             }
         }
         drop(guard2);
+        #[cfg(feature = "profiling")]
+        crate::profiling::redraw_counters::record_paint(_paint_start.elapsed());
 
         // Re-borrow for render step.
+        #[cfg(feature = "profiling")]
+        let _present_start = std::time::Instant::now();
         let guard3 = self.windows.borrow();
         if let Some(win3) = guard3.get(&window_id) {
             let mut s = win3.scene.borrow_mut();
@@ -272,6 +286,8 @@ impl AppState {
             }
         }
         drop(guard3);
+        #[cfg(feature = "profiling")]
+        crate::profiling::redraw_counters::record_present(_present_start.elapsed());
 
         // Poll async executor.
         self.executor.foreground.poll();

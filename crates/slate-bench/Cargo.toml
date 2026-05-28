@@ -31,5 +31,9 @@ name = "reactive_counter_100"
 harness = false
 
 [[bench]]
+name = "fine_grained_subscription"
+harness = false
+
+[[bench]]
 name = "ime_textfield"
 harness = false
