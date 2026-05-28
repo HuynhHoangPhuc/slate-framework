@@ -1,12 +1,12 @@
 # ime-textfield
 
-Headline demo for slate's IME composition support (Phase 9c). A single editable
+Headline demo for slate's IME composition support. A single editable
 `TextField` bound to a reactive `Signal<String>`; an echo label below the field
 re-renders whenever the value changes. Switch your OS input method to a CJK IME
 and the field shows preedit composition (underlined provisional text + system
 candidate window) before the commit.
 
-> Tested 2026-05-17 on macOS 15.x and Windows 11 24H2.
+> Validated 2026-05-28 on Windows 11 24H2 (prior: 2026-05-17 macOS 15.x + Win11). macOS re-validation in flight (this wave).
 
 ## Run
 
@@ -60,15 +60,12 @@ Click the field to focus it (focus ring becomes visible). Then type.
 | ASCII | `Hello, world!` | `Hello, world!` |
 | Emoji (macOS Ctrl+Cmd+Space) | pick 😀 | `😀` |
 
-## What's NOT in v1
+## What's NOT in this demo
 
-- Text selection (drag-select, Shift+Arrow)
-- Clipboard cut/copy/paste
-- Undo / redo
-- Click-to-position caret (focus only on click; caret stays where it was)
-- Blinking caret animation
-
-These land in Phase 10 — see the project roadmap in `docs/development-roadmap.md`.
+Single-line `TextField` is intentionally minimal. The richer text-editing
+behaviours — drag-select / Shift-arrow selection, clipboard, undo/redo,
+click-to-position caret, blinking caret — are shipped in `TextArea` and
+exercised by the [`textarea`](../textarea/) example.
 
 ## Known limitations
 
@@ -76,5 +73,5 @@ These land in Phase 10 — see the project roadmap in `docs/development-roadmap.
   exact byte ↔ glyph mapping for multi-glyph Indic clusters is deferred.
 - Tab cycles focus to the only focusable element (the field itself) — this
   demo is single-control; multi-control Tab behaviour is exercised by
-  `reactive-counter`.
+  the [`reactive-counter`](../reactive-counter/) example.
 - Linux is not shipped in v1.

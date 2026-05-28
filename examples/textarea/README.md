@@ -5,7 +5,7 @@ a reactive `Signal<String>`; text wraps at a fixed content width, the element
 auto-grows in height (floored to `min_lines`), and an echo label below reports
 the character + line count on every change.
 
-> Tested 2026-05-20 on Windows 11 24H2. macOS validation pending.
+> Validated 2026-05-28 on Windows 11 24H2. macOS validation in flight (this wave).
 
 ## Run
 
