@@ -16,7 +16,7 @@ use slate_text::GlyphCache;
 use slate_renderer::glyph_pipeline::GlyphPipeline;
 use slate_renderer::image_pipeline::ImagePipeline;
 use slate_renderer::instanced_rect_pipeline::InstancedRectPipeline;
-use slate_renderer::pipeline_shared::{self, ViewportUniform};
+use slate_renderer::{ViewportUniform, create_unit_quad, viewport_bind_group_layout};
 use slate_renderer::shadow_pipeline::ShadowPipeline;
 use slate_renderer::{Lpx, Scene};
 
@@ -103,7 +103,7 @@ impl HeadlessApp {
         });
 
         // Shared resources
-        let viewport_bgl = pipeline_shared::viewport_bind_group_layout(&device);
+        let viewport_bgl = viewport_bind_group_layout(&device);
         let viewport_buf = device.create_buffer(&BufferDescriptor {
             label: Some("slate-viewport-buf"),
             size: std::mem::size_of::<ViewportUniform>() as u64,
@@ -126,7 +126,7 @@ impl HeadlessApp {
                 resource: BindingResource::Buffer(viewport_buf.as_entire_buffer_binding()),
             }],
         });
-        let unit_quad = pipeline_shared::create_unit_quad(&device);
+        let unit_quad = create_unit_quad(&device);
 
         // Atlases
         let image_atlas = Atlas::new(&device, Format::Rgba8UnormSrgb);

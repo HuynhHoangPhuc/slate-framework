@@ -47,12 +47,14 @@ pub fn set_text(s: &str) {
 /// deterministically, with no dependency on a working pasteboard server or
 /// freedom from contention (headless CI, sandboxes). Starts empty.
 #[cfg(feature = "test-hooks")]
+#[doc(hidden)]
 pub fn install_clipboard_override_for_test() {
     test_override::install();
 }
 
 /// Disable the in-memory override so later code hits the real OS clipboard.
 #[cfg(feature = "test-hooks")]
+#[doc(hidden)]
 pub fn clear_clipboard_override_for_test() {
     test_override::clear();
 }

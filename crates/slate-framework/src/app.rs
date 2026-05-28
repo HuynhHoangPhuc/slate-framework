@@ -143,6 +143,7 @@ impl AppContext {
 
     /// Construct an `AppContext` directly. Test-only.
     #[cfg(any(test, feature = "test-hooks"))]
+    #[doc(hidden)]
     pub fn new_for_test(
         runtime: Arc<slate_reactive::Runtime>,
         background_executor: BackgroundExecutor,

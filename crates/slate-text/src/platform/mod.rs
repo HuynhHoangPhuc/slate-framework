@@ -1,7 +1,10 @@
 //! Platform-specific text backend implementations.
+//!
+//! These submodules are crate-internal; backend types are re-exported at the
+//! `slate_text` crate root (`DirectWriteBackend`, `CoreTextBackend`).
 
 #[cfg(target_os = "macos")]
-pub mod macos;
+pub(crate) mod macos;
 
 #[cfg(target_os = "windows")]
-pub mod windows;
+pub(crate) mod windows;

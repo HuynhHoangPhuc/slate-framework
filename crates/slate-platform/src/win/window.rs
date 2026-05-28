@@ -282,6 +282,7 @@ impl Window for WinWindow {
 
 #[cfg(any(test, feature = "test-hooks"))]
 impl WinWindow {
+    #[doc(hidden)]
     pub fn set_in_size_move_for_test(&self, v: bool) {
         self.inner.in_size_move.set(v);
     }
@@ -290,6 +291,7 @@ impl WinWindow {
     /// armed (between `SetTimer` and either `WM_TIMER` fire or replacement).
     /// Test-only — operator stress tests assert this returns to `false` after
     /// the message pump drains.
+    #[doc(hidden)]
     pub fn redraw_timer_armed_for_test(&self) -> bool {
         self.inner.redraw_timer_armed.get()
     }

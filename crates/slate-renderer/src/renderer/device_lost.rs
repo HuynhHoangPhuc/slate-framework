@@ -148,6 +148,7 @@ impl Renderer {
     /// This is a destructive operation that renders the device unusable.
     /// Only available with the `test-hooks` feature or in `#[cfg(test)]`.
     #[cfg(all(target_os = "windows", any(test, feature = "test-hooks")))]
+    #[doc(hidden)]
     pub fn force_device_lost(&self) {
         use wgpu::hal::api::Dx12;
         use windows::Win32::Graphics::Direct3D12::ID3D12Device5;
@@ -175,6 +176,7 @@ impl Renderer {
     ///
     /// Only available with the `test-hooks` feature or in `#[cfg(test)]`.
     #[cfg(any(test, feature = "test-hooks"))]
+    #[doc(hidden)]
     pub fn fire_device_lost_callback_for_test(
         &self,
         reason: wgpu::DeviceLostReason,
@@ -215,6 +217,7 @@ impl Renderer {
     ///
     /// Only available with the `test-hooks` feature or in `#[cfg(test)]`.
     #[cfg(any(test, feature = "test-hooks"))]
+    #[doc(hidden)]
     pub fn force_device_lost_luid_migration(&self) {
         self.device_lost.store(true, Ordering::Release);
         // Intentionally do NOT touch wgpu_callback_fired — that is the

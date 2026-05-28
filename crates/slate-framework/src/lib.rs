@@ -27,6 +27,7 @@
 pub mod a11y_accesskit;
 pub mod app;
 #[cfg(any(test, feature = "test-hooks"))]
+#[doc(hidden)]
 pub mod app_state;
 #[cfg(not(any(test, feature = "test-hooks")))]
 pub(crate) mod app_state;
@@ -56,6 +57,7 @@ pub mod reactive_value;
 pub mod render_cx;
 pub mod style;
 #[cfg(all(target_os = "windows", feature = "test-hooks"))]
+#[doc(hidden)]
 pub mod test_support;
 pub mod text_system;
 pub mod types;

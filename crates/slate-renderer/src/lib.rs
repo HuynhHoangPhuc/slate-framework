@@ -36,18 +36,22 @@ compile_error!(
 // Public modules
 pub mod atlas;
 pub mod color;
-pub mod device_lost_reason;
 pub mod glyph_pipeline;
 pub mod image_pipeline;
 pub mod instanced_rect_pipeline;
 pub mod layer_ordering;
 pub mod observer;
-pub mod pipeline_shared;
 pub mod renderer;
 pub mod scene;
 pub mod shadow_pipeline;
-pub mod surface_target;
 pub mod units;
+
+// Crate-internal modules: re-export the v1-stable items at crate root below.
+// Hidden from public API to avoid freezing wgpu-typed pipeline plumbing,
+// surface-target error variants, and DXGI/Metal device-lost capture helpers.
+pub(crate) mod device_lost_reason;
+pub(crate) mod pipeline_shared;
+pub(crate) mod surface_target;
 
 #[cfg(feature = "profiling")]
 pub mod profiling;

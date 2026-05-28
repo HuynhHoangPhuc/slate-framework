@@ -84,9 +84,5 @@ pub const NOTO_SANS_JP_LICENSE: &str = include_str!("../assets/LICENSE-NotoSansJ
 #[cfg(target_os = "windows")]
 pub use platform::windows::DirectWriteBackend;
 
-// Re-export windows_core for #[implement] macro (required by windows-rs 0.62)
-#[cfg(target_os = "windows")]
-pub extern crate windows_core;
-
 #[cfg(target_os = "macos")]
 pub use platform::macos::CoreTextBackend;

@@ -471,6 +471,7 @@ mod mac;
 #[cfg(target_os = "macos")]
 pub use mac::{MacPlatform as DefaultPlatform, MacWindow as DefaultWindow, wake_run_loop};
 #[cfg(all(target_os = "macos", feature = "test-hooks"))]
+#[doc(hidden)]
 pub use mac::{
     clear_event_handler_for_test, dispatch_event_for_test, install_event_handler_for_test,
 };
@@ -480,6 +481,7 @@ mod win;
 #[cfg(target_os = "windows")]
 pub use win::{WinPlatform as DefaultPlatform, WinWindow as DefaultWindow, wake_run_loop};
 #[cfg(all(target_os = "windows", feature = "test-hooks"))]
+#[doc(hidden)]
 pub use win::{
     clear_event_handler_for_test, dispatch_event_for_test, install_event_handler_for_test,
 };
