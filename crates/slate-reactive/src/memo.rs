@@ -24,6 +24,20 @@ const MAX_MEMO_DEPTH: usize = 64;
 ///
 /// `Memo<T>: Send + Sync` when `T: Send + Sync`. The compute function must also
 /// be `Send + Sync`.
+///
+/// # Examples
+///
+/// ```
+/// use slate_reactive::{Memo, Runtime, Signal};
+///
+/// let rt = Runtime::new();
+/// let n = Signal::new(rt.clone(), 3i32);
+/// let n_clone = n.clone();
+/// let doubled = Memo::new(rt.clone(), move || n_clone.get() * 2);
+/// assert_eq!(doubled.get(), 6);
+/// n.set(10);
+/// assert_eq!(doubled.get(), 20);
+/// ```
 pub struct Memo<T> {
     inner: Arc<MemoInner<T>>,
 }

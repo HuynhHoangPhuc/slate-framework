@@ -1,3 +1,5 @@
+#![deny(missing_docs)]
+
 //! Reactive primitives for Slate UI framework.
 //!
 //! This crate provides the core reactive system: `Signal`, `Memo`, `Effect`,

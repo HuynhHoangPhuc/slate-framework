@@ -23,6 +23,21 @@ use crate::runtime::Runtime;
 ///
 /// Effects register with the current `ReactiveOwner`. When the owner
 /// is dropped, the effect is disposed and will not run again.
+///
+/// # Examples
+///
+/// ```no_run
+/// use slate_reactive::{Effect, Runtime, Signal};
+///
+/// let rt = Runtime::new();
+/// let count = Signal::new(rt.clone(), 0i32);
+/// let count_for_effect = count.clone();
+/// let _effect = Effect::new(rt.clone(), move || {
+///     let _value = count_for_effect.get();
+///     // Side effect: e.g., update UI, log, etc.
+/// });
+/// count.set(1); // Effect re-runs on next Runtime::drain_effects()
+/// ```
 pub struct Effect {
     _handle: Arc<EffectInner>,
     _not_send: PhantomData<*const ()>,

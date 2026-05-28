@@ -26,6 +26,20 @@ use crate::runtime::Runtime;
 ///
 /// **Warning**: This drain-on-set pattern breaks under Strategy B partial rebuild.
 /// See `slate-reactive/README.md` for details.
+///
+/// # Examples
+///
+/// ```
+/// use slate_reactive::{Runtime, Signal};
+///
+/// let rt = Runtime::new();
+/// let count = Signal::new(rt.clone(), 0i32);
+/// assert_eq!(count.get(), 0);
+/// count.set(42);
+/// assert_eq!(count.get(), 42);
+/// count.update(|n| *n += 1);
+/// assert_eq!(count.get(), 43);
+/// ```
 pub struct Signal<T> {
     inner: Arc<SignalInner<T>>,
 }
