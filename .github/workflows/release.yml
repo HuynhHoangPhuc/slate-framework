@@ -47,7 +47,12 @@ jobs:
           fi
 
   dry-run-publish:
-    name: cargo publish --dry-run (5 crates, dep order)
+    # Leaves get full `cargo publish --dry-run`; downstream crates get
+    # `cargo package --list` as a manifest sanity check. Reason: for the
+    # first-publish-of-major (1.0.0), cargo cannot resolve `slate-platform = "^1.0.0"`
+    # for downstream crates because the predecessor isn't on crates.io yet.
+    # Live publish proves the chain end-to-end via the `publish` job's index-poll loop.
+    name: Dry-run + package-list sanity (5 crates)
     needs: [ci, verify-version]
     runs-on: ubuntu-latest
     steps:
@@ -55,12 +60,21 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
 
-      - name: Dry-run publish in locked dep order
+      - name: Dry-run publish leaves (no internal deps)
         run: |
           set -euo pipefail
-          for crate in slate-reactive slate-platform slate-renderer slate-text slate-framework; do
+          for crate in slate-reactive slate-platform; do
             echo "::group::cargo publish --dry-run -p $crate"
             cargo publish --dry-run -p "$crate"
+            echo "::endgroup::"
+          done
+
+      - name: Package-list sanity check on downstream crates
+        run: |
+          set -euo pipefail
+          for crate in slate-renderer slate-text slate-framework; do
+            echo "::group::cargo package --list -p $crate"
+            cargo package --list -p "$crate"
             echo "::endgroup::"
           done
 
