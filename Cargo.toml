@@ -41,7 +41,7 @@ slate-reactive = { path = "crates/slate-reactive", version = "1.0.1" }
 # (29 -> 30) require a major release.
 wgpu = "29.0.3"
 raw-window-handle = "0.6"
-glam = "0.32"
+glam = "0.33"
 bytemuck = { version = "1.25", features = ["derive"] }
 log = "0.4"
 env_logger = "0.11"
