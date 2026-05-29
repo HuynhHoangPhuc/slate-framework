@@ -1,0 +1,72 @@
+slate-framework
+================
+
+Copyright (c) 2026 Huynh Hoang Phuc and slate-framework contributors.
+
+This product is dual-licensed under the MIT License (`LICENSE-MIT`) and
+the Apache License 2.0 (`LICENSE-APACHE`) at your option.
+
+This NOTICE file lists third-party assets and dependencies that carry
+attribution requirements beyond the project's own dual-license terms.
+Full license texts for non-MIT/Apache assets are kept under `LICENSES/`.
+
+-----------------------------------------------------------
+
+Bundled fonts (shipped inside the `slate-text` crate)
+-----------------------------------------------------
+
+The `slate-text` crate embeds two font files via `include_bytes!`. These
+are distinct from `slate-text`'s own source code license and are governed
+by their upstream font licenses:
+
+1. DejaVu Sans (`crates/slate-text/assets/dejavu-sans.ttf`)
+   Bitstream Vera Fonts License.
+   - Bitstream Vera glyphs: Copyright (c) 2003 Bitstream, Inc.
+   - DejaVu modifications: public domain.
+   - Arev glyph imports: Copyright (c) 2006 Tavmjong Bah.
+   Full text: `LICENSES/Bitstream-Vera.txt` (also bundled in the
+   published crate at `assets/LICENSE-DejaVu`).
+
+2. Noto Sans JP Regular (`crates/slate-text/assets/NotoSansJP-Regular.otf`)
+   SIL Open Font License 1.1.
+   Copyright (c) Google Inc., with Reserved Font Name "Noto".
+   Full text: `LICENSES/OFL-1.1.txt` (also bundled in the published
+   crate at `assets/LICENSE-NotoSansJP`).
+
+Downstream binary distributions that re-ship `slate-text` (directly or
+via `slate-framework`) MUST preserve these attributions. The license
+files inside `crates/slate-text/assets/` are included in the published
+crate package; depending crates can surface them by reading
+`slate_text::DEJAVU_SANS_LICENSE` and `slate_text::NOTO_SANS_JP_LICENSE`
+at runtime, or by copying the asset files into their distribution.
+
+-----------------------------------------------------------
+
+Transitive dependencies with attribution requirements
+-----------------------------------------------------
+
+The Rust crate dependency graph was audited with `cargo deny check
+licenses` (see `deny.toml` for the allow-list). All transitive
+dependencies use permissive licenses (MIT, Apache-2.0, BSD-2-Clause,
+BSD-3-Clause, ISC, MPL-2.0, NCSA, Unicode-3.0, Zlib, CC0-1.0). Per-
+dependency copyright notices live inside each crate's own
+`LICENSE`/`COPYING` file as distributed on crates.io; this NOTICE
+intentionally does NOT replicate them — consult the upstream crate
+metadata for authoritative attribution.
+
+Notable groups:
+
+- `unicode-*` crates (unicode-bidi, unicode-ident, unicode-linebreak,
+  unicode-segmentation, unicode-width) — dual MIT/Apache-2.0, with
+  upstream Unicode data covered by the Unicode-3.0 license.
+- `wgpu`, `winit`, `objc2-*`, `windows-*` family — permissive
+  MIT/Apache-2.0 or Apache-2.0 WITH LLVM-exception.
+
+-----------------------------------------------------------
+
+Advisory ignores
+----------------
+
+See `deny.toml` `[advisories].ignore` for the current list of
+acknowledged-but-unfixable advisories. Each entry carries an inline
+rationale and a renewal-review date.

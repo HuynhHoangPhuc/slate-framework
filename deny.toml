@@ -3,7 +3,13 @@ db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "deny"
 ignore = [
-    "RUSTSEC-2024-0436", # paste - transitive via image/rav1e, no fix available
+    # paste (proc-macro crate, marked unmaintained 2024-10-07). Reaches us as
+    # a transitive dep of image -> rav1e -> paste. No upstream replacement
+    # available in rav1e's published versions as of v1.0.0 release. Risk is
+    # bounded: build-time-only proc-macro, no runtime surface. Re-validate
+    # advisory state at the next minor release (v1.x.0) — if rav1e ships a
+    # paste-free version, drop this ignore. Validated 2026-05-29.
+    "RUSTSEC-2024-0436",
 ]
 
 [licenses]
