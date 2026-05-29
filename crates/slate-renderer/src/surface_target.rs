@@ -63,6 +63,7 @@ pub trait CompositionTarget {
 
 /// Error from `configure` — typically a failed `ResizeBuffers` on Windows.
 #[derive(Debug, thiserror::Error)]
+#[allow(dead_code)] // variants constructed only on Windows; macOS surfaces never fail configure
 pub enum ConfigureError {
     #[error("resize buffers failed: {0}")]
     ResizeBuffersFailed(i32),
@@ -72,6 +73,7 @@ pub enum ConfigureError {
 
 /// Error from `present` — typically a failed `IDXGISwapChain::Present` on Windows.
 #[derive(Debug, thiserror::Error)]
+#[allow(dead_code)] // variant constructed only on Windows; macOS surfaces never fail present
 pub enum PresentError {
     #[error("present failed: {0}")]
     PresentFailed(i32),
