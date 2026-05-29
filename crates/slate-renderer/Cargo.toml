@@ -29,7 +29,7 @@ log.workspace = true
 thiserror.workspace = true
 pollster.workspace = true
 tracing = "0.1"
-etagere = "0.2.4"
+etagere = "0.3.0"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.62", features = [
