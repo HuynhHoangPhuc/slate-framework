@@ -1,9 +1,12 @@
 name: Anchor PNG Diff
 
+# Manual-trigger only. Anchor is a Phase 3.5 spike (`examples/anchor-md-to-png`,
+# publish = false) — not part of the v1 surface. Baselines drift with renderer
+# changes; auto-running on every PR produces false-failure noise without gating
+# anything. Re-enable PR/push triggers only if Anchor becomes a tracked feature
+# and someone owns re-baselining after renderer changes.
 on:
-  pull_request:
-  push:
-    branches: [main]
+  workflow_dispatch: {}
 
 jobs:
   png-diff:
