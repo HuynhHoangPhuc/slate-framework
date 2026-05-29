@@ -20,7 +20,7 @@ test-hooks = []
 profiling = []
 
 [dependencies]
-slate-platform = { path = "../slate-platform", version = "1.0.0" }
+slate-platform = { path = "../slate-platform", version = "1.0.1" }
 wgpu.workspace = true
 raw-window-handle.workspace = true
 glam.workspace = true

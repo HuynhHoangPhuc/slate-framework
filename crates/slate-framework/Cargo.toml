@@ -12,10 +12,10 @@ keywords = ["gui", "ui", "gpu", "wgpu", "framework"]
 categories = ["gui", "graphics", "rendering"]
 
 [dependencies]
-slate-platform = { path = "../slate-platform", version = "1.0.0" }
+slate-platform = { path = "../slate-platform", version = "1.0.1" }
 slate-reactive.workspace = true
-slate-renderer = { path = "../slate-renderer", version = "1.0.0" }
-slate-text = { path = "../slate-text", version = "1.0.0" }
+slate-renderer = { path = "../slate-renderer", version = "1.0.1" }
+slate-text = { path = "../slate-text", version = "1.0.1" }
 
 # Phase 3 dependencies (pinned to latest stable 2026-05-07)
 taffy = "=0.10.1"

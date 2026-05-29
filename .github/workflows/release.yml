@@ -147,7 +147,12 @@ jobs:
           exit 1
 
       - name: Publish slate-renderer
-        run: cargo publish -p slate-renderer
+        # --no-verify: slate-renderer is macOS+Windows only (per crate metadata).
+        # cargo publish's verify step compiles the .crate tarball on the host
+        # (Linux runner here) which lacks the cfg-gated `target` field. CI's
+        # main `ci` job already proves the crate builds on macOS-26 +
+        # windows-2025-vs2026, so verify is redundant for the upload.
+        run: cargo publish --no-verify -p slate-renderer
       - name: Wait for slate-renderer on crates.io index (max 5min)
         run: |
           set -euo pipefail
@@ -161,7 +166,7 @@ jobs:
           exit 1
 
       - name: Publish slate-text
-        run: cargo publish -p slate-text
+        run: cargo publish --no-verify -p slate-text
       - name: Wait for slate-text on crates.io index (max 5min)
         run: |
           set -euo pipefail
@@ -175,7 +180,7 @@ jobs:
           exit 1
 
       - name: Publish slate-framework
-        run: cargo publish -p slate-framework
+        run: cargo publish --no-verify -p slate-framework
       - name: Wait for slate-framework on crates.io index (max 5min)
         run: |
           set -euo pipefail

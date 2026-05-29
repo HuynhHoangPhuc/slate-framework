@@ -12,7 +12,7 @@ keywords = ["text", "font", "shaping", "glyph", "gui"]
 categories = ["gui", "graphics", "rendering"]
 
 [dependencies]
-slate-renderer = { path = "../slate-renderer", version = "1.0.0" }
+slate-renderer = { path = "../slate-renderer", version = "1.0.1" }
 thiserror.workspace = true
 log.workspace = true
 wgpu.workspace = true
