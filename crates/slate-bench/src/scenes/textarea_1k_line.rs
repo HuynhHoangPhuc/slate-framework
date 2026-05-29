@@ -6,8 +6,8 @@
 
 use slate_framework::reactive::Signal;
 use slate_framework::{
-    AlignItems, AnyElement, Color, Div, FlexDirection, HeadlessApp, IntoAny,
-    JustifyContent, TextArea, TextAreaStyle, View,
+    AlignItems, AnyElement, Color, Div, FlexDirection, HeadlessApp, IntoAny, JustifyContent,
+    TextArea, TextAreaStyle, View,
 };
 
 const LINE_COUNT: usize = 1_000;

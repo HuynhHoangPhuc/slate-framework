@@ -31,8 +31,8 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use insta::assert_debug_snapshot;
-use slate_framework::app_state::{AppSignal, AppState};
 use slate_framework::app_state::window_state::WindowState;
+use slate_framework::app_state::{AppSignal, AppState};
 use slate_framework::event::{
     EventCtx, ImeCommitEvent, ImeHandlers, ImePreeditEvent, KeyEvent, KeyHandlers, MouseEvent,
     MouseHandlers, TextInputEvent,
@@ -66,7 +66,11 @@ fn make_state() -> (Rc<AppState>, WindowId) {
     let executor = Executor::new(redraw_requester.clone());
     let runtime = slate_reactive::Runtime::new();
 
-    let state = Rc::new(AppState::new(executor, redraw_requester.clone(), runtime.clone()));
+    let state = Rc::new(AppState::new(
+        executor,
+        redraw_requester.clone(),
+        runtime.clone(),
+    ));
 
     let window_id = window.id();
     {
@@ -250,12 +254,24 @@ fn wire_element_mouse_down_with_capture(
 ) {
     let r = rec.clone();
     let on_down: ArcMouse = Arc::new(move |_ev, cx| {
-        r.push(label, Some(elem), cx.element_id(), None, Some("set_capture"));
+        r.push(
+            label,
+            Some(elem),
+            cx.element_id(),
+            None,
+            Some("set_capture"),
+        );
         cx.set_capture(capture_to);
     });
     let r2 = rec.clone();
     let on_move: ArcMouse = Arc::new(move |_ev, cx| {
-        r2.push("element_mouse_move", Some(elem), cx.element_id(), None, None);
+        r2.push(
+            "element_mouse_move",
+            Some(elem),
+            cx.element_id(),
+            None,
+            None,
+        );
     });
     state.install_element_mouse_handlers_for_test(
         window,
@@ -365,13 +381,7 @@ fn scene_a_text_input_then_tab_then_esc() -> Vec<TraceEntry> {
 
     // 1) "abc" → one TextInput per char (matches platform char-event cadence)
     for ch in ['a', 'b', 'c'] {
-        rec.push(
-            "BeginDispatch",
-            None,
-            None,
-            None,
-            Some("text_input:char"),
-        );
+        rec.push("BeginDispatch", None, None, None, Some("text_input:char"));
         let s = state.dispatch_text_input_for_test(win, ch.to_string());
         rec.push("EndDispatch", None, None, Some(signal_label(s)), None);
     }
@@ -379,7 +389,8 @@ fn scene_a_text_input_then_tab_then_esc() -> Vec<TraceEntry> {
     // 2) Tab down/up (focus traversal is owned by Tab handler in apps;
     //    here we only pin that the down/up routes are invoked).
     rec.push("BeginDispatch", None, None, None, Some("key:Tab"));
-    let s = state.dispatch_key_down_for_test(win, KeyCode::Tab, Key::Named(NamedKey::Tab), mods, false);
+    let s =
+        state.dispatch_key_down_for_test(win, KeyCode::Tab, Key::Named(NamedKey::Tab), mods, false);
     rec.push("EndDispatch", None, None, Some(signal_label(s)), None);
     rec.push("BeginDispatch", None, None, None, Some("key:Tab_up"));
     let s = state.dispatch_key_up_for_test(win, KeyCode::Tab, Key::Named(NamedKey::Tab), mods);
@@ -413,8 +424,22 @@ fn scene_b_click_focus_shift_then_ime() -> Vec<TraceEntry> {
     state.register_focusable_for_test(win, entry(1));
     state.register_focusable_for_test(win, entry(2));
 
-    wire_element_mouse_down(&state, win, row1, bounds(0.0, 0.0, 100.0, 50.0), &rec, "row1_down");
-    wire_element_mouse_down(&state, win, row2, bounds(0.0, 50.0, 100.0, 50.0), &rec, "row2_down");
+    wire_element_mouse_down(
+        &state,
+        win,
+        row1,
+        bounds(0.0, 0.0, 100.0, 50.0),
+        &rec,
+        "row1_down",
+    );
+    wire_element_mouse_down(
+        &state,
+        win,
+        row2,
+        bounds(0.0, 50.0, 100.0, 50.0),
+        &rec,
+        "row2_down",
+    );
     wire_element_ime(&state, win, row1, &rec);
     wire_element_ime(&state, win, row2, &rec);
 
@@ -483,7 +508,14 @@ fn scene_c_capture_drag_across_boundary() -> Vec<TraceEntry> {
         &rec,
         "row1_down",
     );
-    wire_element_mouse_down(&state, win, row2, bounds(0.0, 50.0, 100.0, 50.0), &rec, "row2_down");
+    wire_element_mouse_down(
+        &state,
+        win,
+        row2,
+        bounds(0.0, 50.0, 100.0, 50.0),
+        &rec,
+        "row2_down",
+    );
 
     let mods = Modifiers::default();
 
@@ -555,13 +587,7 @@ fn scene_d_ime_commit_then_tab() -> Vec<TraceEntry> {
 
     let mods = Modifiers::default();
 
-    rec.push(
-        "BeginDispatch",
-        None,
-        None,
-        None,
-        Some("ime_preedit:あ"),
-    );
+    rec.push("BeginDispatch", None, None, None, Some("ime_preedit:あ"));
     let s = state.dispatch_ime_preedit_for_test(win, "あ".into(), 1, None);
     rec.push("EndDispatch", None, None, Some(signal_label(s)), None);
 
@@ -582,7 +608,8 @@ fn scene_d_ime_commit_then_tab() -> Vec<TraceEntry> {
         None,
         Some("key:Tab (post-commit)"),
     );
-    let s = state.dispatch_key_down_for_test(win, KeyCode::Tab, Key::Named(NamedKey::Tab), mods, false);
+    let s =
+        state.dispatch_key_down_for_test(win, KeyCode::Tab, Key::Named(NamedKey::Tab), mods, false);
     rec.push("EndDispatch", None, None, Some(signal_label(s)), None);
 
     rec.snapshot()

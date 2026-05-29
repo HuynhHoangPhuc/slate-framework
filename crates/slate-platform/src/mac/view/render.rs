@@ -9,8 +9,8 @@ use objc2::rc::Retained;
 use objc2_foundation::{NSNotification, NSRect};
 use objc2_quartz_core::{CALayer, CAMetalLayer};
 
-use super::{MetalView, WindowDelegate};
 use super::super::{dispatch_event, ffi_boundary, post_redraw_event, with_window_delegate};
+use super::{MetalView, WindowDelegate};
 use crate::Event;
 
 impl MetalView {

@@ -27,8 +27,8 @@ pub mod window_state;
 
 pub use state::AppState;
 pub(crate) use state::ErasedViewFactory;
-pub use types::{AppSignal, DeviceLossReason};
 #[cfg(any(test, feature = "test-hooks"))]
 pub use types::RecoveryState;
+pub use types::{AppSignal, DeviceLossReason};
 #[allow(unused_imports)]
 pub use window_state::WindowState;

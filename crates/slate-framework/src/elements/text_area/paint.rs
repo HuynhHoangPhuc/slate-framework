@@ -108,9 +108,7 @@ pub(super) fn paint(
 
     // 1. Selection highlight — one rect per spanned visual line, behind glyphs.
     //    Suppressed during composition (selection ≡ preedit while composing).
-    if !has_preedit
-        && let Some(anchor) = selection_anchor
-    {
+    if !has_preedit && let Some(anchor) = selection_anchor {
         let (lo, hi) = if anchor <= caret_byte {
             (anchor, caret_byte)
         } else {

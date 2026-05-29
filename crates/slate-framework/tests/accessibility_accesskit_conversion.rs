@@ -5,7 +5,9 @@
 //! `accesskit::Node` exposes the same fields via accesskit's own getters.
 
 use accesskit::{Action as AkAction, Live, NodeId, Role};
-use slate_framework::a11y_accesskit::{element_id_to_node_id, to_accesskit_node, to_accesskit_tree};
+use slate_framework::a11y_accesskit::{
+    element_id_to_node_id, to_accesskit_node, to_accesskit_tree,
+};
 use slate_framework::types::{
     AccessibilityAction, AccessibilityInfo, AccessibilityNode, AccessibilityRelationships,
     AccessibilityRole, Bounds, ElementId, LiveRegion,

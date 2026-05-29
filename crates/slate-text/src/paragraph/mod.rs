@@ -72,7 +72,12 @@ pub fn greedy_wrap<B: TextBackend>(
     // lets the Text element cache the shaped words and re-fit on resize without
     // re-shaping; here we just chain them for the one-shot convenience path.
     let (words, space_width) = shape_words(backend, font, text)?;
-    Ok(wrap_shaped_words(&words, space_width, line_height, max_width_lpx))
+    Ok(wrap_shaped_words(
+        &words,
+        space_width,
+        line_height,
+        max_width_lpx,
+    ))
 }
 
 /// Shape a single line through the bidi segment + reorder pipeline, producing a

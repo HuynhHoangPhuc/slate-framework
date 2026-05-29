@@ -19,7 +19,9 @@ impl AppState {
     pub(crate) fn apply_pending_focus_op(&self, window: WindowId, op: Option<PendingFocusOp>) {
         let Some(op) = op else { return };
         let guard = self.windows.borrow();
-        let Some(win) = guard.get(&window) else { return };
+        let Some(win) = guard.get(&window) else {
+            return;
+        };
         let mut reg = win.focus_registry.borrow_mut();
         match op {
             PendingFocusOp::Focus(id) => {
@@ -34,14 +36,12 @@ impl AppState {
     /// or the window is unknown. A `Set` marks the capture explicit so it
     /// survives mouse-up; `Release` clears both the target and the explicit
     /// flag.
-    pub(crate) fn apply_pending_capture_op(
-        &self,
-        window: WindowId,
-        op: Option<PendingCaptureOp>,
-    ) {
+    pub(crate) fn apply_pending_capture_op(&self, window: WindowId, op: Option<PendingCaptureOp>) {
         let Some(op) = op else { return };
         let guard = self.windows.borrow();
-        let Some(win) = guard.get(&window) else { return };
+        let Some(win) = guard.get(&window) else {
+            return;
+        };
         match op {
             PendingCaptureOp::Set(id) => {
                 *win.capture_target.borrow_mut() = Some(id);

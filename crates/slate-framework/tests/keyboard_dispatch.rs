@@ -19,8 +19,8 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use slate_framework::app_state::{AppSignal, AppState};
 use slate_framework::app_state::window_state::WindowState;
+use slate_framework::app_state::{AppSignal, AppState};
 use slate_framework::element::AnyElement;
 use slate_framework::elements::Div;
 use slate_framework::executor::{Executor, RedrawRequester};
@@ -56,7 +56,11 @@ fn make_state() -> (Rc<AppState>, WindowId) {
     // Platform is dropped here; window keeps the HWND alive via its Arc inner.
     // Dispatch methods touch only RefCells, so no platform pump is needed.
     let _ = platform;
-    let state = Rc::new(AppState::new(executor, redraw_requester.clone(), runtime.clone()));
+    let state = Rc::new(AppState::new(
+        executor,
+        redraw_requester.clone(),
+        runtime.clone(),
+    ));
     let window_id = window.id();
     {
         let win_state = WindowState::new(window, runtime);

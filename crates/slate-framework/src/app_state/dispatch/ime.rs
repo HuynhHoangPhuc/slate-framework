@@ -53,7 +53,9 @@ impl AppState {
 
         let focused = {
             let guard = self.windows.borrow();
-            guard.get(&window_id).and_then(|w| w.focus_registry.borrow().focused())
+            guard
+                .get(&window_id)
+                .and_then(|w| w.focus_registry.borrow().focused())
         };
         let Some(focused) = focused else {
             let guard = self.windows.borrow();
@@ -65,7 +67,9 @@ impl AppState {
 
         let entry = {
             let guard = self.windows.borrow();
-            guard.get(&window_id).and_then(|w| w.ime_registry.borrow().get(focused))
+            guard
+                .get(&window_id)
+                .and_then(|w| w.ime_registry.borrow().get(focused))
         };
         if let Some(state_rc) = entry
             && let Ok(state) = state_rc.try_borrow()
@@ -111,12 +115,16 @@ impl AppState {
                 PendingImeOp::Commit { text, .. } => {
                     let focused = {
                         let guard = self.windows.borrow();
-                        guard.get(&window_id).and_then(|w| w.focus_registry.borrow().focused())
+                        guard
+                            .get(&window_id)
+                            .and_then(|w| w.focus_registry.borrow().focused())
                     };
                     let Some(focused) = focused else { continue };
                     let state_rc = {
                         let guard = self.windows.borrow();
-                        guard.get(&window_id).and_then(|w| w.ime_registry.borrow().get(focused))
+                        guard
+                            .get(&window_id)
+                            .and_then(|w| w.ime_registry.borrow().get(focused))
                     };
                     let Some(state_rc) = state_rc else { continue };
                     if let Ok(mut state) = state_rc.try_borrow_mut() {
@@ -140,21 +148,30 @@ impl AppState {
             return AppSignal::None;
         }
 
-        let event = ImeLifecycleEvent { timestamp: Instant::now() };
+        let event = ImeLifecycleEvent {
+            timestamp: Instant::now(),
+        };
         let mut stopped = false;
         let mut pending_focus_op: Option<PendingFocusOp> = None;
         let mut pending_capture_op: Option<PendingCaptureOp> = None;
 
         let focused = {
             let guard = self.windows.borrow();
-            guard.get(&window).and_then(|w| w.focus_registry.borrow().focused())
+            guard
+                .get(&window)
+                .and_then(|w| w.focus_registry.borrow().focused())
         };
 
         let element_handlers: SmallVec<[ElementImeLifecycleHandler; 8]> = {
             let guard = self.windows.borrow();
-            let Some(win) = guard.get(&window) else { return AppSignal::None };
+            let Some(win) = guard.get(&window) else {
+                return AppSignal::None;
+            };
             let map = win.ime_handler_map.borrow();
-            chain.iter().filter_map(|id| map.get(id).and_then(|h| h.on_ime_enabled.clone())).collect()
+            chain
+                .iter()
+                .filter_map(|id| map.get(id).and_then(|h| h.on_ime_enabled.clone()))
+                .collect()
         };
 
         for handler in &element_handlers {
@@ -165,11 +182,17 @@ impl AppState {
                 win.ime_registry.clone()
             };
             let mut ctx = EventCtx::new(
-                    &mut stopped, &mut pending_focus_op, &mut pending_capture_op, window, focused,
-                )
-                .with_ime(id, &ime_rc);
+                &mut stopped,
+                &mut pending_focus_op,
+                &mut pending_capture_op,
+                window,
+                focused,
+            )
+            .with_ime(id, &ime_rc);
             handler(&event, &mut ctx);
-            if stopped { break; }
+            if stopped {
+                break;
+            }
         }
 
         if !stopped && has_app_handlers {
@@ -182,11 +205,17 @@ impl AppState {
                     win.ime_registry.clone()
                 };
                 let mut ctx = EventCtx::new(
-                        &mut stopped, &mut pending_focus_op, &mut pending_capture_op, window, focused,
-                    )
-                    .with_ime(id, &ime_rc);
+                    &mut stopped,
+                    &mut pending_focus_op,
+                    &mut pending_capture_op,
+                    window,
+                    focused,
+                )
+                .with_ime(id, &ime_rc);
                 handler(&event, &mut ctx);
-                if stopped { break; }
+                if stopped {
+                    break;
+                }
             }
             drop(handlers);
         }
@@ -205,21 +234,30 @@ impl AppState {
             return AppSignal::None;
         }
 
-        let event = ImeLifecycleEvent { timestamp: Instant::now() };
+        let event = ImeLifecycleEvent {
+            timestamp: Instant::now(),
+        };
         let mut stopped = false;
         let mut pending_focus_op: Option<PendingFocusOp> = None;
         let mut pending_capture_op: Option<PendingCaptureOp> = None;
 
         let focused = {
             let guard = self.windows.borrow();
-            guard.get(&window).and_then(|w| w.focus_registry.borrow().focused())
+            guard
+                .get(&window)
+                .and_then(|w| w.focus_registry.borrow().focused())
         };
 
         let element_handlers: SmallVec<[ElementImeLifecycleHandler; 8]> = {
             let guard = self.windows.borrow();
-            let Some(win) = guard.get(&window) else { return AppSignal::None };
+            let Some(win) = guard.get(&window) else {
+                return AppSignal::None;
+            };
             let map = win.ime_handler_map.borrow();
-            chain.iter().filter_map(|id| map.get(id).and_then(|h| h.on_ime_disabled.clone())).collect()
+            chain
+                .iter()
+                .filter_map(|id| map.get(id).and_then(|h| h.on_ime_disabled.clone()))
+                .collect()
         };
 
         for handler in &element_handlers {
@@ -230,11 +268,17 @@ impl AppState {
                 win.ime_registry.clone()
             };
             let mut ctx = EventCtx::new(
-                    &mut stopped, &mut pending_focus_op, &mut pending_capture_op, window, focused,
-                )
-                .with_ime(id, &ime_rc);
+                &mut stopped,
+                &mut pending_focus_op,
+                &mut pending_capture_op,
+                window,
+                focused,
+            )
+            .with_ime(id, &ime_rc);
             handler(&event, &mut ctx);
-            if stopped { break; }
+            if stopped {
+                break;
+            }
         }
 
         if !stopped && has_app_handlers {
@@ -247,11 +291,17 @@ impl AppState {
                     win.ime_registry.clone()
                 };
                 let mut ctx = EventCtx::new(
-                        &mut stopped, &mut pending_focus_op, &mut pending_capture_op, window, focused,
-                    )
-                    .with_ime(id, &ime_rc);
+                    &mut stopped,
+                    &mut pending_focus_op,
+                    &mut pending_capture_op,
+                    window,
+                    focused,
+                )
+                .with_ime(id, &ime_rc);
                 handler(&event, &mut ctx);
-                if stopped { break; }
+                if stopped {
+                    break;
+                }
             }
             drop(handlers);
         }
@@ -290,14 +340,21 @@ impl AppState {
 
         let focused = {
             let guard = self.windows.borrow();
-            guard.get(&window).and_then(|w| w.focus_registry.borrow().focused())
+            guard
+                .get(&window)
+                .and_then(|w| w.focus_registry.borrow().focused())
         };
 
         let element_handlers: SmallVec<[ElementImePreeditHandler; 8]> = {
             let guard = self.windows.borrow();
-            let Some(win) = guard.get(&window) else { return AppSignal::None };
+            let Some(win) = guard.get(&window) else {
+                return AppSignal::None;
+            };
             let map = win.ime_handler_map.borrow();
-            chain.iter().filter_map(|id| map.get(id).and_then(|h| h.on_ime_preedit.clone())).collect()
+            chain
+                .iter()
+                .filter_map(|id| map.get(id).and_then(|h| h.on_ime_preedit.clone()))
+                .collect()
         };
 
         for handler in &element_handlers {
@@ -308,11 +365,17 @@ impl AppState {
                 win.ime_registry.clone()
             };
             let mut ctx = EventCtx::new(
-                    &mut stopped, &mut pending_focus_op, &mut pending_capture_op, window, focused,
-                )
-                .with_ime(id, &ime_rc);
+                &mut stopped,
+                &mut pending_focus_op,
+                &mut pending_capture_op,
+                window,
+                focused,
+            )
+            .with_ime(id, &ime_rc);
             handler(&event, &mut ctx);
-            if stopped { break; }
+            if stopped {
+                break;
+            }
         }
 
         if !stopped && has_app_handlers {
@@ -325,11 +388,17 @@ impl AppState {
                     win.ime_registry.clone()
                 };
                 let mut ctx = EventCtx::new(
-                        &mut stopped, &mut pending_focus_op, &mut pending_capture_op, window, focused,
-                    )
-                    .with_ime(id, &ime_rc);
+                    &mut stopped,
+                    &mut pending_focus_op,
+                    &mut pending_capture_op,
+                    window,
+                    focused,
+                )
+                .with_ime(id, &ime_rc);
                 handler(&event, &mut ctx);
-                if stopped { break; }
+                if stopped {
+                    break;
+                }
             }
             drop(handlers);
         }
@@ -359,14 +428,21 @@ impl AppState {
 
         let focused = {
             let guard = self.windows.borrow();
-            guard.get(&window).and_then(|w| w.focus_registry.borrow().focused())
+            guard
+                .get(&window)
+                .and_then(|w| w.focus_registry.borrow().focused())
         };
 
         let element_handlers: SmallVec<[ElementImeCommitHandler; 8]> = {
             let guard = self.windows.borrow();
-            let Some(win) = guard.get(&window) else { return AppSignal::None };
+            let Some(win) = guard.get(&window) else {
+                return AppSignal::None;
+            };
             let map = win.ime_handler_map.borrow();
-            chain.iter().filter_map(|id| map.get(id).and_then(|h| h.on_ime_commit.clone())).collect()
+            chain
+                .iter()
+                .filter_map(|id| map.get(id).and_then(|h| h.on_ime_commit.clone()))
+                .collect()
         };
 
         for handler in &element_handlers {
@@ -377,11 +453,17 @@ impl AppState {
                 win.ime_registry.clone()
             };
             let mut ctx = EventCtx::new(
-                    &mut stopped, &mut pending_focus_op, &mut pending_capture_op, window, focused,
-                )
-                .with_ime(id, &ime_rc);
+                &mut stopped,
+                &mut pending_focus_op,
+                &mut pending_capture_op,
+                window,
+                focused,
+            )
+            .with_ime(id, &ime_rc);
             handler(&event, &mut ctx);
-            if stopped { break; }
+            if stopped {
+                break;
+            }
         }
 
         if !stopped && has_app_handlers {
@@ -394,11 +476,17 @@ impl AppState {
                     win.ime_registry.clone()
                 };
                 let mut ctx = EventCtx::new(
-                        &mut stopped, &mut pending_focus_op, &mut pending_capture_op, window, focused,
-                    )
-                    .with_ime(id, &ime_rc);
+                    &mut stopped,
+                    &mut pending_focus_op,
+                    &mut pending_capture_op,
+                    window,
+                    focused,
+                )
+                .with_ime(id, &ime_rc);
                 handler(&event, &mut ctx);
-                if stopped { break; }
+                if stopped {
+                    break;
+                }
             }
             drop(handlers);
         }
@@ -418,7 +506,9 @@ impl AppState {
 impl WindowImeDelegate for AppState {
     fn ime_caret_rect(&self, window_id: WindowId) -> Option<PhysicalRect> {
         let guard = self.windows.borrow();
-        guard.get(&window_id).and_then(|w| w.cached_ime_query.borrow().caret_client_rect)
+        guard
+            .get(&window_id)
+            .and_then(|w| w.cached_ime_query.borrow().caret_client_rect)
     }
 
     fn ime_text(&self, window_id: WindowId, range: std::ops::Range<usize>) -> Option<String> {
@@ -436,11 +526,15 @@ impl WindowImeDelegate for AppState {
 
     fn ime_selected_range(&self, window_id: WindowId) -> Option<std::ops::Range<usize>> {
         let guard = self.windows.borrow();
-        guard.get(&window_id).and_then(|w| w.cached_ime_query.borrow().selected_range.clone())
+        guard
+            .get(&window_id)
+            .and_then(|w| w.cached_ime_query.borrow().selected_range.clone())
     }
 
     fn ime_marked_range(&self, window_id: WindowId) -> Option<std::ops::Range<usize>> {
         let guard = self.windows.borrow();
-        guard.get(&window_id).and_then(|w| w.cached_ime_query.borrow().marked_range.clone())
+        guard
+            .get(&window_id)
+            .and_then(|w| w.cached_ime_query.borrow().marked_range.clone())
     }
 }

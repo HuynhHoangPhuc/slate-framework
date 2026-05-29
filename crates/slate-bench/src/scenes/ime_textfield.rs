@@ -6,8 +6,8 @@
 
 use slate_framework::reactive::Signal;
 use slate_framework::{
-    AlignItems, AnyElement, Color, Div, FlexDirection, HeadlessApp, IntoAny,
-    JustifyContent, Text, TextField, TextFieldStyle, View,
+    AlignItems, AnyElement, Color, Div, FlexDirection, HeadlessApp, IntoAny, JustifyContent, Text,
+    TextField, TextFieldStyle, View,
 };
 
 const SEED: &str = "Hello مرحبا world";

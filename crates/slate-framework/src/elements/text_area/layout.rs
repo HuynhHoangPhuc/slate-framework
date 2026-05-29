@@ -33,7 +33,9 @@ pub(crate) fn build_layout(
     let layout = slate_text::wrap_document(&doc, width_lpx);
 
     let floor_rows = min_lines.max(1) as f32;
-    let height = layout.total_height_lpx.max(floor_rows * layout.line_height_lpx);
+    let height = layout
+        .total_height_lpx
+        .max(floor_rows * layout.line_height_lpx);
 
     Ok((Rc::new(layout), height))
 }
@@ -304,9 +306,19 @@ mod tests {
     fn layout_3lines() -> MultilineLayout {
         MultilineLayout {
             lines: vec![
-                vline(vec![glyph(0, 10.0), glyph(1, 10.0), glyph(2, 10.0)], 0, 4, 0.0),
+                vline(
+                    vec![glyph(0, 10.0), glyph(1, 10.0), glyph(2, 10.0)],
+                    0,
+                    4,
+                    0.0,
+                ),
                 vline(vec![glyph(4, 10.0), glyph(5, 10.0)], 4, 7, 12.0),
-                vline(vec![glyph(7, 10.0), glyph(8, 10.0), glyph(9, 10.0)], 7, 10, 24.0),
+                vline(
+                    vec![glyph(7, 10.0), glyph(8, 10.0), glyph(9, 10.0)],
+                    7,
+                    10,
+                    24.0,
+                ),
             ],
             total_height_lpx: 36.0,
             line_height_lpx: 12.0,
@@ -320,9 +332,15 @@ mod tests {
         // Paint origin at (100, 50). A point in line0's y band, x near 'b' edge.
         // line0 'a' adv5 'b' adv6 → caret-x for byte 2 is 11; clicking past that
         // (local_x ≈ 11) snaps to line0 caret-end (byte 2).
-        assert_eq!(byte_at_point(&l, text, 100.0, 50.0, 100.0 + 20.0, 50.0 + 3.0), 2);
+        assert_eq!(
+            byte_at_point(&l, text, 100.0, 50.0, 100.0 + 20.0, 50.0 + 3.0),
+            2
+        );
         // y in line0 band, far-left x → line0 start (byte 0).
-        assert_eq!(byte_at_point(&l, text, 100.0, 50.0, 100.0 - 5.0, 50.0 + 3.0), 0);
+        assert_eq!(
+            byte_at_point(&l, text, 100.0, 50.0, 100.0 - 5.0, 50.0 + 3.0),
+            0
+        );
         // y in line1 band → a byte on line1 (≥ 3).
         let b = byte_at_point(&l, text, 100.0, 50.0, 100.0 + 1.0, 50.0 + 15.0);
         assert_eq!(b, 3, "left edge of line1 → its byte_start");
@@ -333,9 +351,15 @@ mod tests {
         let text = "ab\ncd";
         let l = layout_abcd();
         // y past total height → document end (byte 5).
-        assert_eq!(byte_at_point(&l, text, 100.0, 50.0, 100.0 + 100.0, 50.0 + 999.0), 5);
+        assert_eq!(
+            byte_at_point(&l, text, 100.0, 50.0, 100.0 + 100.0, 50.0 + 999.0),
+            5
+        );
         // Negative y (above first line) → 0.
-        assert_eq!(byte_at_point(&l, text, 100.0, 50.0, 100.0 + 100.0, 50.0 - 999.0), 0);
+        assert_eq!(
+            byte_at_point(&l, text, 100.0, 50.0, 100.0 + 100.0, 50.0 - 999.0),
+            0
+        );
     }
 
     #[test]
@@ -354,11 +378,32 @@ mod tests {
         let rects = selection_rects(&l, 1, 9, 100.0);
         assert_eq!(rects.len(), 3, "one rect per spanned line");
         // line0: starts mid-line at byte1 (x=10) → to line text end (width 30).
-        assert_eq!(rects[0], SelectionRect { x_lpx: 10.0, y_lpx: 0.0, width_lpx: 20.0 });
+        assert_eq!(
+            rects[0],
+            SelectionRect {
+                x_lpx: 10.0,
+                y_lpx: 0.0,
+                width_lpx: 20.0
+            }
+        );
         // line1: fully covered interior → full content width (100) from x=0.
-        assert_eq!(rects[1], SelectionRect { x_lpx: 0.0, y_lpx: 12.0, width_lpx: 100.0 });
+        assert_eq!(
+            rects[1],
+            SelectionRect {
+                x_lpx: 0.0,
+                y_lpx: 12.0,
+                width_lpx: 100.0
+            }
+        );
         // line2: from line start (x=0) to byte9 (x=20).
-        assert_eq!(rects[2], SelectionRect { x_lpx: 0.0, y_lpx: 24.0, width_lpx: 20.0 });
+        assert_eq!(
+            rects[2],
+            SelectionRect {
+                x_lpx: 0.0,
+                y_lpx: 24.0,
+                width_lpx: 20.0
+            }
+        );
     }
 
     #[test]
@@ -366,7 +411,12 @@ mod tests {
         // "abc" single-line parity with the TextField path: one rect lo_x..hi_x.
         let l = MultilineLayout {
             lines: vec![vline(
-                vec![glyph(0, 10.0), glyph(1, 10.0), glyph(2, 10.0), glyph(3, 10.0)],
+                vec![
+                    glyph(0, 10.0),
+                    glyph(1, 10.0),
+                    glyph(2, 10.0),
+                    glyph(3, 10.0),
+                ],
                 0,
                 4,
                 0.0,
@@ -376,7 +426,14 @@ mod tests {
         };
         let rects = selection_rects(&l, 1, 3, 100.0);
         assert_eq!(rects.len(), 1);
-        assert_eq!(rects[0], SelectionRect { x_lpx: 10.0, y_lpx: 0.0, width_lpx: 20.0 });
+        assert_eq!(
+            rects[0],
+            SelectionRect {
+                x_lpx: 10.0,
+                y_lpx: 0.0,
+                width_lpx: 20.0
+            }
+        );
     }
 
     #[test]
@@ -431,11 +488,32 @@ mod tests {
         let runs = preedit_runs(&l, 1, 9);
         assert_eq!(runs.len(), 3, "one run per spanned line");
         // line0: byte1 (x=10) .. min(9, byte_end=4) → byte4 maps to width 30.
-        assert_eq!(runs[0], PreeditRun { line_idx: 0, x_lpx: 10.0, width_lpx: 20.0 });
+        assert_eq!(
+            runs[0],
+            PreeditRun {
+                line_idx: 0,
+                x_lpx: 10.0,
+                width_lpx: 20.0
+            }
+        );
         // line1 fully covered: hugs glyphs (x=0 .. width 20), NOT content_width(100).
-        assert_eq!(runs[1], PreeditRun { line_idx: 1, x_lpx: 0.0, width_lpx: 20.0 });
+        assert_eq!(
+            runs[1],
+            PreeditRun {
+                line_idx: 1,
+                x_lpx: 0.0,
+                width_lpx: 20.0
+            }
+        );
         // line2: x=0 .. byte9 (x=20).
-        assert_eq!(runs[2], PreeditRun { line_idx: 2, x_lpx: 0.0, width_lpx: 20.0 });
+        assert_eq!(
+            runs[2],
+            PreeditRun {
+                line_idx: 2,
+                x_lpx: 0.0,
+                width_lpx: 20.0
+            }
+        );
     }
 
     #[test]
@@ -451,6 +529,13 @@ mod tests {
         let l = layout_abcd();
         let rects = selection_rects(&l, 0, 3, 200.0);
         assert_eq!(rects.len(), 1);
-        assert_eq!(rects[0], SelectionRect { x_lpx: 0.0, y_lpx: 0.0, width_lpx: 200.0 });
+        assert_eq!(
+            rects[0],
+            SelectionRect {
+                x_lpx: 0.0,
+                y_lpx: 0.0,
+                width_lpx: 200.0
+            }
+        );
     }
 }

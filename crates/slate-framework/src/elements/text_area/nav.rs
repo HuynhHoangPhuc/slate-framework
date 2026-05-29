@@ -172,8 +172,8 @@ pub(crate) fn insert_newline(state: &mut ImeState) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use slate_text::{MultilineLayout, VisualLine};
     use slate_text::{Affinity, Direction, FontId, RunSpan, ShapedGlyph, ShapedLine};
+    use slate_text::{MultilineLayout, VisualLine};
 
     fn glyph(cluster: u32, adv: f32) -> ShapedGlyph {
         dglyph(cluster, adv, Direction::Ltr)

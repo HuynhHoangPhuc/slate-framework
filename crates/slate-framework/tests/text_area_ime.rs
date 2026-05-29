@@ -36,7 +36,12 @@ fn text_system() -> (TextSystem, slate_framework::text_system::PlatformFont) {
     (ts, font)
 }
 
-fn wrapped(ts: &TextSystem, font: &slate_framework::text_system::PlatformFont, text: &str, w: f32) -> slate_text::MultilineLayout {
+fn wrapped(
+    ts: &TextSystem,
+    font: &slate_framework::text_system::PlatformFont,
+    text: &str,
+    w: f32,
+) -> slate_text::MultilineLayout {
     let doc = ts.shape_document(font, text).expect("shape document");
     slate_text::wrap_document(&doc, w)
 }
@@ -50,7 +55,11 @@ fn preedit_composes_into_layout_and_widens_line() {
     assert_eq!(display, "ab你好");
     let composed = wrapped(&ts, &font, &display, 1000.0);
 
-    assert_eq!(composed.lines.len(), 1, "short composition stays on one line");
+    assert_eq!(
+        composed.lines.len(),
+        1,
+        "short composition stays on one line"
+    );
     let committed_w = committed.lines[0].line.width_lpx;
     let composed_w = composed.lines[0].line.width_lpx;
     assert!(

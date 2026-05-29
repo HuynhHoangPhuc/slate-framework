@@ -315,8 +315,7 @@ impl GlyphPipeline {
         pass.draw(0..6, 0..(end - range.start));
 
         #[cfg(feature = "profiling")]
-        crate::profiling::PAINT_CMD_COUNT
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        crate::profiling::PAINT_CMD_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Current capacity in bytes — exposed for tests / observability.

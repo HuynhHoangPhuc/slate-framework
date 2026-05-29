@@ -64,7 +64,9 @@ impl AppState {
         // Snapshot focused element before dispatching.
         let focused = {
             let guard = self.windows.borrow();
-            guard.get(&window).and_then(|w| w.focus_registry.borrow().focused())
+            guard
+                .get(&window)
+                .and_then(|w| w.focus_registry.borrow().focused())
         };
 
         // Snapshot per-element handlers up-front so we never hold the
@@ -94,13 +96,13 @@ impl AppState {
                 win.ime_registry.clone() // Rc clone; guard drops after this block
             };
             let mut ctx = EventCtx::new(
-                    &mut stopped,
-                    &mut pending_focus_op,
-                    &mut pending_capture_op,
-                    window,
-                    focused,
-                )
-                .with_ime(*id, &ime_rc);
+                &mut stopped,
+                &mut pending_focus_op,
+                &mut pending_capture_op,
+                window,
+                focused,
+            )
+            .with_ime(*id, &ime_rc);
             handler(&event, &mut ctx);
             if stopped {
                 break;
@@ -132,12 +134,12 @@ impl AppState {
         // the still-focused element before the focus shift. Enqueue + drain
         // pattern — mutating IME state inline would conflict with the borrow
         // that focus_registry will take a few lines down.
-        if !stopped
-            && matches!(event.key, Key::Named(NamedKey::Tab))
-        {
+        if !stopped && matches!(event.key, Key::Named(NamedKey::Tab)) {
             let focused_now = {
                 let guard = self.windows.borrow();
-                guard.get(&window).and_then(|w| w.focus_registry.borrow().focused())
+                guard
+                    .get(&window)
+                    .and_then(|w| w.focus_registry.borrow().focused())
             };
             if let Some(focused_id) = focused_now {
                 let preedit_text = {
@@ -210,7 +212,9 @@ impl AppState {
 
         let focused = {
             let guard = self.windows.borrow();
-            guard.get(&window).and_then(|w| w.focus_registry.borrow().focused())
+            guard
+                .get(&window)
+                .and_then(|w| w.focus_registry.borrow().focused())
         };
 
         let element_handlers: SmallVec<[(ElementId, ElementKeyHandler); 8]> = {
@@ -236,13 +240,13 @@ impl AppState {
                 win.ime_registry.clone()
             };
             let mut ctx = EventCtx::new(
-                    &mut stopped,
-                    &mut pending_focus_op,
-                    &mut pending_capture_op,
-                    window,
-                    focused,
-                )
-                .with_ime(*id, &ime_rc);
+                &mut stopped,
+                &mut pending_focus_op,
+                &mut pending_capture_op,
+                window,
+                focused,
+            )
+            .with_ime(*id, &ime_rc);
             handler(&event, &mut ctx);
             if stopped {
                 break;

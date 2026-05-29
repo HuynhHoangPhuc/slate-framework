@@ -82,20 +82,46 @@ pub fn wrap_shaped_words(
             pending = None;
         } else if let Some(sp) = pending.take() {
             // Item fits with the run: make the spaces visible, then the item.
-            commit_item(sp, sp.advance_width_lpx, &mut cur, &mut cur_width, &mut cur_ascent, &mut cur_descent);
+            commit_item(
+                sp,
+                sp.advance_width_lpx,
+                &mut cur,
+                &mut cur_width,
+                &mut cur_ascent,
+                &mut cur_descent,
+            );
         }
 
         let placed_w = fit_advance(item, cur_width, tab_width);
-        commit_item(item, placed_w, &mut cur, &mut cur_width, &mut cur_ascent, &mut cur_descent);
+        commit_item(
+            item,
+            placed_w,
+            &mut cur,
+            &mut cur_width,
+            &mut cur_ascent,
+            &mut cur_descent,
+        );
     }
 
     // Trailing/standalone spaces at the end of the text stay visible.
     if let Some(sp) = pending.take() {
-        commit_item(sp, sp.advance_width_lpx, &mut cur, &mut cur_width, &mut cur_ascent, &mut cur_descent);
+        commit_item(
+            sp,
+            sp.advance_width_lpx,
+            &mut cur,
+            &mut cur_width,
+            &mut cur_ascent,
+            &mut cur_descent,
+        );
     }
     if !cur.is_empty() {
         lines.push(assemble_visual_line(
-            &cur, cur_ascent, cur_descent, y_offset, false, tab_width,
+            &cur,
+            cur_ascent,
+            cur_descent,
+            y_offset,
+            false,
+            tab_width,
         ));
     }
 

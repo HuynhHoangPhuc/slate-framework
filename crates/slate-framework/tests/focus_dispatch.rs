@@ -11,8 +11,8 @@
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-use slate_framework::app_state::{AppSignal, AppState};
 use slate_framework::app_state::window_state::WindowState;
+use slate_framework::app_state::{AppSignal, AppState};
 use slate_framework::element::AnyElement;
 use slate_framework::elements::Div;
 use slate_framework::event::KeyHandlers;
@@ -49,7 +49,11 @@ fn make_state() -> (Rc<AppState>, WindowId) {
     let executor = Executor::new(redraw_requester.clone());
     let runtime = slate_reactive::Runtime::new();
     let _ = platform;
-    let state = Rc::new(AppState::new(executor, redraw_requester.clone(), runtime.clone()));
+    let state = Rc::new(AppState::new(
+        executor,
+        redraw_requester.clone(),
+        runtime.clone(),
+    ));
     let window_id = window.id();
     {
         let win_state = WindowState::new(window, runtime);
@@ -335,14 +339,14 @@ fn mouse_down_on_non_focusable_clears_focus() {
     let b = id(2);
     state.register_focusable_for_test(win, entry(1));
     state.set_focus_for_test(win, a);
-    install_hit_region(&state, win, b, Bounds::from_origin_size(0.0, 0.0, 100.0, 100.0));
-
-    state.dispatch_mouse_down_for_test(
+    install_hit_region(
+        &state,
         win,
-        (10.0, 10.0),
-        MouseButton::Left,
-        Modifiers::default(),
+        b,
+        Bounds::from_origin_size(0.0, 0.0, 100.0, 100.0),
     );
+
+    state.dispatch_mouse_down_for_test(win, (10.0, 10.0), MouseButton::Left, Modifiers::default());
 
     assert_eq!(
         state.focused_for_test(win),
@@ -363,12 +367,7 @@ fn mouse_down_hit_test_miss_clears_focus() {
     // Empty hit list.
     state.clear_hit_test_list_for_test(win);
 
-    state.dispatch_mouse_down_for_test(
-        win,
-        (50.0, 50.0),
-        MouseButton::Left,
-        Modifiers::default(),
-    );
+    state.dispatch_mouse_down_for_test(win, (50.0, 50.0), MouseButton::Left, Modifiers::default());
 
     assert_eq!(
         state.focused_for_test(win),
@@ -387,14 +386,14 @@ fn mouse_down_on_focusable_preserves_focus_move() {
     state.register_focusable_for_test(win, entry(1));
     state.register_focusable_for_test(win, entry(2));
     state.set_focus_for_test(win, a);
-    install_hit_region(&state, win, b, Bounds::from_origin_size(0.0, 0.0, 100.0, 100.0));
-
-    state.dispatch_mouse_down_for_test(
+    install_hit_region(
+        &state,
         win,
-        (25.0, 25.0),
-        MouseButton::Left,
-        Modifiers::default(),
+        b,
+        Bounds::from_origin_size(0.0, 0.0, 100.0, 100.0),
     );
+
+    state.dispatch_mouse_down_for_test(win, (25.0, 25.0), MouseButton::Left, Modifiers::default());
 
     assert_eq!(
         state.focused_for_test(win),

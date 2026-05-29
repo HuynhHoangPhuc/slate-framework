@@ -7,12 +7,12 @@ use windows::Win32::UI::WindowsAndMessaging::{
     DefWindowProcW, WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION, WM_IME_STARTCOMPOSITION,
 };
 
-use super::WinWindowInner;
 use super::super::dispatch_event;
 use super::super::ime::{
     ImmContextGuard, find_target_converted_run, read_composition_attrs, read_composition_cursor,
     read_composition_string_utf8, set_composition_window, utf16_units_to_utf8_bytes,
 };
+use super::WinWindowInner;
 use crate::Event;
 
 impl WinWindowInner {
@@ -54,13 +54,7 @@ impl WinWindowInner {
         }
     }
 
-    fn on_ime_composition(
-        &self,
-        hwnd: HWND,
-        msg: u32,
-        wparam: WPARAM,
-        lparam: LPARAM,
-    ) -> LRESULT {
+    fn on_ime_composition(&self, hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         let flags = lparam.0 as u32;
         let Some(guard) = ImmContextGuard::acquire(hwnd) else {
             // SAFETY: default proc is always safe to call.

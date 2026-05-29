@@ -89,9 +89,11 @@ impl WindowRenderDelegate for AppState {
         log::trace!(target: "slate::device_lost", "on_display_change ENTRY window={:?}", window_id);
         let lost = {
             let guard = self.windows.borrow();
-            guard.get(&window_id)
+            guard
+                .get(&window_id)
                 .and_then(|win| {
-                    win.renderer.borrow()
+                    win.renderer
+                        .borrow()
                         .as_ref()
                         .map(|r| r.mark_device_potentially_lost())
                 })
@@ -113,7 +115,8 @@ impl WindowRenderDelegate for AppState {
 
         let snapshot = {
             let guard = self.windows.borrow();
-            guard.get(&window_id)
+            guard
+                .get(&window_id)
                 .map(|win| win.recovery_state.borrow().clone())
         };
         if let Some(RecoveryState::DeferredUntilStable { reason, .. }) = snapshot {

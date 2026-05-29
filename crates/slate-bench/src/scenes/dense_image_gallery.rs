@@ -6,8 +6,8 @@
 
 use slate_framework::reactive::Signal;
 use slate_framework::{
-    AlignItems, AnyElement, Color, Div, FlexDirection, HeadlessApp, Image, IntoAny,
-    JustifyContent, Text, View,
+    AlignItems, AnyElement, Color, Div, FlexDirection, HeadlessApp, Image, IntoAny, JustifyContent,
+    Text, View,
 };
 
 const IMG_SIZE: u32 = 256;

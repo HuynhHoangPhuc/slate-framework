@@ -12,13 +12,13 @@ use wgpu::{
 
 use slate_reactive::Runtime;
 use slate_renderer::atlas::{Atlas, Format};
-use slate_text::GlyphCache;
 use slate_renderer::glyph_pipeline::GlyphPipeline;
 use slate_renderer::image_pipeline::ImagePipeline;
 use slate_renderer::instanced_rect_pipeline::InstancedRectPipeline;
-use slate_renderer::{ViewportUniform, create_unit_quad, viewport_bind_group_layout};
 use slate_renderer::shadow_pipeline::ShadowPipeline;
 use slate_renderer::{Lpx, Scene};
+use slate_renderer::{ViewportUniform, create_unit_quad, viewport_bind_group_layout};
+use slate_text::GlyphCache;
 
 use crate::executor::{Executor, RedrawRequester};
 use crate::focus::FocusRegistry;

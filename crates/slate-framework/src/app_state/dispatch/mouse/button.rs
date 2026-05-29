@@ -51,12 +51,16 @@ impl AppState {
         // Determine dispatch target via capture or hit-test.
         let target = {
             let guard = self.windows.borrow();
-            let Some(win) = guard.get(&window) else { return AppSignal::RequestRedraw { window } };
+            let Some(win) = guard.get(&window) else {
+                return AppSignal::RequestRedraw { window };
+            };
             let captured = *win.capture_target.borrow();
             if let Some(ct) = captured {
                 Some(ct)
             } else {
-                let hit = win.hit_test_list.borrow()
+                let hit = win
+                    .hit_test_list
+                    .borrow()
                     .hit_test(Point::new(position.0, position.1));
                 if let Some(result) = hit {
                     *win.capture_target.borrow_mut() = Some(result.element_id);
@@ -72,7 +76,9 @@ impl AppState {
         // `focused_element()`. Background-click clears focus.
         let focus_target: Option<ElementId> = if let Some(t) = target {
             let guard = self.windows.borrow();
-            let Some(win) = guard.get(&window) else { return AppSignal::RequestRedraw { window } };
+            let Some(win) = guard.get(&window) else {
+                return AppSignal::RequestRedraw { window };
+            };
             let registry = win.focus_registry.borrow();
             let pm = win.parent_map.borrow();
             ancestors(t, &pm).find(|id| registry.is_focusable(*id))
@@ -84,7 +90,9 @@ impl AppState {
             if let Some(win) = guard.get(&window) {
                 let mut registry = win.focus_registry.borrow_mut();
                 match focus_target {
-                    Some(id) => { registry.set_focus(id); }
+                    Some(id) => {
+                        registry.set_focus(id);
+                    }
                     None => registry.clear_focus(),
                 }
             }
@@ -94,7 +102,9 @@ impl AppState {
             // Snapshot handlers before invoking to avoid re-borrow during user code.
             let mouse_handlers: SmallVec<[(Option<ElementId>, MouseHandler); 8]> = {
                 let guard = self.windows.borrow();
-                let Some(win) = guard.get(&window) else { return AppSignal::RequestRedraw { window } };
+                let Some(win) = guard.get(&window) else {
+                    return AppSignal::RequestRedraw { window };
+                };
                 let hm = win.handler_map.borrow();
                 let mhm = win.mouse_handler_map.borrow();
                 let pm = win.parent_map.borrow();
@@ -111,7 +121,9 @@ impl AppState {
             };
             let pointer_handlers: SmallVec<[PointerHandler; 8]> = {
                 let guard = self.windows.borrow();
-                let Some(win) = guard.get(&window) else { return AppSignal::RequestRedraw { window } };
+                let Some(win) = guard.get(&window) else {
+                    return AppSignal::RequestRedraw { window };
+                };
                 let hm = win.handler_map.borrow();
                 let pm = win.parent_map.borrow();
                 ancestors(t, &pm)
@@ -124,7 +136,9 @@ impl AppState {
             let mut pending_capture_op: Option<PendingCaptureOp> = None;
             let focused = {
                 let guard = self.windows.borrow();
-                guard.get(&window).and_then(|w| w.focus_registry.borrow().focused())
+                guard
+                    .get(&window)
+                    .and_then(|w| w.focus_registry.borrow().focused())
             };
 
             for (id_opt, handler) in &mouse_handlers {
@@ -136,13 +150,19 @@ impl AppState {
                     None
                 };
                 let mut ctx = EventCtx::new(
-                    &mut stopped, &mut pending_focus_op, &mut pending_capture_op, window, focused,
+                    &mut stopped,
+                    &mut pending_focus_op,
+                    &mut pending_capture_op,
+                    window,
+                    focused,
                 );
                 if let (Some(id), Some(ime_rc)) = (id_opt, &ime_rc_opt) {
                     ctx = ctx.with_ime(*id, ime_rc);
                 }
                 handler(&mouse_event, &mut ctx);
-                if stopped { break; }
+                if stopped {
+                    break;
+                }
             }
             self.apply_pending_focus_op(window, pending_focus_op);
             self.apply_pending_capture_op(window, pending_capture_op);
@@ -152,14 +172,22 @@ impl AppState {
             let mut pending_capture_op: Option<PendingCaptureOp> = None;
             let focused = {
                 let guard = self.windows.borrow();
-                guard.get(&window).and_then(|w| w.focus_registry.borrow().focused())
+                guard
+                    .get(&window)
+                    .and_then(|w| w.focus_registry.borrow().focused())
             };
             for handler in &pointer_handlers {
                 let mut ctx = EventCtx::new(
-                    &mut stopped, &mut pending_focus_op, &mut pending_capture_op, window, focused,
+                    &mut stopped,
+                    &mut pending_focus_op,
+                    &mut pending_capture_op,
+                    window,
+                    focused,
                 );
                 handler(&pointer_event, &mut ctx);
-                if stopped { break; }
+                if stopped {
+                    break;
+                }
             }
             self.apply_pending_focus_op(window, pending_focus_op);
             self.apply_pending_capture_op(window, pending_capture_op);
@@ -199,12 +227,16 @@ impl AppState {
         let bit = button_to_bit(button);
         let (new_state, captured, up_hit) = {
             let guard = self.windows.borrow();
-            let Some(win) = guard.get(&window) else { return AppSignal::RequestRedraw { window } };
+            let Some(win) = guard.get(&window) else {
+                return AppSignal::RequestRedraw { window };
+            };
             let old = *win.button_state.borrow();
             let ns = old & !bit;
             *win.button_state.borrow_mut() = ns;
             let cap = *win.capture_target.borrow();
-            let hit = win.hit_test_list.borrow()
+            let hit = win
+                .hit_test_list
+                .borrow()
                 .hit_test(Point::new(position.0, position.1))
                 .map(|r| r.element_id);
             (ns, cap, hit)
@@ -214,7 +246,9 @@ impl AppState {
         if let Some(t) = target {
             let mouse_up_handlers: SmallVec<[(Option<ElementId>, MouseHandler); 8]> = {
                 let guard = self.windows.borrow();
-                let Some(win) = guard.get(&window) else { return AppSignal::RequestRedraw { window } };
+                let Some(win) = guard.get(&window) else {
+                    return AppSignal::RequestRedraw { window };
+                };
                 let hm = win.handler_map.borrow();
                 let mhm = win.mouse_handler_map.borrow();
                 let pm = win.parent_map.borrow();
@@ -231,7 +265,9 @@ impl AppState {
             };
             let pointer_handlers: SmallVec<[PointerHandler; 8]> = {
                 let guard = self.windows.borrow();
-                let Some(win) = guard.get(&window) else { return AppSignal::RequestRedraw { window } };
+                let Some(win) = guard.get(&window) else {
+                    return AppSignal::RequestRedraw { window };
+                };
                 let hm = win.handler_map.borrow();
                 let pm = win.parent_map.borrow();
                 ancestors(t, &pm)
@@ -241,7 +277,9 @@ impl AppState {
             let click_handlers: SmallVec<[MouseHandler; 8]> =
                 if button == MouseButton::Left && up_hit == captured && captured.is_some() {
                     let guard = self.windows.borrow();
-                    let Some(win) = guard.get(&window) else { return AppSignal::RequestRedraw { window } };
+                    let Some(win) = guard.get(&window) else {
+                        return AppSignal::RequestRedraw { window };
+                    };
                     let hm = win.handler_map.borrow();
                     let pm = win.parent_map.borrow();
                     ancestors(t, &pm)
@@ -256,7 +294,9 @@ impl AppState {
             let mut pending_capture_op: Option<PendingCaptureOp> = None;
             let focused = {
                 let guard = self.windows.borrow();
-                guard.get(&window).and_then(|w| w.focus_registry.borrow().focused())
+                guard
+                    .get(&window)
+                    .and_then(|w| w.focus_registry.borrow().focused())
             };
 
             for (id_opt, handler) in &mouse_up_handlers {
@@ -268,13 +308,19 @@ impl AppState {
                     None
                 };
                 let mut ctx = EventCtx::new(
-                    &mut stopped, &mut pending_focus_op, &mut pending_capture_op, window, focused,
+                    &mut stopped,
+                    &mut pending_focus_op,
+                    &mut pending_capture_op,
+                    window,
+                    focused,
                 );
                 if let (Some(id), Some(ime_rc)) = (id_opt, &ime_rc_opt) {
                     ctx = ctx.with_ime(*id, ime_rc);
                 }
                 handler(&mouse_event, &mut ctx);
-                if stopped { break; }
+                if stopped {
+                    break;
+                }
             }
             self.apply_pending_focus_op(window, pending_focus_op);
             self.apply_pending_capture_op(window, pending_capture_op);
@@ -284,14 +330,22 @@ impl AppState {
             let mut pending_capture_op: Option<PendingCaptureOp> = None;
             let focused = {
                 let guard = self.windows.borrow();
-                guard.get(&window).and_then(|w| w.focus_registry.borrow().focused())
+                guard
+                    .get(&window)
+                    .and_then(|w| w.focus_registry.borrow().focused())
             };
             for handler in &pointer_handlers {
                 let mut ctx = EventCtx::new(
-                    &mut stopped, &mut pending_focus_op, &mut pending_capture_op, window, focused,
+                    &mut stopped,
+                    &mut pending_focus_op,
+                    &mut pending_capture_op,
+                    window,
+                    focused,
                 );
                 handler(&pointer_event, &mut ctx);
-                if stopped { break; }
+                if stopped {
+                    break;
+                }
             }
             self.apply_pending_focus_op(window, pending_focus_op);
             self.apply_pending_capture_op(window, pending_capture_op);
@@ -301,14 +355,22 @@ impl AppState {
             let mut pending_capture_op: Option<PendingCaptureOp> = None;
             let focused = {
                 let guard = self.windows.borrow();
-                guard.get(&window).and_then(|w| w.focus_registry.borrow().focused())
+                guard
+                    .get(&window)
+                    .and_then(|w| w.focus_registry.borrow().focused())
             };
             for handler in &click_handlers {
                 let mut ctx = EventCtx::new(
-                    &mut stopped, &mut pending_focus_op, &mut pending_capture_op, window, focused,
+                    &mut stopped,
+                    &mut pending_focus_op,
+                    &mut pending_capture_op,
+                    window,
+                    focused,
                 );
                 handler(&mouse_event, &mut ctx);
-                if stopped { break; }
+                if stopped {
+                    break;
+                }
             }
             self.apply_pending_focus_op(window, pending_focus_op);
             self.apply_pending_capture_op(window, pending_capture_op);

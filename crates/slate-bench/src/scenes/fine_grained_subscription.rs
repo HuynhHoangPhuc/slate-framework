@@ -10,8 +10,8 @@
 
 use slate_framework::reactive::Signal;
 use slate_framework::{
-    AlignItems, AnyElement, Color, Div, FlexDirection, HeadlessApp, IntoAny,
-    JustifyContent, Text, View,
+    AlignItems, AnyElement, Color, Div, FlexDirection, HeadlessApp, IntoAny, JustifyContent, Text,
+    View,
 };
 
 const CARDS: usize = 100;
@@ -59,8 +59,7 @@ impl View for CounterGridView {
                 .gap(8.0)
         });
         for r in 0..10 {
-            let mut row = Div::new()
-                .style(|s| s.flex_direction(FlexDirection::Row).gap(8.0));
+            let mut row = Div::new().style(|s| s.flex_direction(FlexDirection::Row).gap(8.0));
             for c in 0..10 {
                 let idx = r * 10 + c;
                 row = row.child(card(format!("#{idx}"), self.counts[idx].clone()));

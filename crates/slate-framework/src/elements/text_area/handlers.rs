@@ -132,14 +132,22 @@ pub(super) fn build_key_down_handler(value: Signal<String>) -> ElementKeyHandler
                     if run_bearing {
                         let layout = layout.as_ref().unwrap();
                         let idx = layout.line_for_byte(state.caret);
-                        let stepped =
-                            apply_visual_motion(&mut state, &layout.lines[idx].line, move_right, shift);
+                        let stepped = apply_visual_motion(
+                            &mut state,
+                            &layout.lines[idx].line,
+                            move_right,
+                            shift,
+                        );
                         if !stepped {
                             nav::visual_cross_line(&mut state, layout, move_right, shift);
                         }
                     } else {
                         state.caret_affinity = slate_text::Affinity::Downstream;
-                        let dir = if move_right { MotionDir::Right } else { MotionDir::Left };
+                        let dir = if move_right {
+                            MotionDir::Right
+                        } else {
+                            MotionDir::Left
+                        };
                         apply_motion(&mut state, dir, shift, |s| {
                             s.caret = if move_right {
                                 next_grapheme_boundary(&s.text, s.caret)

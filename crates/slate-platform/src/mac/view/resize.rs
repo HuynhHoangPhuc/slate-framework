@@ -11,10 +11,8 @@ use objc2::DefinedClass;
 use objc2_app_kit::NSWindow;
 use objc2_foundation::{NSNotification, NSRect, NSSize};
 
+use super::super::{dispatch_event, ffi_boundary, post_redraw_event, with_window_delegate};
 use super::{MetalView, WindowDelegate};
-use super::super::{
-    dispatch_event, ffi_boundary, post_redraw_event, with_window_delegate,
-};
 use crate::{Event, PhysicalSize};
 
 impl MetalView {
@@ -38,9 +36,7 @@ impl MetalView {
                 return;
             }
             let id = self.ivars().window_id.get();
-            with_window_delegate(id, |d| {
-                d.on_resize_sync(id, PhysicalSize::new(pw, ph))
-            });
+            with_window_delegate(id, |d| d.on_resize_sync(id, PhysicalSize::new(pw, ph)));
         });
     }
 

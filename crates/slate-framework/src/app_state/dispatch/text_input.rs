@@ -36,7 +36,9 @@ impl AppState {
 
         let focused = {
             let guard = self.windows.borrow();
-            guard.get(&window).and_then(|w| w.focus_registry.borrow().focused())
+            guard
+                .get(&window)
+                .and_then(|w| w.focus_registry.borrow().focused())
         };
 
         // Snapshot per-element handlers up-front to avoid holding map borrow
@@ -64,13 +66,13 @@ impl AppState {
                 win.ime_registry.clone()
             };
             let mut ctx = EventCtx::new(
-                    &mut stopped,
-                    &mut pending_focus_op,
-                    &mut pending_capture_op,
-                    window,
-                    focused,
-                )
-                .with_ime(*id, &ime_rc);
+                &mut stopped,
+                &mut pending_focus_op,
+                &mut pending_capture_op,
+                window,
+                focused,
+            )
+            .with_ime(*id, &ime_rc);
             handler(&event, &mut ctx);
             if stopped {
                 break;

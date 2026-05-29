@@ -41,9 +41,7 @@ pub use slate_reactive::profiling::{
     effect_reentry_count, reentrancy_count, reset_counters as reset_reactive_counters,
     signal_notify_count,
 };
-pub use slate_renderer::profiling::{
-    paint_cmd_count, reset_counters as reset_renderer_counters,
-};
+pub use slate_renderer::profiling::{paint_cmd_count, reset_counters as reset_renderer_counters};
 
 /// Resets every profiling counter (reactive, renderer, allocator, redraw) to zero.
 pub fn reset_counters() {

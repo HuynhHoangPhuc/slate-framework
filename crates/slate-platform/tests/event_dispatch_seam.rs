@@ -11,14 +11,17 @@
 //! `PostQuitMessage`. Both still surface `WindowCloseRequested` then
 //! `WindowDestroyed` through this same funnel, which is what the seam pins.
 
-#![cfg(all(any(target_os = "macos", target_os = "windows"), feature = "test-hooks"))]
+#![cfg(all(
+    any(target_os = "macos", target_os = "windows"),
+    feature = "test-hooks"
+))]
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use slate_platform::{
-    clear_event_handler_for_test, dispatch_event_for_test, install_event_handler_for_test, Event,
-    WindowId,
+    Event, WindowId, clear_event_handler_for_test, dispatch_event_for_test,
+    install_event_handler_for_test,
 };
 
 #[test]
@@ -61,16 +64,24 @@ fn reentrant_dispatch_does_not_panic() {
         *counter.borrow_mut() += 1;
         if let Event::WindowCloseRequested { .. } = event {
             // Simulate the CreateWindowExW → synchronous wndproc re-entry.
-            dispatch_event_for_test(Event::WindowDestroyed { window: WindowId(99) });
+            dispatch_event_for_test(Event::WindowDestroyed {
+                window: WindowId(99),
+            });
         }
     }));
 
-    dispatch_event_for_test(Event::WindowCloseRequested { window: WindowId(1) });
+    dispatch_event_for_test(Event::WindowCloseRequested {
+        window: WindowId(1),
+    });
     clear_event_handler_for_test();
 
     // Outer event was delivered exactly once; the re-entrant inner event is
     // silently dropped (the contract documented on `dispatch_event`).
-    assert_eq!(*outer_count.borrow(), 1, "re-entrant event must be dropped, not double-delivered or panic");
+    assert_eq!(
+        *outer_count.borrow(),
+        1,
+        "re-entrant event must be dropped, not double-delivered or panic"
+    );
 }
 
 #[test]
@@ -79,9 +90,17 @@ fn dispatch_is_noop_after_handler_cleared() {
     let sink = Rc::clone(&recorded);
 
     install_event_handler_for_test(Box::new(move |_| *sink.borrow_mut() += 1));
-    dispatch_event_for_test(Event::WindowDestroyed { window: WindowId(1) });
+    dispatch_event_for_test(Event::WindowDestroyed {
+        window: WindowId(1),
+    });
     clear_event_handler_for_test();
-    dispatch_event_for_test(Event::WindowDestroyed { window: WindowId(1) });
+    dispatch_event_for_test(Event::WindowDestroyed {
+        window: WindowId(1),
+    });
 
-    assert_eq!(*recorded.borrow(), 1, "events after clear must not be dispatched");
+    assert_eq!(
+        *recorded.borrow(),
+        1,
+        "events after clear must not be dispatched"
+    );
 }

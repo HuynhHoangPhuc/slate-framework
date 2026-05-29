@@ -57,9 +57,18 @@ mod tests {
         let r = word_range_at(t, 6); // mid-byte (each CJK char is 3 bytes)
         // Whatever the segmenter groups, the result must equal one of its
         // segments (consistency with split_word_bound_indices).
-        let segs: Vec<_> = t.split_word_bound_indices().map(|(s, w)| s..s + w.len()).collect();
-        assert!(segs.contains(&r), "{r:?} must be a word-bound segment of {segs:?}");
-        assert!(r.start <= 6 && 6 < r.end, "range must contain the click byte");
+        let segs: Vec<_> = t
+            .split_word_bound_indices()
+            .map(|(s, w)| s..s + w.len())
+            .collect();
+        assert!(
+            segs.contains(&r),
+            "{r:?} must be a word-bound segment of {segs:?}"
+        );
+        assert!(
+            r.start <= 6 && 6 < r.end,
+            "range must contain the click byte"
+        );
     }
 
     #[test]

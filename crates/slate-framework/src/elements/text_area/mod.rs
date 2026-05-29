@@ -313,9 +313,7 @@ impl Element for TextArea {
 /// real closure (its borrow pattern, ↑/↓/Home/End/Enter arms) through
 /// `AppState::dispatch_key_down`, rather than re-implementing it. Test-only.
 #[cfg(feature = "test-hooks")]
-pub fn build_key_down_handler_for_test(
-    value: Signal<String>,
-) -> crate::event::ElementKeyHandler {
+pub fn build_key_down_handler_for_test(value: Signal<String>) -> crate::event::ElementKeyHandler {
     handlers::build_key_down_handler(value)
 }
 

@@ -24,7 +24,11 @@ impl AppState {
         // Guard: skip if not initialized.
         {
             let guard = self.windows.borrow();
-            if guard.get(&window_id).map(|w| w.renderer.borrow().is_none()).unwrap_or(true) {
+            if guard
+                .get(&window_id)
+                .map(|w| w.renderer.borrow().is_none())
+                .unwrap_or(true)
+            {
                 return;
             }
         }
@@ -63,7 +67,10 @@ impl AppState {
         let _vr_start = std::time::Instant::now();
         let mut root = {
             let guard = self.windows.borrow();
-            let win = match guard.get(&window_id) { Some(w) => w, None => return };
+            let win = match guard.get(&window_id) {
+                Some(w) => w,
+                None => return,
+            };
             let observer_id = win.view_observer_id;
             let mut v = win.view.borrow_mut();
             let v = v.as_mut().expect("view not initialized");
@@ -78,7 +85,10 @@ impl AppState {
         let _layout_start = std::time::Instant::now();
         let root_id = {
             let guard = self.windows.borrow();
-            let win = match guard.get(&window_id) { Some(w) => w, None => return };
+            let win = match guard.get(&window_id) {
+                Some(w) => w,
+                None => return,
+            };
             let mut tree = win.layout_tree.borrow_mut();
             tree.clear();
 
@@ -104,7 +114,10 @@ impl AppState {
         // 3. Resolve root bounds.
         let root_bounds = {
             let guard = self.windows.borrow();
-            let win = match guard.get(&window_id) { Some(w) => w, None => return };
+            let win = match guard.get(&window_id) {
+                Some(w) => w,
+                None => return,
+            };
             let tree = win.layout_tree.borrow();
             resolve_bounds(tree.inner(), root_id)
         };
@@ -117,7 +130,10 @@ impl AppState {
         // 4. Prepaint pass — needs many simultaneous borrows from WindowState.
         {
             let guard = self.windows.borrow();
-            let win = match guard.get(&window_id) { Some(w) => w, None => return };
+            let win = match guard.get(&window_id) {
+                Some(w) => w,
+                None => return,
+            };
 
             let tree = win.layout_tree.borrow();
             let mut hit = win.hit_test_list.borrow_mut();
@@ -206,7 +222,10 @@ impl AppState {
         };
         {
             let guard = self.windows.borrow();
-            let win = match guard.get(&window_id) { Some(w) => w, None => return };
+            let win = match guard.get(&window_id) {
+                Some(w) => w,
+                None => return,
+            };
 
             let tree = win.layout_tree.borrow();
             let mut s = win.scene.borrow_mut();
@@ -251,9 +270,7 @@ impl AppState {
                 let registry = win2.focus_registry.borrow();
                 let show_ring = registry.entry(id).map(|e| e.focus_ring).unwrap_or(false);
                 drop(registry);
-                if show_ring
-                    && let Some(info) = win2.focus_bounds.borrow().get(&id).copied()
-                {
+                if show_ring && let Some(info) = win2.focus_bounds.borrow().get(&id).copied() {
                     let mut s = win2.scene.borrow_mut();
                     crate::focus_ring::emit_focus_ring(&mut s, info);
                 }

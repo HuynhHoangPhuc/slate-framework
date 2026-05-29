@@ -13,8 +13,8 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 use slate_framework::profiling;
 use slate_framework::reactive::Signal;
 use slate_framework::{
-    AlignItems, AnyElement, Color, Div, FlexDirection, HeadlessApp, IntoAny,
-    JustifyContent, RenderCx, Text, View,
+    AlignItems, AnyElement, Color, Div, FlexDirection, HeadlessApp, IntoAny, JustifyContent,
+    RenderCx, Text, View,
 };
 
 fn lock() -> MutexGuard<'static, ()> {

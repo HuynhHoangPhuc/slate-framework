@@ -71,9 +71,9 @@ impl AppState {
         // process-wide `text_shaping_cache` is shared and needs observer-driven
         // invalidation; `glyph_cache` and `image_cache` are per-window in
         // `WindowState` and are cleared inline during recovery.
-        renderer.register_observer(
-            Rc::downgrade(&self.text_shaping_cache_observer) as std::rc::Weak<dyn RendererObserver>
-        );
+        renderer
+            .register_observer(Rc::downgrade(&self.text_shaping_cache_observer)
+                as std::rc::Weak<dyn RendererObserver>);
 
         let renderer_gen = renderer.current_generation();
 
@@ -132,7 +132,10 @@ impl AppState {
 
     /// `Event::DeviceRestored` arm.
     pub(crate) fn dispatch_device_restored(&self, window: WindowId) -> AppSignal {
-        log::info!("GPU device restored — rendering resumed for window {:?}", window);
+        log::info!(
+            "GPU device restored — rendering resumed for window {:?}",
+            window
+        );
         let guard = self.windows.borrow();
         if let Some(win) = guard.get(&window) {
             *win.recovery_state.borrow_mut() = RecoveryState::NotLost;

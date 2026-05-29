@@ -13,7 +13,9 @@ use slate_framework::profiling;
 
 fn lock() -> std::sync::MutexGuard<'static, ()> {
     static M: OnceLock<Mutex<()>> = OnceLock::new();
-    M.get_or_init(|| Mutex::new(())).lock().unwrap_or_else(|e| e.into_inner())
+    M.get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
 }
 
 #[test]

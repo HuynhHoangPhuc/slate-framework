@@ -16,8 +16,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WM_GETMINMAXINFO, WM_PAINT, WM_SIZE, WM_TIMER, WM_WINDOWPOSCHANGED,
 };
 
-use super::WinWindowInner;
 use super::super::{IN_SIZE_MOVE, REDRAW_TIMER_ID, SIZE_MOVE_TIMER_ID, dispatch_event};
+use super::WinWindowInner;
 use crate::{Event, PhysicalSize};
 
 impl WinWindowInner {
@@ -134,9 +134,8 @@ impl WinWindowInner {
         let _ = unsafe { KillTimer(Some(hwnd), SIZE_MOVE_TIMER_ID) };
 
         let mut msg = MSG::default();
-        while unsafe {
-            PeekMessageW(&mut msg, Some(hwnd), WM_TIMER, WM_TIMER, PM_REMOVE).as_bool()
-        } {
+        while unsafe { PeekMessageW(&mut msg, Some(hwnd), WM_TIMER, WM_TIMER, PM_REMOVE).as_bool() }
+        {
             // discard
         }
 

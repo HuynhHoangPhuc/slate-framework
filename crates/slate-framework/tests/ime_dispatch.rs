@@ -15,8 +15,8 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-use slate_framework::app_state::{AppSignal, AppState};
 use slate_framework::app_state::window_state::WindowState;
+use slate_framework::app_state::{AppSignal, AppState};
 use slate_framework::element::AnyElement;
 use slate_framework::elements::Div;
 use slate_framework::event::{ImeCommitEvent, ImeHandlers, ImeLifecycleEvent, ImePreeditEvent};
@@ -26,7 +26,9 @@ use slate_framework::ime::{ImeState, Preedit};
 use slate_framework::types::ElementId;
 use slate_framework::view::{IntoAny, View};
 use slate_framework::{EventCtx, Key, KeyCode, Modifiers, NamedKey};
-use slate_platform::{DefaultPlatform, PhysicalRect, Platform, Window, WindowId, WindowOptions, wake_run_loop};
+use slate_platform::{
+    DefaultPlatform, PhysicalRect, Platform, Window, WindowId, WindowOptions, wake_run_loop,
+};
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -57,7 +59,11 @@ fn make_state() -> (Rc<AppState>, WindowId) {
     // Platform is dropped here; window keeps HWND alive via its Arc inner.
     // Dispatch methods touch only RefCells — no platform pump needed.
     let _ = platform;
-    let state = Rc::new(AppState::new(executor, redraw_requester.clone(), runtime.clone()));
+    let state = Rc::new(AppState::new(
+        executor,
+        redraw_requester.clone(),
+        runtime.clone(),
+    ));
     let window_id = window.id();
     {
         let win_state = WindowState::new(window, runtime);

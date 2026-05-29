@@ -32,10 +32,7 @@ use slate_renderer::atlas::{Atlas, AtlasError, Format, PAGE_SIZE};
 /// `OutOfSpace`, returning `(count, footprint_occupancy)`. Single frame means
 /// nothing is touched-this-frame, so eviction is rejected and a full page
 /// reports `OutOfSpace` — the occupancy-at-onset point.
-fn measure_occupancy(
-    device: &wgpu::Device,
-    mut next_size: impl FnMut(u32) -> u32,
-) -> (u32, f64) {
+fn measure_occupancy(device: &wgpu::Device, mut next_size: impl FnMut(u32) -> u32) -> (u32, f64) {
     let mut atlas = Atlas::new(device, Format::Rgba8UnormSrgb);
     atlas.begin_frame();
     let mut count = 0u32;
@@ -46,7 +43,10 @@ fn measure_occupancy(
             Err(AtlasError::OutOfSpace) => break,
             Err(e) => panic!("unexpected atlas error during packing spike: {e:?}"),
         }
-        assert!(count < 2000, "page never reported OutOfSpace — packing broken");
+        assert!(
+            count < 2000,
+            "page never reported OutOfSpace — packing broken"
+        );
     }
     let page_area = (PAGE_SIZE as u64) * (PAGE_SIZE as u64);
     let occupancy = atlas.allocated_pixels() as f64 / page_area as f64;
@@ -62,13 +62,18 @@ fn dense_image_workload_packs_above_floor() {
 
     // Primary: the dense-gallery's real workload — uniform 256² tiles.
     let (uniform_n, uniform_occ) = measure_occupancy(&device, |_| 256);
-    eprintln!("packing-density uniform 256²: {uniform_n} tiles = {:.1}%", uniform_occ * 100.0);
+    eprintln!(
+        "packing-density uniform 256²: {uniform_n} tiles = {:.1}%",
+        uniform_occ * 100.0
+    );
 
     // Context: an adversarial mixed-height interleave (documented in the header).
     const SIZES: [u32; 4] = [256, 192, 128, 96];
-    let (mixed_n, mixed_occ) =
-        measure_occupancy(&device, |c| SIZES[(c as usize) % SIZES.len()]);
-    eprintln!("packing-density mixed: {mixed_n} tiles = {:.1}%", mixed_occ * 100.0);
+    let (mixed_n, mixed_occ) = measure_occupancy(&device, |c| SIZES[(c as usize) % SIZES.len()]);
+    eprintln!(
+        "packing-density mixed: {mixed_n} tiles = {:.1}%",
+        mixed_occ * 100.0
+    );
 
     // Plan criterion: keep current config while the real workload occupancy
     // is ≥ ~75%. Floor at 0.75 so a packing regression on the actual consumer

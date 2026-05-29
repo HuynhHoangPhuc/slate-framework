@@ -24,7 +24,11 @@ fn single_line(text: &str) -> slate_text::VisualLine {
     let font = backend.load_font("Test", 16.0, 1.0).unwrap();
     let doc = shape_document(&backend, &font, text).unwrap();
     let layout = wrap_document(&doc, WIDE);
-    assert_eq!(layout.lines.len(), 1, "expected one visual line for {text:?}");
+    assert_eq!(
+        layout.lines.len(),
+        1,
+        "expected one visual line for {text:?}"
+    );
     layout.lines.into_iter().next().unwrap()
 }
 

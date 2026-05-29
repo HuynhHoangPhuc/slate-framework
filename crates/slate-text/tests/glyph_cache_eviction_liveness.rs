@@ -166,7 +166,10 @@ fn glyph_evicted_offscreen_then_requested_returns_live_reupload_not_stale_uv() {
     cache
         .materialize(&backend, &font, 1, 0, &mut atlas, &queue)
         .unwrap();
-    let g0 = cache.get(fh, 1, 0).expect("G cached after first frame").alloc;
+    let g0 = cache
+        .get(fh, 1, 0)
+        .expect("G cached after first frame")
+        .alloc;
 
     // Frame 2: G is now evictable (untouched this frame). Pack the page with
     // distinct glyphs (ids 2..=13) until eviction reclaims G's slot. 9 glyphs
@@ -191,7 +194,10 @@ fn glyph_evicted_offscreen_then_requested_returns_live_reupload_not_stale_uv() {
     cache
         .materialize(&backend, &font, 1, 0, &mut atlas, &queue)
         .unwrap();
-    let g1 = cache.get(fh, 1, 0).expect("G re-requested in frame 3").alloc;
+    let g1 = cache
+        .get(fh, 1, 0)
+        .expect("G re-requested in frame 3")
+        .alloc;
 
     // Without the gate, the contains_key hit returns Ok(false) and get() serves
     // the stale g0 unchanged.
@@ -230,8 +236,14 @@ fn on_screen_glyph_hits_cache_without_reallocate() {
     let was_miss = cache
         .materialize(&backend, &font, 1, 0, &mut atlas, &queue)
         .unwrap();
-    assert!(!was_miss, "live re-request must be a cache hit, not a re-raster");
+    assert!(
+        !was_miss,
+        "live re-request must be a cache hit, not a re-raster"
+    );
     let b = cache.get(fh, 1, 0).unwrap().alloc;
-    assert_eq!(a.token, b.token, "on-screen re-request must not re-allocate");
+    assert_eq!(
+        a.token, b.token,
+        "on-screen re-request must not re-allocate"
+    );
     assert_eq!(a.uv_rect, b.uv_rect);
 }

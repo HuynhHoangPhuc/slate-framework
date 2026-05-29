@@ -15,8 +15,8 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{MainThreadMarker, NSArray, NSNotification};
 
-use super::{MetalView, PendingKey, WindowDelegate};
 use super::super::{dispatch_event, ffi_boundary, keymap};
+use super::{MetalView, PendingKey, WindowDelegate};
 use crate::{Event, Key, KeyCode, Modifiers, MouseButton, NamedKey, WindowId};
 
 // ---------------------------------------------------------------------------
@@ -539,8 +539,7 @@ impl WindowDelegate {
             let Ok(metal_view) = view.downcast::<MetalView>() else {
                 return;
             };
-            let mtm =
-                MainThreadMarker::new().expect("windowDidBecomeKey: invoked off main thread");
+            let mtm = MainThreadMarker::new().expect("windowDidBecomeKey: invoked off main thread");
             let app = objc2_app_kit::NSApplication::sharedApplication(mtm);
             if let Some(event) = app.currentEvent() {
                 metal_view

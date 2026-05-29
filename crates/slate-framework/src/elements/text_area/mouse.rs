@@ -200,7 +200,10 @@ mod tests {
     #[test]
     fn first_click_is_single() {
         // No prior click (prev_time None) → always a fresh single click.
-        assert_eq!(next_click_count(None, (0.0, 0.0), 0, Instant::now(), POS), 1);
+        assert_eq!(
+            next_click_count(None, (0.0, 0.0), 0, Instant::now(), POS),
+            1
+        );
     }
 
     #[test]

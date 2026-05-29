@@ -112,8 +112,12 @@ impl AppContext {
     /// [`EventCtx::request_focus`](crate::event::EventCtx::request_focus) so
     /// the change is deferred until after the chain unwinds.
     pub fn set_focus(&self, window: slate_platform::WindowId, id: ElementId) -> bool {
-        let Some(weak) = &self.state else { return false };
-        let Some(state) = weak.upgrade() else { return false };
+        let Some(weak) = &self.state else {
+            return false;
+        };
+        let Some(state) = weak.upgrade() else {
+            return false;
+        };
         let guard = state.windows.borrow();
         if let Some(win) = guard.get(&window) {
             win.focus_registry.borrow_mut().set_focus(id)
@@ -380,9 +384,10 @@ impl App {
 
         // Wrap the FIRST window's typed view factory into a type-erased one.
         let cx_clone = cx.clone();
-        let first_erased: ErasedViewFactory = Box::new(
-            move |_cx: &AppContext| -> Box<dyn ErasedView> { Box::new(view_fn(&cx_clone)) },
-        );
+        let first_erased: ErasedViewFactory =
+            Box::new(move |_cx: &AppContext| -> Box<dyn ErasedView> {
+                Box::new(view_fn(&cx_clone))
+            });
 
         // Wire each pre-`run` window (registered via `App::create_window`) and
         // build the (id, erased_factory) list consumed on Event::Resumed.
@@ -444,7 +449,11 @@ impl App {
                         }
                     }
                 }
-                Event::WindowResized { window, physical_size, .. } => {
+                Event::WindowResized {
+                    window,
+                    physical_size,
+                    ..
+                } => {
                     state_ref.handle_window_resized(window, physical_size);
                     AppSignal::None
                 }

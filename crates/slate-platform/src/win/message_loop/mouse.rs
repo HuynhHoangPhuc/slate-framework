@@ -16,8 +16,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WM_RBUTTONDOWN, WM_RBUTTONUP, WM_XBUTTONDBLCLK, WM_XBUTTONDOWN, WM_XBUTTONUP,
 };
 
-use super::WinWindowInner;
 use super::super::dispatch_event;
+use super::WinWindowInner;
 use crate::{Event, Modifiers, MouseButton};
 
 /// Decode mouse position from lparam with i16 sign extension.

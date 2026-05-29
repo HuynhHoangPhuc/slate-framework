@@ -474,8 +474,14 @@ fn crlf_no_stray_glyph_and_caret_end_after_b() {
     // Caret-addressable end of line 0 stops after 'b' (byte 2), not the `\r`.
     assert_eq!(layout.line_caret_end(text, 0), 2);
     // Coverage gap-free and total: line0 0..4 (folds "\r\n"), line1 4..6.
-    assert_eq!((layout.lines[0].byte_start, layout.lines[0].byte_end), (0, 4));
-    assert_eq!((layout.lines[1].byte_start, layout.lines[1].byte_end), (4, 6));
+    assert_eq!(
+        (layout.lines[0].byte_start, layout.lines[0].byte_end),
+        (0, 4)
+    );
+    assert_eq!(
+        (layout.lines[1].byte_start, layout.lines[1].byte_end),
+        (4, 6)
+    );
 }
 
 #[test]

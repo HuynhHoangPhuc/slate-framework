@@ -27,7 +27,12 @@ impl AppState {
             match guard.get(&window_id) {
                 Some(win) => {
                     let r = win.rendering.get();
-                    let dl = win.renderer.borrow().as_ref().map(|r| r.is_device_lost()).unwrap_or(false);
+                    let dl = win
+                        .renderer
+                        .borrow()
+                        .as_ref()
+                        .map(|r| r.is_device_lost())
+                        .unwrap_or(false);
                     (r, dl)
                 }
                 None => return AppSignal::None,
@@ -56,7 +61,9 @@ impl AppState {
         // We hold the flag on the WindowState Cell directly.
         struct RenderingCellGuard<'a>(&'a std::cell::Cell<bool>);
         impl Drop for RenderingCellGuard<'_> {
-            fn drop(&mut self) { self.0.set(false); }
+            fn drop(&mut self) {
+                self.0.set(false);
+            }
         }
         let _rendering_guard = {
             let guard = self.windows.borrow();
@@ -108,12 +115,18 @@ impl AppState {
                 let recently_probed = win
                     .last_adapter_check_at
                     .get()
-                    .map(|t| now.duration_since(t) < Duration::from_millis(ADAPTER_PROBE_MIN_INTERVAL_MS))
+                    .map(|t| {
+                        now.duration_since(t) < Duration::from_millis(ADAPTER_PROBE_MIN_INTERVAL_MS)
+                    })
                     .unwrap_or(false);
                 if healthy && !recently_probed {
                     win.last_adapter_check_at.set(Some(now));
                     let window_luid = win.window.current_monitor_luid();
-                    let adapter_luid = win.renderer.borrow().as_ref().and_then(|r| r.current_adapter_luid());
+                    let adapter_luid = win
+                        .renderer
+                        .borrow()
+                        .as_ref()
+                        .and_then(|r| r.current_adapter_luid());
                     if let (Some(w), Some(a)) = (window_luid, adapter_luid)
                         && w != a
                     {
@@ -133,14 +146,17 @@ impl AppState {
         // Check device_lost and drive the state machine.
         let device_lost = {
             let guard = self.windows.borrow();
-            guard.get(&window_id)
+            guard
+                .get(&window_id)
                 .and_then(|win| win.renderer.borrow().as_ref().map(|r| r.is_device_lost()))
                 .unwrap_or(false)
         };
 
         let state_snapshot = {
             let guard = self.windows.borrow();
-            guard.get(&window_id).map(|win| win.recovery_state.borrow().clone())
+            guard
+                .get(&window_id)
+                .map(|win| win.recovery_state.borrow().clone())
         };
         let Some(state_snapshot) = state_snapshot else {
             // Window disappeared.
@@ -160,7 +176,10 @@ impl AppState {
 
                 let in_size_move = {
                     let guard = self.windows.borrow();
-                    guard.get(&window_id).map(|w| w.window.in_size_move()).unwrap_or(false)
+                    guard
+                        .get(&window_id)
+                        .map(|w| w.window.in_size_move())
+                        .unwrap_or(false)
                 };
                 if in_size_move {
                     log::info!(target: "slate::device_lost",
@@ -168,7 +187,8 @@ impl AppState {
                     let guard = self.windows.borrow();
                     if let Some(win) = guard.get(&window_id) {
                         *win.recovery_state.borrow_mut() = RecoveryState::DeferredUntilStable {
-                            detected_at: now, reason,
+                            detected_at: now,
+                            reason,
                         };
                     }
                     let guard2 = self.windows.borrow();
@@ -182,7 +202,9 @@ impl AppState {
                 if reason == DeviceLossReason::WgpuCallback {
                     let prev = {
                         let guard = self.windows.borrow();
-                        guard.get(&window_id).and_then(|w| w.last_wgpu_callback_loss_at.get())
+                        guard
+                            .get(&window_id)
+                            .and_then(|w| w.last_wgpu_callback_loss_at.get())
                     };
                     if let Some(prev) = prev {
                         let elapsed = now.duration_since(prev);
@@ -214,7 +236,8 @@ impl AppState {
                     let guard = self.windows.borrow();
                     if let Some(win) = guard.get(&window_id) {
                         *win.recovery_state.borrow_mut() = RecoveryState::DetectedLost {
-                            detected_at: now, reason,
+                            detected_at: now,
+                            reason,
                         };
                         win.window.request_redraw();
                     }
@@ -225,13 +248,17 @@ impl AppState {
                 }
                 return AppSignal::None;
             }
-            RecoveryState::DetectedLost { detected_at, reason } => {
+            RecoveryState::DetectedLost {
+                detected_at,
+                reason,
+            } => {
                 let reason = self.maybe_upgrade_reason(window_id, reason);
                 {
                     let guard = self.windows.borrow();
                     if let Some(win) = guard.get(&window_id) {
                         *win.recovery_state.borrow_mut() = RecoveryState::CooldownGate {
-                            since: detected_at, reason,
+                            since: detected_at,
+                            reason,
                         };
                         win.window.request_redraw();
                     }
@@ -247,7 +274,8 @@ impl AppState {
                 if since.elapsed() < Duration::from_millis(RECOVERY_COOLDOWN_MS) {
                     let guard = self.windows.borrow();
                     if let Some(win) = guard.get(&window_id) {
-                        *win.recovery_state.borrow_mut() = RecoveryState::CooldownGate { since, reason };
+                        *win.recovery_state.borrow_mut() =
+                            RecoveryState::CooldownGate { since, reason };
                         win.window.request_redraw();
                     }
                     let guard2 = self.windows.borrow();

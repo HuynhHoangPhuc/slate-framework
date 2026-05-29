@@ -96,7 +96,8 @@ fn check_three_line_document_wraps_to_three_lines_with_caret_on_line_zero() -> R
     ensure_eq!(layout.lines[0].byte_start, 0, "first line starts at byte 0");
     for pair in layout.lines.windows(2) {
         ensure_eq!(
-            pair[0].byte_end, pair[1].byte_start,
+            pair[0].byte_end,
+            pair[1].byte_start,
             "visual-line byte ranges must be contiguous"
         );
     }
@@ -142,9 +143,15 @@ fn check_multi_space_run_preserves_every_space_byte() -> Result<(), String> {
     // Single space vs five spaces between the same two words: the 5-space run
     // must be ~4 extra space-advances wider (not collapsed to one).
     let one = text_system.shape_document(&font, "a b").expect("shape one");
-    let five = text_system.shape_document(&font, "a     b").expect("shape five");
-    let one_w = slate_text::wrap_document(&one, 1000.0).lines[0].line.width_lpx;
-    let five_w = slate_text::wrap_document(&five, 1000.0).lines[0].line.width_lpx;
+    let five = text_system
+        .shape_document(&font, "a     b")
+        .expect("shape five");
+    let one_w = slate_text::wrap_document(&one, 1000.0).lines[0]
+        .line
+        .width_lpx;
+    let five_w = slate_text::wrap_document(&five, 1000.0).lines[0]
+        .line
+        .width_lpx;
     ensure!(
         five_w > one_w + 1.0,
         "5-space run must be wider than 1-space ({five_w} vs {one_w})"
@@ -178,7 +185,9 @@ fn check_text_field_shape_line_preserves_spaces() -> Result<(), String> {
         .expect("load bundled font");
 
     let one = text_system.shape_line(&font, "a b").expect("shape one");
-    let five = text_system.shape_line(&font, "a     b").expect("shape five");
+    let five = text_system
+        .shape_line(&font, "a     b")
+        .expect("shape five");
     ensure!(
         five.width_lpx > one.width_lpx + 1.0,
         "shape_line must keep all 5 spaces ({} vs {})",

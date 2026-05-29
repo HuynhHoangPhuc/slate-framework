@@ -78,7 +78,11 @@ fn a11y_tree_div_with_two_texts() {
     assert_eq!(tree.len(), 1, "expected a single root Group node");
     let root = &tree[0];
     assert_eq!(root.info.role, AccessibilityRole::Group);
-    assert_eq!(root.children.len(), 2, "Group should hold two Label children");
+    assert_eq!(
+        root.children.len(),
+        2,
+        "Group should hold two Label children"
+    );
     assert_eq!(root.children[0].info.role, AccessibilityRole::Label);
     assert_eq!(root.children[0].info.label.as_deref(), Some("Hello"));
     assert_eq!(root.children[1].info.role, AccessibilityRole::Label);

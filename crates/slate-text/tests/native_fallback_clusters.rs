@@ -99,8 +99,14 @@ fn devanagari_conjunct_renders_without_tofu() {
 #[test]
 fn zwj_emoji_renders_without_tofu() {
     // Family emoji: man + ZWJ + woman + ZWJ + girl — one grapheme, ZWJ-joined.
-    assert_no_notdef("\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}", "zwj family emoji");
-    assert_clusters_monotonic("\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}", "zwj family emoji");
+    assert_no_notdef(
+        "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}",
+        "zwj family emoji",
+    );
+    assert_clusters_monotonic(
+        "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}",
+        "zwj family emoji",
+    );
 }
 
 /// A codepoint the primary (DejaVu Sans) face lacks comes back tagged with a

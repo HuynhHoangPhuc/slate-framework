@@ -67,11 +67,7 @@ pub fn wrap_document(doc: &ShapedDocument, max_width_lpx: f32) -> MultilineLayou
         fit_paragraph(doc, &para.words, max_width_lpx, &para.byte_range, &mut raw);
     }
 
-    let total_len = doc
-        .paragraphs
-        .last()
-        .map(|p| p.byte_range.end)
-        .unwrap_or(0);
+    let total_len = doc.paragraphs.last().map(|p| p.byte_range.end).unwrap_or(0);
 
     let mut lines = Vec::with_capacity(raw.len());
     for i in 0..raw.len() {
@@ -119,19 +115,13 @@ fn fit_paragraph<'a>(
 
     // Flush the current line's items into `out` (visual order, doc metrics,
     // absolute clusters). Caller guards against empty.
-    let flush =
-        |cur: &mut Vec<&'a ShapedWord>, cur_start: usize, out: &mut Vec<(ShapedLine, usize)>| {
-            let line = assemble_visual_line(
-                cur,
-                doc.ascent_lpx,
-                doc.descent_lpx,
-                0.0,
-                true,
-                tab_width,
-            );
-            out.push((line, cur_start));
-            cur.clear();
-        };
+    let flush = |cur: &mut Vec<&'a ShapedWord>,
+                 cur_start: usize,
+                 out: &mut Vec<(ShapedLine, usize)>| {
+        let line = assemble_visual_line(cur, doc.ascent_lpx, doc.descent_lpx, 0.0, true, tab_width);
+        out.push((line, cur_start));
+        cur.clear();
+    };
 
     for word in words {
         if word.is_space_run {
@@ -238,7 +228,12 @@ fn break_word(word: &ShapedWord, max_width: f32) -> Vec<(Vec<ShapedGlyph>, f32, 
         }
 
         if !sub.is_empty() && sub_width + cluster_width > max_width {
-            out.push(finish_sub(&mut sub, sub_origin_x, sub_width, word_start + sub_cluster as usize));
+            out.push(finish_sub(
+                &mut sub,
+                sub_origin_x,
+                sub_width,
+                word_start + sub_cluster as usize,
+            ));
             sub_width = 0.0;
         }
         if sub.is_empty() {
@@ -255,7 +250,12 @@ fn break_word(word: &ShapedWord, max_width: f32) -> Vec<(Vec<ShapedGlyph>, f32, 
         i = j;
     }
     if !sub.is_empty() {
-        out.push(finish_sub(&mut sub, sub_origin_x, sub_width, word_start + sub_cluster as usize));
+        out.push(finish_sub(
+            &mut sub,
+            sub_origin_x,
+            sub_width,
+            word_start + sub_cluster as usize,
+        ));
     }
     out
 }

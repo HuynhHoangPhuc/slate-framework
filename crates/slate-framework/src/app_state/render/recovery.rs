@@ -27,9 +27,13 @@ impl AppState {
     pub(super) fn classify_loss_reason(&self, window_id: WindowId) -> DeviceLossReason {
         let callback_fired = {
             let guard = self.windows.borrow();
-            guard.get(&window_id)
+            guard
+                .get(&window_id)
                 .and_then(|win| {
-                    win.renderer.borrow().as_ref().map(|r| r.consume_wgpu_callback_fired())
+                    win.renderer
+                        .borrow()
+                        .as_ref()
+                        .map(|r| r.consume_wgpu_callback_fired())
                 })
                 .unwrap_or(false)
         };
@@ -54,9 +58,13 @@ impl AppState {
     ) -> DeviceLossReason {
         let callback_fired = {
             let guard = self.windows.borrow();
-            guard.get(&window_id)
+            guard
+                .get(&window_id)
                 .and_then(|win| {
-                    win.renderer.borrow().as_ref().map(|r| r.consume_wgpu_callback_fired())
+                    win.renderer
+                        .borrow()
+                        .as_ref()
+                        .map(|r| r.consume_wgpu_callback_fired())
                 })
                 .unwrap_or(false)
         };
@@ -80,8 +88,13 @@ impl AppState {
     pub(super) fn execute_recovery_step(&self, window_id: WindowId) -> AppSignal {
         let (attempt, reason) = {
             let guard = self.windows.borrow();
-            match guard.get(&window_id).map(|w| w.recovery_state.borrow().clone()) {
-                Some(RecoveryState::Retrying { attempt, reason, .. }) => (attempt, reason),
+            match guard
+                .get(&window_id)
+                .map(|w| w.recovery_state.borrow().clone())
+            {
+                Some(RecoveryState::Retrying {
+                    attempt, reason, ..
+                }) => (attempt, reason),
                 _ => return AppSignal::None,
             }
         };
@@ -147,10 +160,8 @@ impl AppState {
 
                         let r = win.renderer.borrow();
                         let r = r.as_ref().expect("renderer just assigned");
-                        r.register_observer(
-                            Rc::downgrade(&self.text_shaping_cache_observer)
-                                as std::rc::Weak<dyn RendererObserver>,
-                        );
+                        r.register_observer(Rc::downgrade(&self.text_shaping_cache_observer)
+                            as std::rc::Weak<dyn RendererObserver>);
                         // Fire only on recovery: caches built against the dead device
                         // must be invalidated before the next paint.
                         r.fire_observers();
@@ -159,8 +170,14 @@ impl AppState {
 
                 let renderer_gen = {
                     let guard = self.windows.borrow();
-                    guard.get(&window_id)
-                        .and_then(|win| win.renderer.borrow().as_ref().map(|r| r.current_generation()))
+                    guard
+                        .get(&window_id)
+                        .and_then(|win| {
+                            win.renderer
+                                .borrow()
+                                .as_ref()
+                                .map(|r| r.current_generation())
+                        })
                         .unwrap_or(0)
                 };
 

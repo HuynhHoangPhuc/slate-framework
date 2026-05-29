@@ -84,7 +84,11 @@ fn make_state() -> (Rc<AppState>, WindowId) {
     let executor = Executor::new(redraw_requester.clone());
     let runtime = slate_reactive::Runtime::new();
     let _ = platform;
-    let state = Rc::new(AppState::new(executor, redraw_requester.clone(), runtime.clone()));
+    let state = Rc::new(AppState::new(
+        executor,
+        redraw_requester.clone(),
+        runtime.clone(),
+    ));
     let window_id = window.id();
     {
         let win_state = WindowState::new(window, runtime);
@@ -109,13 +113,7 @@ type Mouse = Arc<dyn Fn(&MouseEvent, &mut EventCtx) + Send + Sync + 'static>;
 
 /// Install a hit region for `elem` and a down-handler that runs `f` with the
 /// dispatch `EventCtx`.
-fn wire_down_handler(
-    state: &AppState,
-    win: WindowId,
-    elem: ElementId,
-    b: Bounds,
-    f: Mouse,
-) {
+fn wire_down_handler(state: &AppState, win: WindowId, elem: ElementId, b: Bounds, f: Mouse) {
     state.install_element_mouse_handlers_for_test(
         win,
         elem,
@@ -191,7 +189,11 @@ fn check_explicit_capture_survives_mouse_up() -> Result<(), String> {
     );
 
     state.dispatch_mouse_down_for_test(win, (10.0, 10.0), MouseButton::Left, Modifiers::default());
-    ensure_eq!(state.capture_target_for_test(win), Some(a), "captured on down");
+    ensure_eq!(
+        state.capture_target_for_test(win),
+        Some(a),
+        "captured on down"
+    );
 
     state.dispatch_mouse_up_for_test(win, (10.0, 10.0), MouseButton::Left, Modifiers::default());
     ensure_eq!(
@@ -213,7 +215,11 @@ fn check_unmounted_captured_element_auto_releases() -> Result<(), String> {
         Arc::new(move |_ev, cx| cx.set_capture(a)),
     );
     state.dispatch_mouse_down_for_test(win, (10.0, 10.0), MouseButton::Left, Modifiers::default());
-    ensure_eq!(state.capture_target_for_test(win), Some(a), "captured on down");
+    ensure_eq!(
+        state.capture_target_for_test(win),
+        Some(a),
+        "captured on down"
+    );
 
     // Still mounted (hit region present) → capture retained.
     state.release_capture_if_unmounted_for_test(win);
@@ -292,7 +298,10 @@ fn main() {
             "set_capture_overrides_and_marks_explicit",
             check_set_capture_overrides_and_marks_explicit,
         ),
-        ("release_capture_clears_target", check_release_capture_clears_target),
+        (
+            "release_capture_clears_target",
+            check_release_capture_clears_target,
+        ),
         (
             "explicit_capture_survives_mouse_up",
             check_explicit_capture_survives_mouse_up,

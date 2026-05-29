@@ -262,7 +262,15 @@ fn rgba_channel_order_survives_atlas_and_surface_no_bgra_swap() {
         tint: [1.0, 1.0, 1.0, 1.0],
     }];
 
-    let buf = run_image_test(w, h, &instances, &device, &queue, &mut pipeline, "image-byte-order");
+    let buf = run_image_test(
+        w,
+        h,
+        &instances,
+        &device,
+        &queue,
+        &mut pipeline,
+        "image-byte-order",
+    );
     drop(atlas);
 
     // Opaque + white tint: sRGB→linear on sample, premul by α=1, then
@@ -488,7 +496,9 @@ fn allocate_image_reserves_gutter_and_insets_uv() {
     let mut atlas = Atlas::new(&device, Format::Rgba8UnormSrgb);
 
     // Nominal 16×16 image. Atlas reserves 18×18; uv_rect inset by 1/PAGE.
-    let uv_a = allocate_image(&mut atlas, 16, 16).expect("allocate image A").uv_rect;
+    let uv_a = allocate_image(&mut atlas, 16, 16)
+        .expect("allocate image A")
+        .uv_rect;
     let texel = 1.0 / PAGE_SIZE as f32;
     assert!(
         (uv_a[2] - uv_a[0] - 16.0 * texel).abs() < 1e-6,
@@ -507,12 +517,17 @@ fn allocate_image_reserves_gutter_and_insets_uv() {
     assert!(uv_a[1] >= texel - 1e-6);
 
     // Adjacent image on the same shelf: its inset uv must stay disjoint from A.
-    let uv_b = allocate_image(&mut atlas, 16, 16).expect("allocate image B").uv_rect;
+    let uv_b = allocate_image(&mut atlas, 16, 16)
+        .expect("allocate image B")
+        .uv_rect;
     let a_disjoint_b = uv_a[2] <= uv_b[0] + 1e-6
         || uv_b[2] <= uv_a[0] + 1e-6
         || uv_a[3] <= uv_b[1] + 1e-6
         || uv_b[3] <= uv_a[1] + 1e-6;
-    assert!(a_disjoint_b, "image uv_rects overlap: A={uv_a:?} B={uv_b:?}");
+    assert!(
+        a_disjoint_b,
+        "image uv_rects overlap: A={uv_a:?} B={uv_b:?}"
+    );
 }
 
 #[test]
@@ -526,7 +541,12 @@ fn pad_rgba_with_gutter_zeros_border_and_copies_inner() {
 
     let px = |x: usize, y: usize| {
         let off = (y * 4 + x) * 4;
-        [padded[off], padded[off + 1], padded[off + 2], padded[off + 3]]
+        [
+            padded[off],
+            padded[off + 1],
+            padded[off + 2],
+            padded[off + 3],
+        ]
     };
     // Whole border ring is transparent.
     for i in 0..4 {

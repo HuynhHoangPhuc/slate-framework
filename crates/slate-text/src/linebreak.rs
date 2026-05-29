@@ -222,7 +222,9 @@ mod tests {
     #[test]
     fn content_excludes_terminator() {
         // No returned content slice may contain any mandatory-separator byte.
-        let seps = ['\n', '\r', '\u{000B}', '\u{000C}', '\u{0085}', '\u{2028}', '\u{2029}'];
+        let seps = [
+            '\n', '\r', '\u{000B}', '\u{000C}', '\u{0085}', '\u{2028}', '\u{2029}',
+        ];
         for (_, content) in split_paragraphs("a\r\nb\nc\u{2028}d\u{0085}\u{000C}e") {
             assert!(
                 !content.chars().any(|c| seps.contains(&c)),

@@ -79,7 +79,10 @@ fn walk_rightward(line: &ShapedLine) -> Vec<(usize, Affinity, f32)> {
         byte = b;
         aff = a;
         visited.push((byte, aff, run_caret_x_at_affinity(line, byte, aff)));
-        assert!(visited.len() < 1000, "rightward caret walk did not terminate");
+        assert!(
+            visited.len() < 1000,
+            "rightward caret walk did not terminate"
+        );
     }
     visited
 }
@@ -188,7 +191,10 @@ fn rtl_whitespace_segment_glyphs_stay_finite_and_distinct() {
     assert!(!line.glyphs.is_empty(), "expected glyphs for the space run");
     let xs: Vec<f32> = line.glyphs.iter().map(|g| g.position_lpx[0]).collect();
     for &x in &xs {
-        assert!(x.is_finite(), "space-glyph x must be finite, got {x} in {xs:?}");
+        assert!(
+            x.is_finite(),
+            "space-glyph x must be finite, got {x} in {xs:?}"
+        );
     }
     if xs.len() >= 2 {
         // Distinct origins: a second space must not sit on top of the first.

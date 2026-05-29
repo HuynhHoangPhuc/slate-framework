@@ -122,13 +122,7 @@ impl GlyphCache {
         atlas.upload(queue, alloc.alloc_id, &padded);
 
         let metrics = GlyphMetrics::from_bitmap(&bitmap);
-        self.cache.insert(
-            key,
-            CachedGlyph {
-                alloc,
-                metrics,
-            },
-        );
+        self.cache.insert(key, CachedGlyph { alloc, metrics });
 
         Ok(true)
     }
@@ -180,13 +174,7 @@ impl GlyphCache {
         atlas.upload(queue, alloc.alloc_id, &padded);
 
         let metrics = GlyphMetrics::from_bitmap(&bitmap);
-        self.cache.insert(
-            key,
-            CachedGlyph {
-                alloc,
-                metrics,
-            },
-        );
+        self.cache.insert(key, CachedGlyph { alloc, metrics });
 
         Ok(true)
     }

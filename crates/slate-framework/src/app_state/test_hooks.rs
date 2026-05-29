@@ -95,7 +95,12 @@ impl AppState {
         self.windows
             .borrow()
             .get(&window)
-            .and_then(|w| w.renderer.borrow().as_ref().map(|r| { r.force_device_lost(); true }))
+            .and_then(|w| {
+                w.renderer.borrow().as_ref().map(|r| {
+                    r.force_device_lost();
+                    true
+                })
+            })
             .unwrap_or(false)
     }
 
@@ -122,7 +127,12 @@ impl AppState {
         self.windows
             .borrow()
             .get(&window)
-            .and_then(|w| w.renderer.borrow().as_ref().map(|r| r.consume_wgpu_callback_fired()))
+            .and_then(|w| {
+                w.renderer
+                    .borrow()
+                    .as_ref()
+                    .map(|r| r.consume_wgpu_callback_fired())
+            })
             .unwrap_or(false)
     }
 
@@ -358,11 +368,7 @@ impl AppState {
     }
 
     /// Push a hit region directly into the window's hit-test list. Test-only.
-    pub fn push_hit_region_for_test(
-        &self,
-        window: WindowId,
-        region: crate::hit_test::HitRegion,
-    ) {
+    pub fn push_hit_region_for_test(&self, window: WindowId, region: crate::hit_test::HitRegion) {
         let guard = self.windows.borrow();
         if let Some(win) = guard.get(&window) {
             win.hit_test_list.borrow_mut().push(region);
@@ -459,11 +465,7 @@ impl AppState {
     }
 
     /// Dispatch a synthetic `ImeCommit`. Test-only.
-    pub fn dispatch_ime_commit_for_test(
-        &self,
-        window: WindowId,
-        text: String,
-    ) -> AppSignal {
+    pub fn dispatch_ime_commit_for_test(&self, window: WindowId, text: String) -> AppSignal {
         self.dispatch_ime_commit(window, text)
     }
 
@@ -473,7 +475,10 @@ impl AppState {
     }
 
     /// Query the cached caret rect. Test-only.
-    pub fn ime_caret_rect_query_for_test(&self, window: WindowId) -> Option<slate_platform::PhysicalRect> {
+    pub fn ime_caret_rect_query_for_test(
+        &self,
+        window: WindowId,
+    ) -> Option<slate_platform::PhysicalRect> {
         use slate_platform::WindowImeDelegate;
         WindowImeDelegate::ime_caret_rect(self, window)
     }

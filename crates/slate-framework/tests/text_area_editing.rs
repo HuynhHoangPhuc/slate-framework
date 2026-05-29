@@ -54,8 +54,7 @@ use slate_framework::app_state::window_state::WindowState;
 use slate_framework::element::AnyElement;
 use slate_framework::elements::Div;
 use slate_framework::elements::text_area::{
-    build_ime_handlers_for_test, build_key_down_handler_for_test,
-    build_text_input_handler_for_test,
+    build_ime_handlers_for_test, build_key_down_handler_for_test, build_text_input_handler_for_test,
 };
 use slate_framework::event::KeyHandlers;
 use slate_framework::executor::{Executor, RedrawRequester};
@@ -91,7 +90,11 @@ fn make_state() -> (Rc<AppState>, WindowId) {
     let executor = Executor::new(redraw_requester.clone());
     let runtime = slate_reactive::Runtime::new();
     let _ = platform;
-    let state = Rc::new(AppState::new(executor, redraw_requester.clone(), runtime.clone()));
+    let state = Rc::new(AppState::new(
+        executor,
+        redraw_requester.clone(),
+        runtime.clone(),
+    ));
     let window_id = window.id();
     {
         let win_state = WindowState::new(window, runtime);
@@ -119,11 +122,14 @@ fn harness() -> Harness {
     slate_platform::clipboard::install_clipboard_override_for_test();
     let (state, win) = make_state();
     let elem = ElementId::from_raw(20);
-    state.register_focusable_for_test(win, FocusableEntry {
-        id: elem,
-        tab_index: 0,
-        focus_ring: true,
-    });
+    state.register_focusable_for_test(
+        win,
+        FocusableEntry {
+            id: elem,
+            tab_index: 0,
+            focus_ring: true,
+        },
+    );
     state.set_focus_for_test(win, elem);
 
     let ime = state.register_ime_state_for_test(win, elem);
@@ -140,7 +146,11 @@ fn harness() -> Harness {
             on_text_input: Some(build_text_input_handler_for_test(value.clone())),
         },
     );
-    state.install_element_ime_handlers_for_test(win, elem, build_ime_handlers_for_test(value.clone()));
+    state.install_element_ime_handlers_for_test(
+        win,
+        elem,
+        build_ime_handlers_for_test(value.clone()),
+    );
 
     Harness {
         state,
@@ -153,13 +163,19 @@ fn harness() -> Harness {
 
 impl Harness {
     fn typ(&self, s: &str) {
-        self.state.dispatch_text_input_for_test(self.window, s.to_string());
+        self.state
+            .dispatch_text_input_for_test(self.window, s.to_string());
     }
     fn key(&self, code: KeyCode, key: Key, mods: Modifiers) {
-        self.state.dispatch_key_down_for_test(self.window, code, key, mods, false);
+        self.state
+            .dispatch_key_down_for_test(self.window, code, key, mods, false);
     }
     fn enter(&self) {
-        self.key(KeyCode::Enter, Key::Named(NamedKey::Enter), Modifiers::default());
+        self.key(
+            KeyCode::Enter,
+            Key::Named(NamedKey::Enter),
+            Modifiers::default(),
+        );
     }
     fn shift_left(&self) {
         self.key(
@@ -223,13 +239,21 @@ fn check_type_two_lines_select_replace_then_undo() -> Result<(), String> {
     h.enter();
     h.typ("c");
     h.typ("d");
-    ensure_eq!(h.text(), "ab\ncd", "Enter inserts a newline between the runs");
+    ensure_eq!(
+        h.text(),
+        "ab\ncd",
+        "Enter inserts a newline between the runs"
+    );
     ensure_eq!(h.caret(), 5, "caret after typing 'ab\\ncd'");
 
     // Select "cd" with two Shift+Left, then type over it.
     h.shift_left();
     h.shift_left();
-    ensure_eq!(h.ime.borrow().selection_anchor, Some(5), "selection anchor at byte 5");
+    ensure_eq!(
+        h.ime.borrow().selection_anchor,
+        Some(5),
+        "selection anchor at byte 5"
+    );
     ensure_eq!(h.caret(), 3, "selection spans bytes 3..5 ('cd')");
 
     h.typ("X");
@@ -256,13 +280,21 @@ fn check_copy_multiline_selection_and_paste_preserves_newlines() -> Result<(), S
         h.shift_left();
     }
     ensure_eq!(h.caret(), 0, "caret at document start after selecting all");
-    ensure_eq!(h.ime.borrow().selection_anchor, Some(5), "anchor at document end");
+    ensure_eq!(
+        h.ime.borrow().selection_anchor,
+        Some(5),
+        "anchor at document end"
+    );
 
     // Copy, collapse to the right edge, then paste at the end.
     h.command(KeyCode::KeyC, "c");
     h.arrow_right(); // collapses selection to byte 5 (caret end)
     ensure_eq!(h.caret(), 5, "ArrowRight collapses to byte 5");
-    ensure_eq!(h.ime.borrow().selection_anchor, None, "selection cleared on collapse");
+    ensure_eq!(
+        h.ime.borrow().selection_anchor,
+        None,
+        "selection cleared on collapse"
+    );
 
     h.command(KeyCode::KeyV, "v");
     ensure_eq!(
@@ -291,13 +323,19 @@ fn check_ime_commit_inserts_at_caret_mid_document() -> Result<(), String> {
     {
         let s = h.ime.borrow();
         ensure_eq!(s.text.as_str(), "ad", "preedit leaves the buffer untouched");
-        ensure!(s.preedit.is_some(), "preedit is recorded during composition");
+        ensure!(
+            s.preedit.is_some(),
+            "preedit is recorded during composition"
+        );
     }
 
     h.state.dispatch_ime_commit_for_test(h.window, "b".into());
     ensure_eq!(h.text(), "abd", "commit inserts at the caret mid-document");
     ensure_eq!(h.caret(), 2, "caret advances past the committed text");
-    ensure!(h.ime.borrow().preedit.is_none(), "commit clears the preedit");
+    ensure!(
+        h.ime.borrow().preedit.is_none(),
+        "commit clears the preedit"
+    );
     Ok(())
 }
 
@@ -338,8 +376,16 @@ fn check_end_key_after_typing_is_visual_line_relative() -> Result<(), String> {
     // Collapse to document start via 5 Shift+Left + Left would be noisy; instead
     // place the caret on line0 directly and assert End is line-relative.
     h.ime.borrow_mut().caret = 0;
-    h.key(KeyCode::End, Key::Named(NamedKey::End), Modifiers::default());
-    ensure_eq!(h.caret(), 2, "End lands at line0 end ('ab'), not document end");
+    h.key(
+        KeyCode::End,
+        Key::Named(NamedKey::End),
+        Modifiers::default(),
+    );
+    ensure_eq!(
+        h.caret(),
+        2,
+        "End lands at line0 end ('ab'), not document end"
+    );
     Ok(())
 }
 

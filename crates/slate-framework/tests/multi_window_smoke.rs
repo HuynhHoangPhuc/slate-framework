@@ -28,9 +28,9 @@
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-use slate_framework::app_state::{AppSignal, AppState};
 use slate_framework::app_state::window_state::WindowState;
-use slate_framework::event::{KeyEvent, KeyHandlers, MouseHandlers, MouseEvent, EventCtx};
+use slate_framework::app_state::{AppSignal, AppState};
+use slate_framework::event::{EventCtx, KeyEvent, KeyHandlers, MouseEvent, MouseHandlers};
 use slate_framework::executor::{Executor, RedrawRequester};
 use slate_framework::hit_test::HitRegion;
 use slate_framework::types::{Bounds, ElementId, Point, Size};
@@ -157,7 +157,10 @@ fn check_capture_state_is_per_window() -> Result<(), String> {
             on_mouse_up: None,
         },
     );
-    state.push_hit_region_for_test(win_a, HitRegion::new(elem_a, bounds(0.0, 0.0, 100.0, 100.0), 0));
+    state.push_hit_region_for_test(
+        win_a,
+        HitRegion::new(elem_a, bounds(0.0, 0.0, 100.0, 100.0), 0),
+    );
 
     // Install a separate hit region on window B — no capture.
     let on_down_b: ArcMouse = Arc::new(move |_ev, _cx| {});
@@ -170,10 +173,18 @@ fn check_capture_state_is_per_window() -> Result<(), String> {
             on_mouse_up: None,
         },
     );
-    state.push_hit_region_for_test(win_b, HitRegion::new(elem_b, bounds(0.0, 0.0, 100.0, 100.0), 0));
+    state.push_hit_region_for_test(
+        win_b,
+        HitRegion::new(elem_b, bounds(0.0, 0.0, 100.0, 100.0), 0),
+    );
 
     // Click on window A → capture should be set on A, not B.
-    state.dispatch_mouse_down_for_test(win_a, (10.0, 10.0), MouseButton::Left, Modifiers::default());
+    state.dispatch_mouse_down_for_test(
+        win_a,
+        (10.0, 10.0),
+        MouseButton::Left,
+        Modifiers::default(),
+    );
 
     ensure_eq!(
         state.capture_target_for_test(win_a),
@@ -187,7 +198,12 @@ fn check_capture_state_is_per_window() -> Result<(), String> {
     );
 
     // Click on window B — B gets its own capture set by auto-capture logic.
-    state.dispatch_mouse_down_for_test(win_b, (10.0, 10.0), MouseButton::Left, Modifiers::default());
+    state.dispatch_mouse_down_for_test(
+        win_b,
+        (10.0, 10.0),
+        MouseButton::Left,
+        Modifiers::default(),
+    );
     ensure_eq!(
         state.capture_target_for_test(win_a),
         Some(elem_a),
@@ -213,8 +229,22 @@ fn check_focus_state_is_per_window() -> Result<(), String> {
     let (state, win_a, win_b) = make_two_window_state();
 
     // Register focusable elements in each window.
-    state.register_focusable_for_test(win_a, FocusableEntry { id: id(10), tab_index: 0, focus_ring: true });
-    state.register_focusable_for_test(win_b, FocusableEntry { id: id(20), tab_index: 0, focus_ring: true });
+    state.register_focusable_for_test(
+        win_a,
+        FocusableEntry {
+            id: id(10),
+            tab_index: 0,
+            focus_ring: true,
+        },
+    );
+    state.register_focusable_for_test(
+        win_b,
+        FocusableEntry {
+            id: id(20),
+            tab_index: 0,
+            focus_ring: true,
+        },
+    );
 
     state.set_focus_for_test(win_a, id(10));
     state.set_focus_for_test(win_b, id(20));
@@ -231,7 +261,14 @@ fn check_focus_state_is_per_window() -> Result<(), String> {
     );
 
     // Changing focus on A must not affect B.
-    state.register_focusable_for_test(win_a, FocusableEntry { id: id(11), tab_index: 1, focus_ring: true });
+    state.register_focusable_for_test(
+        win_a,
+        FocusableEntry {
+            id: id(11),
+            tab_index: 1,
+            focus_ring: true,
+        },
+    );
     state.set_focus_for_test(win_a, id(11));
 
     ensure_eq!(
@@ -322,8 +359,12 @@ fn check_redraw_bridge_wakes_once_per_signal_change() -> Result<(), String> {
     let ca = count_a.clone();
     let cb = count_b.clone();
 
-    let req_a = RedrawRequester::new(move || { *ca.lock().unwrap() += 1; });
-    let req_b = RedrawRequester::new(move || { *cb.lock().unwrap() += 1; });
+    let req_a = RedrawRequester::new(move || {
+        *ca.lock().unwrap() += 1;
+    });
+    let req_b = RedrawRequester::new(move || {
+        *cb.lock().unwrap() += 1;
+    });
 
     let executor = Executor::new(req_a.clone());
     let runtime = slate_reactive::Runtime::new();
@@ -397,7 +438,11 @@ fn check_mouse_move_dispatch_is_per_window() -> Result<(), String> {
     state.dispatch_mouse_move_for_test(win_a, (42.0, 17.0));
 
     // Window B's last_mouse_pos must not be affected.
-    let last_pos_b = state.windows.borrow().get(&win_b).map(|w| *w.last_mouse_pos.borrow());
+    let last_pos_b = state
+        .windows
+        .borrow()
+        .get(&win_b)
+        .map(|w| *w.last_mouse_pos.borrow());
     ensure_eq!(
         last_pos_b,
         Some(None),
@@ -421,21 +466,51 @@ fn check_key_dispatch_routes_to_correct_window() -> Result<(), String> {
     let fired_b: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
 
     // Register focusable + key handler on window A.
-    state.register_focusable_for_test(win_a, FocusableEntry { id: id(1), tab_index: 0, focus_ring: false });
+    state.register_focusable_for_test(
+        win_a,
+        FocusableEntry {
+            id: id(1),
+            tab_index: 0,
+            focus_ring: false,
+        },
+    );
     state.set_focus_for_test(win_a, id(1));
     {
         let fa = fired_a.clone();
         let h: ArcKey = Arc::new(move |_ev, _cx| *fa.lock().unwrap() = true);
-        state.install_element_key_handlers_for_test(win_a, id(1), KeyHandlers { on_key_down: Some(h), on_key_up: None, on_text_input: None });
+        state.install_element_key_handlers_for_test(
+            win_a,
+            id(1),
+            KeyHandlers {
+                on_key_down: Some(h),
+                on_key_up: None,
+                on_text_input: None,
+            },
+        );
     }
 
     // Register focusable + key handler on window B.
-    state.register_focusable_for_test(win_b, FocusableEntry { id: id(2), tab_index: 0, focus_ring: false });
+    state.register_focusable_for_test(
+        win_b,
+        FocusableEntry {
+            id: id(2),
+            tab_index: 0,
+            focus_ring: false,
+        },
+    );
     state.set_focus_for_test(win_b, id(2));
     {
         let fb = fired_b.clone();
         let h: ArcKey = Arc::new(move |_ev, _cx| *fb.lock().unwrap() = true);
-        state.install_element_key_handlers_for_test(win_b, id(2), KeyHandlers { on_key_down: Some(h), on_key_up: None, on_text_input: None });
+        state.install_element_key_handlers_for_test(
+            win_b,
+            id(2),
+            KeyHandlers {
+                on_key_down: Some(h),
+                on_key_up: None,
+                on_text_input: None,
+            },
+        );
     }
 
     // Dispatch key to window A.
@@ -465,12 +540,27 @@ fn check_key_dispatch_routes_to_correct_window() -> Result<(), String> {
 
 fn main() {
     let cases: &[Case] = &[
-        ("capture_state_is_per_window", check_capture_state_is_per_window),
+        (
+            "capture_state_is_per_window",
+            check_capture_state_is_per_window,
+        ),
         ("focus_state_is_per_window", check_focus_state_is_per_window),
-        ("last_window_destroy_semantics", check_last_window_destroy_semantics),
-        ("redraw_bridge_wakes_once_per_signal_change", check_redraw_bridge_wakes_once_per_signal_change),
-        ("mouse_move_dispatch_is_per_window", check_mouse_move_dispatch_is_per_window),
-        ("key_dispatch_routes_to_correct_window", check_key_dispatch_routes_to_correct_window),
+        (
+            "last_window_destroy_semantics",
+            check_last_window_destroy_semantics,
+        ),
+        (
+            "redraw_bridge_wakes_once_per_signal_change",
+            check_redraw_bridge_wakes_once_per_signal_change,
+        ),
+        (
+            "mouse_move_dispatch_is_per_window",
+            check_mouse_move_dispatch_is_per_window,
+        ),
+        (
+            "key_dispatch_routes_to_correct_window",
+            check_key_dispatch_routes_to_correct_window,
+        ),
     ];
 
     let mut failed = 0;

@@ -38,7 +38,11 @@ impl AppState {
     /// Wake-all policy (v1): every registered window is woken synchronously in
     /// insertion order on each reactive signal change. Per-window subscription
     /// tagging is post-v1.
-    pub fn new(executor: Executor, _redraw_requester: RedrawRequester, runtime: Arc<slate_reactive::Runtime>) -> Self {
+    pub fn new(
+        executor: Executor,
+        _redraw_requester: RedrawRequester,
+        runtime: Arc<slate_reactive::Runtime>,
+    ) -> Self {
         let redraw_requesters: Arc<Mutex<Vec<(WindowId, RedrawRequester)>>> =
             Arc::new(Mutex::new(Vec::new()));
 
@@ -166,7 +170,11 @@ impl AppState {
             let id = pending.window.id();
             self.install_window(pending.window);
             if let Err(e) = self.init_surfaces(id, &mut pending.view_factory, cx, platform) {
-                log::error!("drain_pending_window_creates: init_surfaces failed for {:?}: {}", id, e);
+                log::error!(
+                    "drain_pending_window_creates: init_surfaces failed for {:?}: {}",
+                    id,
+                    e
+                );
             }
         }
     }
@@ -182,7 +190,10 @@ impl AppState {
         let id = window.id();
         self.pending_window_creates
             .borrow_mut()
-            .push(PendingWindowCreate { window, view_factory });
+            .push(PendingWindowCreate {
+                window,
+                view_factory,
+            });
         id
     }
 

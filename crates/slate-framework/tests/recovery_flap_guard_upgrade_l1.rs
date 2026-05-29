@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 
 use slate_framework::DeviceLossReason;
 use slate_framework::app::AppContext;
-use slate_framework::app_state::{AppState, RecoveryState};
 use slate_framework::app_state::window_state::WindowState;
+use slate_framework::app_state::{AppState, RecoveryState};
 use slate_framework::element::AnyElement;
 use slate_framework::elements::Div;
 use slate_framework::erased_view::ErasedView;
@@ -51,9 +51,16 @@ fn l1_upgrade_then_flap_gives_up() {
     let cx = AppContext::new_for_test(runtime.clone(), executor.background.clone());
     let window_id = window.id();
 
-    let state = Rc::new(AppState::new(executor, redraw_requester.clone(), runtime.clone()));
+    let state = Rc::new(AppState::new(
+        executor,
+        redraw_requester.clone(),
+        runtime.clone(),
+    ));
     {
-        state.windows.borrow_mut().insert(window_id, WindowState::new(window.clone(), runtime));
+        state
+            .windows
+            .borrow_mut()
+            .insert(window_id, WindowState::new(window.clone(), runtime));
     }
     state.register_redraw_requester_for_test(window_id, redraw_requester);
 

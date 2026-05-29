@@ -2,9 +2,7 @@
 
 use std::sync::Arc;
 
-use crate::event::{
-    EventCtx, KeyEvent, MouseEvent, PointerEvent, ScrollEvent, TextInputEvent,
-};
+use crate::event::{EventCtx, KeyEvent, MouseEvent, PointerEvent, ScrollEvent, TextInputEvent};
 
 use super::Div;
 

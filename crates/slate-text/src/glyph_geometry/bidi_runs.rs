@@ -80,10 +80,7 @@ pub(super) fn owning_run_with_affinity(
 
 /// Distinct cluster-start bytes within `range`, ascending. Multi-glyph clusters
 /// collapse to one entry; these are the grapheme-aligned caret stops of a run.
-pub(super) fn run_cluster_starts(
-    line: &ShapedLine,
-    range: &std::ops::Range<usize>,
-) -> Vec<usize> {
+pub(super) fn run_cluster_starts(line: &ShapedLine, range: &std::ops::Range<usize>) -> Vec<usize> {
     let mut starts: Vec<usize> = line
         .glyphs
         .iter()

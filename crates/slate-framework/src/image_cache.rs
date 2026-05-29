@@ -271,7 +271,10 @@ mod tests {
         let b = cache
             .upload_if_needed(0xBEEF, &px, 256, 256, &mut atlas, &queue)
             .expect("cache hit");
-        assert_eq!(a.token, b.token, "on-screen re-request must not re-allocate");
+        assert_eq!(
+            a.token, b.token,
+            "on-screen re-request must not re-allocate"
+        );
         assert_eq!(a.uv_rect, b.uv_rect);
     }
 

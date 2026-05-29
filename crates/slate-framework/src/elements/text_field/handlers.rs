@@ -100,7 +100,7 @@ pub(super) fn build_key_down_handler(value: Signal<String>) -> ElementKeyHandler
                     let shaped = state_rc.borrow().last_shaped.clone();
                     {
                         let mut state = state_rc.borrow_mut();
-                        apply_line_edge(&mut state, shaped.as_deref(),move_right, shift);
+                        apply_line_edge(&mut state, shaped.as_deref(), move_right, shift);
                         reset_blink(&mut state);
                         state.undo.mark_motion();
                     }
@@ -119,10 +119,19 @@ pub(super) fn build_key_down_handler(value: Signal<String>) -> ElementKeyHandler
                     let run_bearing = shaped.as_ref().is_some_and(|s| !s.runs.is_empty());
                     if run_bearing {
                         // Edge → `false`: caret stays put (clamp).
-                        apply_visual_motion(&mut state, shaped.as_ref().unwrap(), move_right, shift);
+                        apply_visual_motion(
+                            &mut state,
+                            shaped.as_ref().unwrap(),
+                            move_right,
+                            shift,
+                        );
                     } else {
                         state.caret_affinity = slate_text::Affinity::Downstream;
-                        let dir = if move_right { MotionDir::Right } else { MotionDir::Left };
+                        let dir = if move_right {
+                            MotionDir::Right
+                        } else {
+                            MotionDir::Left
+                        };
                         apply_motion(&mut state, dir, shift, |s| {
                             s.caret = if move_right {
                                 next_grapheme_boundary(&s.text, s.caret)
@@ -142,7 +151,7 @@ pub(super) fn build_key_down_handler(value: Signal<String>) -> ElementKeyHandler
                 let shaped = state_rc.borrow().last_shaped.clone();
                 {
                     let mut state = state_rc.borrow_mut();
-                    apply_line_edge(&mut state, shaped.as_deref(),to_end, shift);
+                    apply_line_edge(&mut state, shaped.as_deref(), to_end, shift);
                     reset_blink(&mut state);
                     state.undo.mark_motion();
                 }
@@ -439,10 +448,10 @@ mod tests {
     //! anchor flow. Cross-platform behavior is enforced by the
     //! `is_line_edge_modifier` gate already tested in `event::tests`.
     use super::*;
-    use slate_text::{Affinity, Direction, FontHandle, FontId, RunSpan, ShapedGlyph, ShapedLine};
-    use std::rc::Rc;
-    use std::cell::RefCell;
     use crate::ime::ImeState;
+    use slate_text::{Affinity, Direction, FontHandle, FontId, RunSpan, ShapedGlyph, ShapedLine};
+    use std::cell::RefCell;
+    use std::rc::Rc;
 
     fn glyph_ltr(cluster: u32, adv: f32) -> ShapedGlyph {
         ShapedGlyph {
@@ -609,4 +618,3 @@ mod tests {
         assert!(rc.borrow().preedit.is_some());
     }
 }
-

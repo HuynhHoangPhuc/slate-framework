@@ -290,8 +290,7 @@ impl HeadlessApp {
         let mut render_cx = crate::RenderCx::new(slate_platform::WindowId(0));
         #[cfg(feature = "profiling")]
         let _vr_start = std::time::Instant::now();
-        let root =
-            slate_reactive::with_observer(self.observer_id, || view.render(&mut render_cx));
+        let root = slate_reactive::with_observer(self.observer_id, || view.render(&mut render_cx));
         #[cfg(feature = "profiling")]
         crate::profiling::redraw_counters::record_view_render(_vr_start.elapsed());
         self.render(root)

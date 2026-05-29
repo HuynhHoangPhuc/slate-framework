@@ -24,8 +24,8 @@ use slate_platform::{
 };
 
 use crate::app::AppContext;
-use crate::app_state::{AppSignal, AppState, RecoveryState};
 use crate::app_state::window_state::WindowState;
+use crate::app_state::{AppSignal, AppState, RecoveryState};
 use crate::element::AnyElement;
 use crate::elements::Div;
 use crate::erased_view::ErasedView;
@@ -89,7 +89,11 @@ impl RecoveryHarness {
 
         let cx = AppContext::new_for_test(runtime.clone(), executor.background.clone());
 
-        let state = Rc::new(AppState::new(executor, redraw_requester.clone(), runtime.clone()));
+        let state = Rc::new(AppState::new(
+            executor,
+            redraw_requester.clone(),
+            runtime.clone(),
+        ));
 
         // Register the window into the per-window map.
         let window_id = window.id();
@@ -125,9 +129,7 @@ impl RecoveryHarness {
         let window_id = self.window_id;
 
         // Type-erased factory for init_surfaces.
-        let mut erased_factory = |_cx: &AppContext| -> Box<dyn ErasedView> {
-            Box::new(NoopView)
-        };
+        let mut erased_factory = |_cx: &AppContext| -> Box<dyn ErasedView> { Box::new(NoopView) };
 
         let RecoveryHarness {
             platform,
@@ -164,7 +166,11 @@ impl RecoveryHarness {
                 }
                 Event::Wake => true,
                 Event::WindowRedrawRequested { .. } => true,
-                Event::WindowResized { window, physical_size, .. } => {
+                Event::WindowResized {
+                    window,
+                    physical_size,
+                    ..
+                } => {
                     state.handle_window_resized(window, physical_size);
                     false
                 }
@@ -174,7 +180,10 @@ impl RecoveryHarness {
                     return;
                 }
                 Event::WindowDestroyed { window, .. } => {
-                    if matches!(state.handle_window_destroyed(window), AppSignal::RequestQuit) {
+                    if matches!(
+                        state.handle_window_destroyed(window),
+                        AppSignal::RequestQuit
+                    ) {
                         request_quit.set(true);
                         platform.quit();
                     }

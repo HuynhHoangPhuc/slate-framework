@@ -184,7 +184,12 @@ fn multi_layer_overlap_resolves_via_painter_order() {
                     rect_pipeline.record(&mut pass, &viewport_bg, &unit_quad, layer.rects.clone());
                 }
                 ScenePrimitive::Image => {
-                    image_pipeline.record(&mut pass, &viewport_bg, &unit_quad, layer.images.clone());
+                    image_pipeline.record(
+                        &mut pass,
+                        &viewport_bg,
+                        &unit_quad,
+                        layer.images.clone(),
+                    );
                 }
             }
         });

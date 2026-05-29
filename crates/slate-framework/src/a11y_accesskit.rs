@@ -24,9 +24,7 @@
 
 use accesskit::{Node, NodeId, Rect};
 
-use crate::types::{
-    AccessibilityNode, AccessibilityRelationships, Bounds, ElementId, LiveRegion,
-};
+use crate::types::{AccessibilityNode, AccessibilityRelationships, Bounds, ElementId, LiveRegion};
 
 /// Translate a Slate `ElementId` to an accesskit `NodeId`.
 ///

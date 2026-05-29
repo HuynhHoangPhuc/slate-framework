@@ -88,7 +88,11 @@ mod tests {
         };
         let (visible, next) = advance_blink(&mut blink, true, now);
         assert!(!visible, "deadline passed → toggled off");
-        assert_eq!(next, Some(now + CARET_BLINK_PERIOD), "next deadline re-armed");
+        assert_eq!(
+            next,
+            Some(now + CARET_BLINK_PERIOD),
+            "next deadline re-armed"
+        );
     }
 
     #[test]

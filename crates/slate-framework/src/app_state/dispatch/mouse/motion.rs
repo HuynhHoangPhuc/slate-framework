@@ -35,12 +35,15 @@ impl AppState {
 
         let (captured, target) = {
             let guard = self.windows.borrow();
-            let Some(win) = guard.get(&window) else { return AppSignal::None };
+            let Some(win) = guard.get(&window) else {
+                return AppSignal::None;
+            };
             let cap = *win.capture_target.borrow();
             let t = if let Some(ct) = cap {
                 Some(ct)
             } else {
-                win.hit_test_list.borrow()
+                win.hit_test_list
+                    .borrow()
                     .hit_test(Point::new(position.0, position.1))
                     .map(|r| r.element_id)
             };
@@ -50,7 +53,9 @@ impl AppState {
         if let Some(t) = target {
             let handlers: SmallVec<[PointerHandler; 8]> = {
                 let guard = self.windows.borrow();
-                let Some(win) = guard.get(&window) else { return AppSignal::None };
+                let Some(win) = guard.get(&window) else {
+                    return AppSignal::None;
+                };
                 let hm = win.handler_map.borrow();
                 let pm = win.parent_map.borrow();
                 ancestors(t, &pm)
@@ -63,14 +68,22 @@ impl AppState {
             let mut pending_capture_op: Option<PendingCaptureOp> = None;
             let focused = {
                 let guard = self.windows.borrow();
-                guard.get(&window).and_then(|w| w.focus_registry.borrow().focused())
+                guard
+                    .get(&window)
+                    .and_then(|w| w.focus_registry.borrow().focused())
             };
             for handler in &handlers {
                 let mut ctx = EventCtx::new(
-                    &mut stopped, &mut pending_focus_op, &mut pending_capture_op, window, focused,
+                    &mut stopped,
+                    &mut pending_focus_op,
+                    &mut pending_capture_op,
+                    window,
+                    focused,
                 );
                 handler(&pointer_event, &mut ctx);
-                if stopped { break; }
+                if stopped {
+                    break;
+                }
             }
             self.apply_pending_focus_op(window, pending_focus_op);
             self.apply_pending_capture_op(window, pending_capture_op);
@@ -112,14 +125,20 @@ impl AppState {
 
         let hit = {
             let guard = self.windows.borrow();
-            let Some(win) = guard.get(&window) else { return AppSignal::RequestRedraw { window } };
-            win.hit_test_list.borrow().hit_test(Point::new(position.0, position.1))
+            let Some(win) = guard.get(&window) else {
+                return AppSignal::RequestRedraw { window };
+            };
+            win.hit_test_list
+                .borrow()
+                .hit_test(Point::new(position.0, position.1))
         };
 
         if let Some(result) = hit {
             let handlers: SmallVec<[ScrollHandler; 8]> = {
                 let guard = self.windows.borrow();
-                let Some(win) = guard.get(&window) else { return AppSignal::RequestRedraw { window } };
+                let Some(win) = guard.get(&window) else {
+                    return AppSignal::RequestRedraw { window };
+                };
                 let hm = win.handler_map.borrow();
                 let pm = win.parent_map.borrow();
                 ancestors(result.element_id, &pm)
@@ -132,14 +151,22 @@ impl AppState {
             let mut pending_capture_op: Option<PendingCaptureOp> = None;
             let focused = {
                 let guard = self.windows.borrow();
-                guard.get(&window).and_then(|w| w.focus_registry.borrow().focused())
+                guard
+                    .get(&window)
+                    .and_then(|w| w.focus_registry.borrow().focused())
             };
             for handler in &handlers {
                 let mut ctx = EventCtx::new(
-                    &mut stopped, &mut pending_focus_op, &mut pending_capture_op, window, focused,
+                    &mut stopped,
+                    &mut pending_focus_op,
+                    &mut pending_capture_op,
+                    window,
+                    focused,
                 );
                 handler(&scroll_event, &mut ctx);
-                if stopped { break; }
+                if stopped {
+                    break;
+                }
             }
             self.apply_pending_focus_op(window, pending_focus_op);
             self.apply_pending_capture_op(window, pending_capture_op);
@@ -152,7 +179,9 @@ impl AppState {
     pub(crate) fn dispatch_mouse_exited(&self, window: WindowId) -> AppSignal {
         let (old_hover, handlers) = {
             let guard = self.windows.borrow();
-            let Some(win) = guard.get(&window) else { return AppSignal::None };
+            let Some(win) = guard.get(&window) else {
+                return AppSignal::None;
+            };
             let old_hover = *win.hovered_element.borrow();
             let handlers: SmallVec<[PointerHandler; 8]> = if let Some(id) = old_hover {
                 let hm = win.handler_map.borrow();
@@ -180,10 +209,16 @@ impl AppState {
                 let mut pending_capture_op: Option<PendingCaptureOp> = None;
                 let focused = {
                     let guard = self.windows.borrow();
-                    guard.get(&window).and_then(|w| w.focus_registry.borrow().focused())
+                    guard
+                        .get(&window)
+                        .and_then(|w| w.focus_registry.borrow().focused())
                 };
                 let mut ctx = EventCtx::new(
-                    &mut stopped, &mut pending_focus_op, &mut pending_capture_op, window, focused,
+                    &mut stopped,
+                    &mut pending_focus_op,
+                    &mut pending_capture_op,
+                    window,
+                    focused,
                 );
                 handler(&event, &mut ctx);
                 self.apply_pending_focus_op(window, pending_focus_op);
@@ -208,14 +243,18 @@ impl AppState {
     pub(crate) fn flush_coalesced_move(&self, window: WindowId) {
         let pos = {
             let guard = self.windows.borrow();
-            let Some(win) = guard.get(&window) else { return };
+            let Some(win) = guard.get(&window) else {
+                return;
+            };
             win.coalesced_move_pos.borrow_mut().take()
         };
         let Some(pos) = pos else { return };
 
         let last_dispatched = {
             let guard = self.windows.borrow();
-            guard.get(&window).and_then(|w| *w.last_dispatched_move_pos.borrow())
+            guard
+                .get(&window)
+                .and_then(|w| *w.last_dispatched_move_pos.borrow())
         };
         if last_dispatched == Some(pos) {
             return;
@@ -223,12 +262,15 @@ impl AppState {
 
         let (captured, target) = {
             let guard = self.windows.borrow();
-            let Some(win) = guard.get(&window) else { return };
+            let Some(win) = guard.get(&window) else {
+                return;
+            };
             let cap = *win.capture_target.borrow();
             let t = if let Some(ct) = cap {
                 Some(ct)
             } else {
-                win.hit_test_list.borrow()
+                win.hit_test_list
+                    .borrow()
                     .hit_test(Point::new(pos.0, pos.1))
                     .map(|r| r.element_id)
             };
@@ -245,7 +287,9 @@ impl AppState {
 
             let chain: SmallVec<[(Option<ElementId>, MouseHandler); 8]> = {
                 let guard = self.windows.borrow();
-                let Some(win) = guard.get(&window) else { return };
+                let Some(win) = guard.get(&window) else {
+                    return;
+                };
                 let hm = win.handler_map.borrow();
                 let mhm = win.mouse_handler_map.borrow();
                 let pm = win.parent_map.borrow();
@@ -266,7 +310,9 @@ impl AppState {
             let mut pending_capture_op: Option<PendingCaptureOp> = None;
             let focused = {
                 let guard = self.windows.borrow();
-                guard.get(&window).and_then(|w| w.focus_registry.borrow().focused())
+                guard
+                    .get(&window)
+                    .and_then(|w| w.focus_registry.borrow().focused())
             };
 
             for (id_opt, handler) in &chain {
@@ -278,13 +324,19 @@ impl AppState {
                     None
                 };
                 let mut ctx = EventCtx::new(
-                    &mut stopped, &mut pending_focus_op, &mut pending_capture_op, window, focused,
+                    &mut stopped,
+                    &mut pending_focus_op,
+                    &mut pending_capture_op,
+                    window,
+                    focused,
                 );
                 if let (Some(id), Some(ime_rc)) = (id_opt, &ime_rc_opt) {
                     ctx = ctx.with_ime(*id, ime_rc);
                 }
                 handler(&mouse_event, &mut ctx);
-                if stopped { break; }
+                if stopped {
+                    break;
+                }
             }
             self.apply_pending_focus_op(window, pending_focus_op);
             self.apply_pending_capture_op(window, pending_capture_op);
@@ -303,7 +355,9 @@ impl AppState {
     pub(crate) fn update_hover_state(&self, window: WindowId) {
         let (current_pos, captured, old_hover) = {
             let guard = self.windows.borrow();
-            let Some(win) = guard.get(&window) else { return };
+            let Some(win) = guard.get(&window) else {
+                return;
+            };
             (
                 *win.last_mouse_pos.borrow(),
                 *win.capture_target.borrow(),
@@ -315,12 +369,12 @@ impl AppState {
             captured
         } else if let Some(pos) = current_pos {
             let guard = self.windows.borrow();
-            guard.get(&window)
-                .and_then(|win| {
-                    win.hit_test_list.borrow()
-                        .hit_test(Point::new(pos.0, pos.1))
-                        .map(|r| r.element_id)
-                })
+            guard.get(&window).and_then(|win| {
+                win.hit_test_list
+                    .borrow()
+                    .hit_test(Point::new(pos.0, pos.1))
+                    .map(|r| r.element_id)
+            })
         } else {
             None
         };
@@ -329,8 +383,13 @@ impl AppState {
             // Snapshot handler_map + parent_map before calling fire_hover_transitions.
             let (handler_map_snap, parent_map_snap) = {
                 let guard = self.windows.borrow();
-                let Some(win) = guard.get(&window) else { return };
-                (win.handler_map.borrow().clone(), win.parent_map.borrow().clone())
+                let Some(win) = guard.get(&window) else {
+                    return;
+                };
+                (
+                    win.handler_map.borrow().clone(),
+                    win.parent_map.borrow().clone(),
+                )
             };
             fire_hover_transitions(
                 old_hover,

@@ -257,13 +257,25 @@ mod tests {
             dglyph(2, 7.0, Direction::Ltr),
         ];
         let l = run_line(glyphs, vec![run(0..3, Direction::Ltr)]);
-        assert_eq!(visual_caret_step(&l, 0, Affinity::Downstream, true), Some((1, Affinity::Downstream)));
-        assert_eq!(visual_caret_step(&l, 1, Affinity::Downstream, true), Some((2, Affinity::Downstream)));
-        assert_eq!(visual_caret_step(&l, 2, Affinity::Downstream, true), Some((3, Affinity::Upstream)));
+        assert_eq!(
+            visual_caret_step(&l, 0, Affinity::Downstream, true),
+            Some((1, Affinity::Downstream))
+        );
+        assert_eq!(
+            visual_caret_step(&l, 1, Affinity::Downstream, true),
+            Some((2, Affinity::Downstream))
+        );
+        assert_eq!(
+            visual_caret_step(&l, 2, Affinity::Downstream, true),
+            Some((3, Affinity::Upstream))
+        );
         // Past the right edge → None (caller crosses line / clamps).
         assert_eq!(visual_caret_step(&l, 3, Affinity::Upstream, true), None);
         // Leftward.
-        assert_eq!(visual_caret_step(&l, 3, Affinity::Upstream, false), Some((2, Affinity::Downstream)));
+        assert_eq!(
+            visual_caret_step(&l, 3, Affinity::Upstream, false),
+            Some((2, Affinity::Downstream))
+        );
         assert_eq!(visual_caret_step(&l, 0, Affinity::Downstream, false), None);
     }
 
@@ -278,12 +290,24 @@ mod tests {
         ];
         let l = run_line(glyphs, vec![run(0..9, Direction::Rtl)]);
         // Leftmost stop is byte 9 (logical end). Right → 6 → 3 → 0.
-        assert_eq!(visual_caret_step(&l, 9, Affinity::Upstream, true), Some((6, Affinity::Downstream)));
-        assert_eq!(visual_caret_step(&l, 6, Affinity::Downstream, true), Some((3, Affinity::Downstream)));
-        assert_eq!(visual_caret_step(&l, 3, Affinity::Downstream, true), Some((0, Affinity::Downstream)));
+        assert_eq!(
+            visual_caret_step(&l, 9, Affinity::Upstream, true),
+            Some((6, Affinity::Downstream))
+        );
+        assert_eq!(
+            visual_caret_step(&l, 6, Affinity::Downstream, true),
+            Some((3, Affinity::Downstream))
+        );
+        assert_eq!(
+            visual_caret_step(&l, 3, Affinity::Downstream, true),
+            Some((0, Affinity::Downstream))
+        );
         assert_eq!(visual_caret_step(&l, 0, Affinity::Downstream, true), None);
         // Leftward mirrors.
-        assert_eq!(visual_caret_step(&l, 0, Affinity::Downstream, false), Some((3, Affinity::Downstream)));
+        assert_eq!(
+            visual_caret_step(&l, 0, Affinity::Downstream, false),
+            Some((3, Affinity::Downstream))
+        );
         assert_eq!(visual_caret_step(&l, 9, Affinity::Upstream, false), None);
     }
 
@@ -303,15 +327,33 @@ mod tests {
             vec![run(0..2, Direction::Ltr), run(2..6, Direction::Rtl)],
         );
         // Rightward across the seam: 1 → 6 (RTL end, leftmost) → 4 → 2 (RTL start).
-        assert_eq!(visual_caret_step(&l, 1, Affinity::Downstream, true), Some((6, Affinity::Upstream)));
-        assert_eq!(visual_caret_step(&l, 6, Affinity::Upstream, true), Some((4, Affinity::Downstream)));
-        assert_eq!(visual_caret_step(&l, 4, Affinity::Downstream, true), Some((2, Affinity::Downstream)));
+        assert_eq!(
+            visual_caret_step(&l, 1, Affinity::Downstream, true),
+            Some((6, Affinity::Upstream))
+        );
+        assert_eq!(
+            visual_caret_step(&l, 6, Affinity::Upstream, true),
+            Some((4, Affinity::Downstream))
+        );
+        assert_eq!(
+            visual_caret_step(&l, 4, Affinity::Downstream, true),
+            Some((2, Affinity::Downstream))
+        );
         assert_eq!(visual_caret_step(&l, 2, Affinity::Downstream, true), None);
         // Leftward: 2 → 4 → 6 → 1 → 0.
-        assert_eq!(visual_caret_step(&l, 2, Affinity::Downstream, false), Some((4, Affinity::Downstream)));
-        assert_eq!(visual_caret_step(&l, 6, Affinity::Upstream, false), Some((1, Affinity::Downstream)));
+        assert_eq!(
+            visual_caret_step(&l, 2, Affinity::Downstream, false),
+            Some((4, Affinity::Downstream))
+        );
+        assert_eq!(
+            visual_caret_step(&l, 6, Affinity::Upstream, false),
+            Some((1, Affinity::Downstream))
+        );
         // The dropped duplicate (2, Upstream) still resolves by byte fallback.
-        assert_eq!(visual_caret_step(&l, 2, Affinity::Upstream, false), Some((4, Affinity::Downstream)));
+        assert_eq!(
+            visual_caret_step(&l, 2, Affinity::Upstream, false),
+            Some((4, Affinity::Downstream))
+        );
     }
 
     #[test]
@@ -394,7 +436,10 @@ mod tests {
             vec![run(0..9, Direction::Rtl)],
         );
         assert_eq!(visual_line_edge(&rtl, false), Some((9, Affinity::Upstream)));
-        assert_eq!(visual_line_edge(&rtl, true), Some((0, Affinity::Downstream)));
+        assert_eq!(
+            visual_line_edge(&rtl, true),
+            Some((0, Affinity::Downstream))
+        );
         // A line with no runs has no visual stops.
         assert_eq!(visual_line_edge(&line(vec![glyph(0, 5.0)]), false), None);
     }

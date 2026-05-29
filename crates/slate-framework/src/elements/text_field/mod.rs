@@ -428,7 +428,11 @@ impl Element for TextField {
                     let lo_px = pixel_x(lo);
                     let hi_px = pixel_x(hi);
                     let w = (hi_px - lo_px).max(0.0);
-                    if w > 0.0 { vec![(lo_px, w)] } else { Vec::new() }
+                    if w > 0.0 {
+                        vec![(lo_px, w)]
+                    } else {
+                        Vec::new()
+                    }
                 };
                 for (x_start, w) in spans {
                     cx.scene.push_rect(RectInstance {

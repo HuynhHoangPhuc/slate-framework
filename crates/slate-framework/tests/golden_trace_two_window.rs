@@ -25,11 +25,9 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use insta::assert_debug_snapshot;
-use slate_framework::app_state::{AppSignal, AppState};
 use slate_framework::app_state::window_state::WindowState;
-use slate_framework::event::{
-    EventCtx, KeyHandlers, MouseEvent, MouseHandlers, KeyEvent,
-};
+use slate_framework::app_state::{AppSignal, AppState};
+use slate_framework::event::{EventCtx, KeyEvent, KeyHandlers, MouseEvent, MouseHandlers};
 use slate_framework::executor::{Executor, RedrawRequester};
 use slate_framework::focus::FocusableEntry;
 use slate_framework::hit_test::HitRegion;
@@ -135,7 +133,10 @@ struct Trace {
 
 impl Recorder {
     fn new() -> Self {
-        Recorder(Arc::new(Mutex::new(Trace { seq: 0, entries: Vec::new() })))
+        Recorder(Arc::new(Mutex::new(Trace {
+            seq: 0,
+            entries: Vec::new(),
+        })))
     }
 
     fn push(
@@ -219,7 +220,14 @@ fn wire_key_down(
             Key::Named(NamedKey::Tab) => Some("Tab"),
             _ => None,
         };
-        r.push(win_label, "element_key_down", Some(elem), cx.element_id(), None, note);
+        r.push(
+            win_label,
+            "element_key_down",
+            Some(elem),
+            cx.element_id(),
+            None,
+            note,
+        );
     });
     state.install_element_key_handlers_for_test(
         win,
@@ -248,7 +256,15 @@ fn scene_twa_interleaved_mouse_a_key_b() -> Vec<TraceEntry> {
     let elem_b = id(2);
 
     // Window A: single clickable row.
-    wire_mouse_down(&state, win_a, "winA", row_a, bounds(0.0, 0.0, 100.0, 50.0), &rec, "rowA_down");
+    wire_mouse_down(
+        &state,
+        win_a,
+        "winA",
+        row_a,
+        bounds(0.0, 0.0, 100.0, 50.0),
+        &rec,
+        "rowA_down",
+    );
 
     // Window B: focusable element with key handler.
     state.register_focusable_for_test(win_b, entry(2));
@@ -258,19 +274,67 @@ fn scene_twa_interleaved_mouse_a_key_b() -> Vec<TraceEntry> {
     let mods = Modifiers::default();
 
     // 1. WinA mouse-down
-    rec.push("winA", "BeginDispatch", None, None, None, Some("mouse_down:rowA"));
+    rec.push(
+        "winA",
+        "BeginDispatch",
+        None,
+        None,
+        None,
+        Some("mouse_down:rowA"),
+    );
     let s = state.dispatch_mouse_down_for_test(win_a, (10.0, 10.0), MouseButton::Left, mods);
-    rec.push("winA", "EndDispatch", None, None, Some(signal_label(s)), None);
+    rec.push(
+        "winA",
+        "EndDispatch",
+        None,
+        None,
+        Some(signal_label(s)),
+        None,
+    );
 
     // 2. WinB key-down (Tab)
-    rec.push("winB", "BeginDispatch", None, None, None, Some("key:Tab on winB"));
-    let s = state.dispatch_key_down_for_test(win_b, KeyCode::Tab, Key::Named(NamedKey::Tab), mods, false);
-    rec.push("winB", "EndDispatch", None, None, Some(signal_label(s)), None);
+    rec.push(
+        "winB",
+        "BeginDispatch",
+        None,
+        None,
+        None,
+        Some("key:Tab on winB"),
+    );
+    let s = state.dispatch_key_down_for_test(
+        win_b,
+        KeyCode::Tab,
+        Key::Named(NamedKey::Tab),
+        mods,
+        false,
+    );
+    rec.push(
+        "winB",
+        "EndDispatch",
+        None,
+        None,
+        Some(signal_label(s)),
+        None,
+    );
 
     // 3. WinA mouse-up
-    rec.push("winA", "BeginDispatch", None, None, None, Some("mouse_up:rowA"));
+    rec.push(
+        "winA",
+        "BeginDispatch",
+        None,
+        None,
+        None,
+        Some("mouse_up:rowA"),
+    );
     let s = state.dispatch_mouse_up_for_test(win_a, (10.0, 10.0), MouseButton::Left, mods);
-    rec.push("winA", "EndDispatch", None, None, Some(signal_label(s)), None);
+    rec.push(
+        "winA",
+        "EndDispatch",
+        None,
+        None,
+        Some(signal_label(s)),
+        None,
+    );
 
     rec.snapshot()
 }
@@ -302,19 +366,67 @@ fn scene_twb_independent_focus_text_input() -> Vec<TraceEntry> {
     let mods = Modifiers::default();
 
     // Text input to win A.
-    rec.push("winA", "BeginDispatch", None, None, None, Some("text_input:x on winA"));
+    rec.push(
+        "winA",
+        "BeginDispatch",
+        None,
+        None,
+        None,
+        Some("text_input:x on winA"),
+    );
     let s = state.dispatch_text_input_for_test(win_a, "x".into());
-    rec.push("winA", "EndDispatch", None, None, Some(signal_label(s)), None);
+    rec.push(
+        "winA",
+        "EndDispatch",
+        None,
+        None,
+        Some(signal_label(s)),
+        None,
+    );
 
     // Text input to win B.
-    rec.push("winB", "BeginDispatch", None, None, None, Some("text_input:y on winB"));
+    rec.push(
+        "winB",
+        "BeginDispatch",
+        None,
+        None,
+        None,
+        Some("text_input:y on winB"),
+    );
     let s = state.dispatch_text_input_for_test(win_b, "y".into());
-    rec.push("winB", "EndDispatch", None, None, Some(signal_label(s)), None);
+    rec.push(
+        "winB",
+        "EndDispatch",
+        None,
+        None,
+        Some(signal_label(s)),
+        None,
+    );
 
     // Key-down to win A (element key fires on A only).
-    rec.push("winA", "BeginDispatch", None, None, None, Some("key:Tab on winA"));
-    let s = state.dispatch_key_down_for_test(win_a, KeyCode::Tab, Key::Named(NamedKey::Tab), mods, false);
-    rec.push("winA", "EndDispatch", None, None, Some(signal_label(s)), None);
+    rec.push(
+        "winA",
+        "BeginDispatch",
+        None,
+        None,
+        None,
+        Some("key:Tab on winA"),
+    );
+    let s = state.dispatch_key_down_for_test(
+        win_a,
+        KeyCode::Tab,
+        Key::Named(NamedKey::Tab),
+        mods,
+        false,
+    );
+    rec.push(
+        "winA",
+        "EndDispatch",
+        None,
+        None,
+        Some(signal_label(s)),
+        None,
+    );
 
     rec.snapshot()
 }

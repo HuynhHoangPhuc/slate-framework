@@ -6,8 +6,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     DefWindowProcW, WM_CHAR, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_UNICHAR,
 };
 
-use super::WinWindowInner;
 use super::super::{dispatch_event, keymap};
+use super::WinWindowInner;
 use crate::{Event, Key};
 
 impl WinWindowInner {
@@ -97,9 +97,7 @@ impl WinWindowInner {
         } else if (0xDC00..=0xDFFF).contains(&code_unit) {
             // Low surrogate — join with pending high.
             if let Some(high) = self.pending_high_surrogate.take() {
-                let cp = 0x10000
-                    + (((high - 0xD800) as u32) << 10)
-                    + ((code_unit - 0xDC00) as u32);
+                let cp = 0x10000 + (((high - 0xD800) as u32) << 10) + ((code_unit - 0xDC00) as u32);
                 char::from_u32(cp).map(|c| c.to_string())
             } else {
                 // Orphan low — drop silently.

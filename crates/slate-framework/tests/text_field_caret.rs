@@ -15,8 +15,8 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use slate_framework::EventCtx;
-use slate_framework::app_state::{AppSignal, AppState};
 use slate_framework::app_state::window_state::WindowState;
+use slate_framework::app_state::{AppSignal, AppState};
 use slate_framework::element::AnyElement;
 use slate_framework::elements::Div;
 use slate_framework::event::{ImeCommitEvent, ImeHandlers, ImePreeditEvent};
@@ -25,7 +25,9 @@ use slate_framework::focus::FocusableEntry;
 use slate_framework::ime::{ImeState, Preedit};
 use slate_framework::types::ElementId;
 use slate_framework::view::{IntoAny, View};
-use slate_platform::{DefaultPlatform, PhysicalRect, Platform, Window, WindowId, WindowOptions, wake_run_loop};
+use slate_platform::{
+    DefaultPlatform, PhysicalRect, Platform, Window, WindowId, WindowOptions, wake_run_loop,
+};
 
 // ---------------------------------------------------------------------------
 // Shared helpers (mirrors ime_dispatch.rs)
@@ -54,7 +56,11 @@ fn make_state() -> (Rc<AppState>, WindowId) {
     let executor = Executor::new(redraw_requester.clone());
     let runtime = slate_reactive::Runtime::new();
     let _ = platform;
-    let state = Rc::new(AppState::new(executor, redraw_requester.clone(), runtime.clone()));
+    let state = Rc::new(AppState::new(
+        executor,
+        redraw_requester.clone(),
+        runtime.clone(),
+    ));
     let window_id = window.id();
     {
         let win_state = WindowState::new(window, runtime);

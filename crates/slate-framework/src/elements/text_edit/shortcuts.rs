@@ -102,7 +102,11 @@ pub(crate) fn handle_command_shortcut(
             let _ = shift; // used on macOS only
             let restored = {
                 let mut state = state_rc.borrow_mut();
-                let snap = if is_redo { state.undo.redo() } else { state.undo.undo() };
+                let snap = if is_redo {
+                    state.undo.redo()
+                } else {
+                    state.undo.undo()
+                };
                 if let Some(ref s) = snap {
                     apply_snapshot(&mut state, s);
                     state.desired_x = None;

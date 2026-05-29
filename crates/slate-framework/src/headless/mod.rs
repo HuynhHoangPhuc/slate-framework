@@ -19,7 +19,17 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use wgpu::{BindGroup, Buffer, Device, Queue, RequestDeviceError, Texture, TextureView};
+use crate::event::{Handlers, ImeHandlers, KeyHandlers, MouseHandlers};
+use crate::executor::Executor;
+use crate::focus::FocusRegistry;
+use crate::focus_ring::FocusBounds;
+use crate::hit_test::HitTestList;
+use crate::image_cache::ImageCache;
+use crate::ime::ImeRegistry;
+use crate::layout::LayoutTree;
+use crate::reactive_state::StateRegistry;
+use crate::text_system::TextSystem;
+use crate::types::{AccessibilityNode, ElementId};
 use slate_reactive::{ObserverId, Runtime};
 use slate_renderer::Scene;
 use slate_renderer::atlas::Atlas;
@@ -27,18 +37,8 @@ use slate_renderer::glyph_pipeline::GlyphPipeline;
 use slate_renderer::image_pipeline::ImagePipeline;
 use slate_renderer::instanced_rect_pipeline::InstancedRectPipeline;
 use slate_renderer::shadow_pipeline::ShadowPipeline;
-use crate::event::{Handlers, ImeHandlers, KeyHandlers, MouseHandlers};
-use crate::executor::Executor;
-use crate::focus::FocusRegistry;
-use crate::focus_ring::FocusBounds;
-use crate::hit_test::HitTestList;
 use slate_text::GlyphCache;
-use crate::image_cache::ImageCache;
-use crate::ime::ImeRegistry;
-use crate::layout::LayoutTree;
-use crate::reactive_state::StateRegistry;
-use crate::text_system::TextSystem;
-use crate::types::{AccessibilityNode, ElementId};
+use wgpu::{BindGroup, Buffer, Device, Queue, RequestDeviceError, Texture, TextureView};
 
 /// Headless application for offscreen rendering.
 ///

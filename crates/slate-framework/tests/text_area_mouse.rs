@@ -85,7 +85,11 @@ fn make_state() -> (Rc<AppState>, WindowId) {
     let executor = Executor::new(redraw_requester.clone());
     let runtime = slate_reactive::Runtime::new();
     let _ = platform;
-    let state = Rc::new(AppState::new(executor, redraw_requester.clone(), runtime.clone()));
+    let state = Rc::new(AppState::new(
+        executor,
+        redraw_requester.clone(),
+        runtime.clone(),
+    ));
     let window_id = window.id();
     {
         let win_state = WindowState::new(window, runtime);
@@ -114,11 +118,14 @@ fn three_line_layout() -> slate_text::MultilineLayout {
 fn setup() -> (Rc<AppState>, WindowId, Rc<std::cell::RefCell<ImeState>>) {
     let (state, win) = make_state();
     let elem = ElementId::from_raw(20);
-    state.register_focusable_for_test(win, FocusableEntry {
-        id: elem,
-        tab_index: 0,
-        focus_ring: true,
-    });
+    state.register_focusable_for_test(
+        win,
+        FocusableEntry {
+            id: elem,
+            tab_index: 0,
+            focus_ring: true,
+        },
+    );
     state.set_focus_for_test(win, elem);
 
     let ime_rc = state.register_ime_state_for_test(win, elem);
@@ -134,14 +141,17 @@ fn setup() -> (Rc<AppState>, WindowId, Rc<std::cell::RefCell<ImeState>>) {
     state.republish_ime_cache_for_test(win);
 
     state.install_element_mouse_handlers_for_test(win, elem, build_mouse_handlers_for_test());
-    state.push_hit_region_for_test(win, HitRegion::new(
-        elem,
-        Bounds {
-            origin: Point::new(0.0, 0.0),
-            size: Size::new(1000.0, layout.total_height_lpx),
-        },
-        0,
-    ));
+    state.push_hit_region_for_test(
+        win,
+        HitRegion::new(
+            elem,
+            Bounds {
+                origin: Point::new(0.0, 0.0),
+                size: Size::new(1000.0, layout.total_height_lpx),
+            },
+            0,
+        ),
+    );
     (state, win, ime_rc)
 }
 
@@ -156,7 +166,11 @@ fn check_single_click_places_collapsed_caret() -> Result<(), String> {
     let s = ime_rc.borrow();
     // One click → caret == anchor (collapsed); both inside the word, not snapped.
     ensure_eq!(s.click_count, 1, "single click count");
-    ensure_eq!(Some(s.caret), s.selection_anchor, "single click is collapsed");
+    ensure_eq!(
+        Some(s.caret),
+        s.selection_anchor,
+        "single click is collapsed"
+    );
     ensure!(s.caret < 5, "caret lands inside 'alpha' (bytes 0..5)");
     Ok(())
 }
@@ -196,7 +210,11 @@ fn check_fourth_click_wraps_back_to_caret() -> Result<(), String> {
     let s = ime_rc.borrow();
     // 1→2→3→1: the fourth click re-places a collapsed caret rather than selecting.
     ensure_eq!(s.click_count, 1, "fourth click wraps to single");
-    ensure_eq!(Some(s.caret), s.selection_anchor, "wrapped click is collapsed");
+    ensure_eq!(
+        Some(s.caret),
+        s.selection_anchor,
+        "wrapped click is collapsed"
+    );
     Ok(())
 }
 
@@ -212,7 +230,11 @@ fn check_multi_click_run_survives_capture_release() -> Result<(), String> {
     state.dispatch_mouse_up_for_test(win, (12.0, 4.0), MouseButton::Left, Modifiers::default());
     click(&state, win, 12.0, 4.0);
     let s = ime_rc.borrow();
-    ensure_eq!(s.click_count, 2, "down→up→down preserves the multi-click counter");
+    ensure_eq!(
+        s.click_count,
+        2,
+        "down→up→down preserves the multi-click counter"
+    );
     ensure_eq!(s.selection_anchor, Some(0), "word anchor at 'alpha' start");
     ensure_eq!(s.caret, 5, "word caret at 'alpha' end");
     Ok(())
@@ -229,8 +251,16 @@ fn check_real_capture_loss_still_resets_multi_click_run() -> Result<(), String> 
     let _ = state.dispatch_capture_lost_for_test(win);
     click(&state, win, 12.0, 4.0);
     let s = ime_rc.borrow();
-    ensure_eq!(s.click_count, 1, "real CaptureLost resets the multi-click counter");
-    ensure_eq!(Some(s.caret), s.selection_anchor, "single click is collapsed");
+    ensure_eq!(
+        s.click_count,
+        1,
+        "real CaptureLost resets the multi-click counter"
+    );
+    ensure_eq!(
+        Some(s.caret),
+        s.selection_anchor,
+        "single click is collapsed"
+    );
     Ok(())
 }
 
@@ -238,7 +268,13 @@ fn check_double_click_on_second_line_selects_that_word() -> Result<(), String> {
     let (state, win, ime_rc) = setup();
     // y in line1's band ("beta", bytes 6..10). line_height is uniform; line1's
     // band starts at total_height/3. Click low enough to land on line1.
-    let y = ime_rc.borrow().last_layout.as_ref().unwrap().line_height_lpx * 1.5;
+    let y = ime_rc
+        .borrow()
+        .last_layout
+        .as_ref()
+        .unwrap()
+        .line_height_lpx
+        * 1.5;
     click(&state, win, 8.0, y);
     click(&state, win, 8.0, y);
     let s = ime_rc.borrow();
@@ -254,12 +290,18 @@ fn main() {
             "single_click_places_collapsed_caret",
             check_single_click_places_collapsed_caret,
         ),
-        ("double_click_selects_the_word", check_double_click_selects_the_word),
+        (
+            "double_click_selects_the_word",
+            check_double_click_selects_the_word,
+        ),
         (
             "triple_click_selects_the_visual_line",
             check_triple_click_selects_the_visual_line,
         ),
-        ("fourth_click_wraps_back_to_caret", check_fourth_click_wraps_back_to_caret),
+        (
+            "fourth_click_wraps_back_to_caret",
+            check_fourth_click_wraps_back_to_caret,
+        ),
         (
             "multi_click_run_survives_capture_release",
             check_multi_click_run_survives_capture_release,

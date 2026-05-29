@@ -79,7 +79,11 @@ fn make_state() -> (Rc<AppState>, WindowId) {
     let executor = Executor::new(redraw_requester.clone());
     let runtime = slate_reactive::Runtime::new();
     let _ = platform;
-    let state = Rc::new(AppState::new(executor, redraw_requester.clone(), runtime.clone()));
+    let state = Rc::new(AppState::new(
+        executor,
+        redraw_requester.clone(),
+        runtime.clone(),
+    ));
     let window_id = window.id();
     {
         let win_state = WindowState::new(window, runtime);
@@ -106,11 +110,14 @@ fn three_line_layout() -> slate_text::MultilineLayout {
 fn setup(caret: usize) -> (Rc<AppState>, WindowId, Rc<std::cell::RefCell<ImeState>>) {
     let (state, win) = make_state();
     let elem = ElementId::from_raw(20);
-    state.register_focusable_for_test(win, FocusableEntry {
-        id: elem,
-        tab_index: 0,
-        focus_ring: true,
-    });
+    state.register_focusable_for_test(
+        win,
+        FocusableEntry {
+            id: elem,
+            tab_index: 0,
+            focus_ring: true,
+        },
+    );
     state.set_focus_for_test(win, elem);
 
     let ime_rc = state.register_ime_state_for_test(win, elem);
@@ -190,7 +197,10 @@ fn check_home_through_real_handler_is_visual_line_relative_no_panic() -> Result<
 
 fn main() {
     let cases: &[Case] = &[
-        ("platform_and_window_construct", check_platform_and_window_construct),
+        (
+            "platform_and_window_construct",
+            check_platform_and_window_construct,
+        ),
         (
             "arrow_down_through_real_handler_moves_to_next_line_no_panic",
             check_arrow_down_through_real_handler_moves_to_next_line_no_panic,

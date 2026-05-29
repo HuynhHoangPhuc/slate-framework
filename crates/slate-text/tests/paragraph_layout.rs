@@ -351,7 +351,11 @@ fn shape_words_emits_items_in_order() {
     assert_eq!(items[0].source_byte_range, 0..1);
     assert!(items[1].is_space_run);
     assert_eq!(items[1].source_byte_range, 1..6);
-    assert_eq!(items[1].glyphs.len(), 5, "one glyph per preserved space byte");
+    assert_eq!(
+        items[1].glyphs.len(),
+        5,
+        "one glyph per preserved space byte"
+    );
     assert!(!items[2].is_space_run);
     assert_eq!(items[2].source_byte_range, 6..7);
 
