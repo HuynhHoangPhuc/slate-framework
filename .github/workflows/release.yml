@@ -16,9 +16,57 @@ jobs:
     name: CI checks
     uses: ./.github/workflows/ci.yml
 
+  verify-version:
+    name: Verify workspace version + release notes
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.VERSION }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Check workspace version matches tag
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          WORKSPACE_VERSION=$(awk -F '"' '/^version =/{print $2; exit}' Cargo.toml)
+          if [ "$WORKSPACE_VERSION" != "$VERSION" ]; then
+            echo "::error::Workspace version $WORKSPACE_VERSION != tag version $VERSION"
+            exit 1
+          fi
+
+      - name: Verify release notes file exists
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          NOTES=".github/release-notes/v${VERSION}.md"
+          if [ ! -f "$NOTES" ]; then
+            echo "::error::Release notes file $NOTES not found"
+            exit 1
+          fi
+
+  dry-run-publish:
+    name: cargo publish --dry-run (5 crates, dep order)
+    needs: [ci, verify-version]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Dry-run publish in locked dep order
+        run: |
+          set -euo pipefail
+          for crate in slate-reactive slate-platform slate-renderer slate-text slate-framework; do
+            echo "::group::cargo publish --dry-run -p $crate"
+            cargo publish --dry-run -p "$crate"
+            echo "::endgroup::"
+          done
+
   build-artifacts:
     name: Build (${{ matrix.os }})
-    needs: ci
+    needs: [ci, verify-version]
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -45,10 +93,93 @@ jobs:
           name: primitive-gallery-${{ matrix.target }}
           path: target/release/${{ matrix.artifact }}
 
-  release:
-    name: Create Release
-    needs: build-artifacts
+  publish:
+    name: Publish to crates.io (5 crates, dep order)
+    needs: [dry-run-publish, build-artifacts, verify-version]
     runs-on: ubuntu-latest
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      VERSION: ${{ needs.verify-version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.95.0
+
+      - name: Publish slate-reactive
+        run: cargo publish -p slate-reactive
+      - name: Wait for slate-reactive on crates.io index (max 5min)
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 60); do
+            if cargo search slate-reactive --limit 1 | grep -q "\"$VERSION\""; then
+              echo "slate-reactive $VERSION indexed"; exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::slate-reactive $VERSION never appeared in cargo search after 5min"
+          exit 1
+
+      - name: Publish slate-platform
+        run: cargo publish -p slate-platform
+      - name: Wait for slate-platform on crates.io index (max 5min)
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 60); do
+            if cargo search slate-platform --limit 1 | grep -q "\"$VERSION\""; then
+              echo "slate-platform $VERSION indexed"; exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::slate-platform $VERSION never appeared in cargo search after 5min"
+          exit 1
+
+      - name: Publish slate-renderer
+        run: cargo publish -p slate-renderer
+      - name: Wait for slate-renderer on crates.io index (max 5min)
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 60); do
+            if cargo search slate-renderer --limit 1 | grep -q "\"$VERSION\""; then
+              echo "slate-renderer $VERSION indexed"; exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::slate-renderer $VERSION never appeared in cargo search after 5min"
+          exit 1
+
+      - name: Publish slate-text
+        run: cargo publish -p slate-text
+      - name: Wait for slate-text on crates.io index (max 5min)
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 60); do
+            if cargo search slate-text --limit 1 | grep -q "\"$VERSION\""; then
+              echo "slate-text $VERSION indexed"; exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::slate-text $VERSION never appeared in cargo search after 5min"
+          exit 1
+
+      - name: Publish slate-framework
+        run: cargo publish -p slate-framework
+      - name: Wait for slate-framework on crates.io index (max 5min)
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 60); do
+            if cargo search slate-framework --limit 1 | grep -q "\"$VERSION\""; then
+              echo "slate-framework $VERSION indexed"; exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::slate-framework $VERSION never appeared in cargo search after 5min"
+          exit 1
+
+  release:
+    name: Create GitHub Release
+    needs: [publish, verify-version]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.verify-version.outputs.version }}
     steps:
       - uses: actions/checkout@v6
 
@@ -57,46 +188,11 @@ jobs:
         with:
           path: artifacts
 
-      - name: Extract version from tag
-        id: version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-
-      - name: Extract changelog section
-        id: changelog
-        run: |
-          VERSION="${{ steps.version.outputs.VERSION }}"
-          sed -n "/## \[$VERSION\]/,/## \[/p" CHANGELOG.md | sed '$d' | tail -n +2 > release-notes.md
-
       - name: Create release
         uses: softprops/action-gh-release@v3
         with:
-          name: v${{ steps.version.outputs.VERSION }}
-          body_path: release-notes.md
+          name: v${{ env.VERSION }}
+          body_path: .github/release-notes/v${{ env.VERSION }}.md
           files: artifacts/**/*
           draft: false
           prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
-
-  publish:
-    name: Publish to crates.io
-    needs: release
-    runs-on: ubuntu-latest
-    env:
-      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-    steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@1.95.0
-
-      - name: Publish slate-platform
-        run: cargo publish -p slate-platform
-
-      - name: Wait for crates.io index
-        run: sleep 30
-
-      - name: Publish slate-renderer
-        run: cargo publish -p slate-renderer
-
-      - name: Wait for crates.io index
-        run: sleep 30
-
-      - name: Publish slate-framework
-        run: cargo publish -p slate-framework
