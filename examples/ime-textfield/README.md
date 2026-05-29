@@ -6,7 +6,7 @@ re-renders whenever the value changes. Switch your OS input method to a CJK IME
 and the field shows preedit composition (underlined provisional text + system
 candidate window) before the commit.
 
-> Validated 2026-05-28 on Windows 11 24H2 (prior: 2026-05-17 macOS 15.x + Win11). macOS re-validation in flight (this wave).
+> Validated 2026-05-28 on Windows 11 24H2 + macOS 15.x.
 
 ## Run
 

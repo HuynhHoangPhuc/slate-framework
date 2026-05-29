@@ -5,7 +5,7 @@ Headline demo for slate's reactive runtime + focus model. Three focusable
 Card 1 also has a background async task that increments it once per second to
 prove the reactive subscription stays live without user input.
 
-> Validated 2026-05-28 on Windows 11 24H2. macOS validation in flight (this wave).
+> Validated 2026-05-28 on Windows 11 24H2 + macOS 15.x.
 
 ## Run
 
