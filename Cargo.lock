@@ -52,7 +52,7 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
 name = "anchor-md-to-png"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "env_logger",
  "image",
@@ -540,7 +540,7 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "click-counter"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "env_logger",
  "log",
@@ -666,7 +666,7 @@ checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
 name = "dense-image-gallery"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "env_logger",
  "log",
@@ -1112,7 +1112,7 @@ checksum = "4f467dd6dccf739c208452f8014c75c18bb8301b050ad1cfb27153803edb0f51"
 
 [[package]]
 name = "hello-element"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "env_logger",
  "log",
@@ -1121,7 +1121,7 @@ dependencies = [
 
 [[package]]
 name = "hello-rect"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "env_logger",
  "log",
@@ -1188,7 +1188,7 @@ dependencies = [
 
 [[package]]
 name = "ime-textfield"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "env_logger",
  "log",
@@ -1443,9 +1443,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.29"
+version = "0.4.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
+checksum = "616ec5685824bcc94416c6d4a7a446eea774a31efd7062c8480ba6fd06d7a6e5"
 
 [[package]]
 name = "loop9"
@@ -1974,7 +1974,7 @@ checksum = "e8cf8e6a8aa66ce33f63993ffc4ea4271eb5b0530a9002db8455ea6050c77bfa"
 
 [[package]]
 name = "primitive-gallery"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "env_logger",
  "log",
@@ -2192,7 +2192,7 @@ dependencies = [
 
 [[package]]
 name = "reactive-counter"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "env_logger",
  "log",
@@ -2201,7 +2201,7 @@ dependencies = [
 
 [[package]]
 name = "recovery-gallery"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "env_logger",
  "log",
@@ -2421,7 +2421,7 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "slate-bench"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "criterion",
  "slate-framework",
@@ -2429,7 +2429,7 @@ dependencies = [
 
 [[package]]
 name = "slate-framework"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "accesskit",
  "async-compat",
@@ -2457,7 +2457,7 @@ dependencies = [
 
 [[package]]
 name = "slate-platform"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "dispatch",
  "log",
@@ -2472,7 +2472,7 @@ dependencies = [
 
 [[package]]
 name = "slate-reactive"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "log",
  "parking_lot",
@@ -2481,7 +2481,7 @@ dependencies = [
 
 [[package]]
 name = "slate-renderer"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "bytemuck",
  "etagere",
@@ -2499,7 +2499,7 @@ dependencies = [
 
 [[package]]
 name = "slate-text"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "bytemuck",
  "dirs",
@@ -2638,7 +2638,7 @@ dependencies = [
 
 [[package]]
 name = "textarea"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "env_logger",
  "log",
@@ -2851,7 +2851,7 @@ checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
 
 [[package]]
 name = "two-window-counters"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "env_logger",
  "log",
@@ -3207,7 +3207,7 @@ dependencies = [
 
 [[package]]
 name = "win-dcomp-spike"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "pollster",
  "wgpu",
