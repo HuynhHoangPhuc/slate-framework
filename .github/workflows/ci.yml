@@ -25,7 +25,7 @@ jobs:
         os: [macos-26, windows-2025-vs2026]
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@1.100.0
+      - uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
@@ -40,7 +40,7 @@ jobs:
         os: [macos-26, windows-2025-vs2026]
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@1.100.0
+      - uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
@@ -51,7 +51,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@1.100.0
+      - uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: rustfmt
       - run: cargo fmt --all -- --check
@@ -61,7 +61,7 @@ jobs:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@1.100.0
+      - uses: dtolnay/rust-toolchain@1.95.0
         with:
           targets: x86_64-pc-windows-msvc
       - uses: Swatinem/rust-cache@v2
@@ -94,7 +94,7 @@ jobs:
         os: [macos-26, windows-2025-vs2026]
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@1.100.0
+      - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --all-targets --release
 
@@ -109,7 +109,7 @@ jobs:
         os: [macos-26, windows-2025-vs2026]
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@1.100.0
+      - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
       # Skip-baseline lint: fail if the count of `#[ignore]`-marked tests
       # drifts above the committed baseline. Prevents silent test-skip
