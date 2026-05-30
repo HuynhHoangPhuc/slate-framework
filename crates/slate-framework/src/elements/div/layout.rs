@@ -15,6 +15,35 @@ use crate::types::{
 
 use super::{Div, DivLayoutState, DivPaintState};
 
+impl Div {
+    /// Resolve the painted background + corner radius against the current
+    /// interaction state. Returns the base visual unchanged when there are no
+    /// per-state overrides — the zero-cost fast path that performs no state
+    /// lookups and paints byte-identically to a plain styled `Div`.
+    ///
+    /// Resolution order is base → hover → active(pressed) → disabled, so a
+    /// disabled override always wins.
+    fn resolved_visual(&self, cx: &PaintCtx) -> (Option<[f32; 4]>, f32) {
+        let mut background = self.visual.background;
+        let mut corner_radius = self.visual.corner_radius;
+        let Some(styles) = self.state_styles.as_deref() else {
+            return (background, corner_radius);
+        };
+        if let Some(id) = self.last_id {
+            if cx.is_hovered(id) {
+                styles.hover.apply(&mut background, &mut corner_radius);
+            }
+            if cx.is_pressed(id) {
+                styles.active.apply(&mut background, &mut corner_radius);
+            }
+        }
+        if self.disabled {
+            styles.disabled.apply(&mut background, &mut corner_radius);
+        }
+        (background, corner_radius)
+    }
+}
+
 impl Element for Div {
     type LayoutState = DivLayoutState;
     type PaintState = DivPaintState;
@@ -65,45 +94,52 @@ impl Element for Div {
         let element_id = cx.allocate_id::<Div>();
         self.last_id = Some(element_id);
 
+        // Disabled elements are non-interactive: skip registering event,
+        // keyboard, IME, and focus participation so dispatch never reaches them
+        // (the hit region below is still registered so they block fall-through).
+        let interactive = !self.disabled;
+
         // Register event handlers for dispatch
-        cx.register_handlers(
-            element_id,
-            Handlers {
-                on_click: self.on_click.clone(),
-                on_mouse_down: self.on_mouse_down.clone(),
-                on_mouse_up: self.on_mouse_up.clone(),
-                on_mouse_move: self.on_mouse_move.clone(),
-                on_mouse_scrolled: self.on_mouse_scrolled.clone(),
-                on_pointer_event: self.on_pointer_event.clone(),
-                on_pointer_enter: self.on_pointer_enter.clone(),
-                on_pointer_leave: self.on_pointer_leave.clone(),
-            },
-        );
-
-        // Register per-element keyboard handlers + focusable entry.
-        cx.register_key_handlers(
-            element_id,
-            KeyHandlers {
-                on_key_down: self.on_key_down.clone(),
-                on_key_up: self.on_key_up.clone(),
-                on_text_input: self.on_text_input.clone(),
-            },
-        );
-
-        // Register IME state + handlers when the element opts in.
-        if self.ime_capable {
-            cx.register_ime_state(element_id);
-            cx.register_ime_handlers(
+        if interactive {
+            cx.register_handlers(
                 element_id,
-                crate::event::ImeHandlers {
-                    on_ime_preedit: self.on_ime_preedit.clone(),
-                    on_ime_commit: self.on_ime_commit.clone(),
-                    on_ime_enabled: None,
-                    on_ime_disabled: None,
+                Handlers {
+                    on_click: self.on_click.clone(),
+                    on_mouse_down: self.on_mouse_down.clone(),
+                    on_mouse_up: self.on_mouse_up.clone(),
+                    on_mouse_move: self.on_mouse_move.clone(),
+                    on_mouse_scrolled: self.on_mouse_scrolled.clone(),
+                    on_pointer_event: self.on_pointer_event.clone(),
+                    on_pointer_enter: self.on_pointer_enter.clone(),
+                    on_pointer_leave: self.on_pointer_leave.clone(),
                 },
             );
+
+            // Register per-element keyboard handlers + focusable entry.
+            cx.register_key_handlers(
+                element_id,
+                KeyHandlers {
+                    on_key_down: self.on_key_down.clone(),
+                    on_key_up: self.on_key_up.clone(),
+                    on_text_input: self.on_text_input.clone(),
+                },
+            );
+
+            // Register IME state + handlers when the element opts in.
+            if self.ime_capable {
+                cx.register_ime_state(element_id);
+                cx.register_ime_handlers(
+                    element_id,
+                    crate::event::ImeHandlers {
+                        on_ime_preedit: self.on_ime_preedit.clone(),
+                        on_ime_commit: self.on_ime_commit.clone(),
+                        on_ime_enabled: None,
+                        on_ime_disabled: None,
+                    },
+                );
+            }
         }
-        if self.focusable {
+        if self.focusable && interactive {
             cx.register_focusable(
                 FocusableEntry {
                     id: element_id,
@@ -175,9 +211,14 @@ impl Element for Div {
         _paint_state: &mut Self::PaintState,
         cx: &mut PaintCtx,
     ) {
+        // Resolve the painted visual against interaction state. The fast path
+        // (no per-state overrides) skips all state lookups and is byte-identical
+        // to a plain styled Div.
+        let (background, corner_radius) = self.resolved_visual(cx);
+
         // Paint background if set. Scene wire format is in logical pixels;
         // the renderer's viewport maps lpx → NDC, so no `* scale_factor` here.
-        if let Some(color) = self.visual.background {
+        if let Some(color) = background {
             cx.scene.push_rect(RectInstance {
                 rect: [
                     Lpx(bounds.origin.x),
@@ -186,7 +227,7 @@ impl Element for Div {
                     Lpx(bounds.size.height),
                 ],
                 color,
-                corner_radius: Lpx(self.visual.corner_radius),
+                corner_radius: Lpx(corner_radius),
                 _pad: [0.0; 3],
             });
         }
@@ -204,6 +245,7 @@ impl Element for Div {
     fn accessibility(&self) -> Option<AccessibilityInfo> {
         Some(AccessibilityInfo {
             role: AccessibilityRole::Group,
+            is_disabled: self.disabled,
             ..Default::default()
         })
     }

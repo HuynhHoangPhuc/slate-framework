@@ -3,6 +3,7 @@
 use taffy::prelude::*;
 
 use crate::color::Color;
+use crate::interaction_state::{StateStyle, StateStyles};
 use crate::reactive_value::Reactive;
 use crate::style::Style;
 
@@ -37,6 +38,44 @@ impl Div {
     pub fn corner_radius(mut self, radius: impl Into<Reactive<f32>>) -> Self {
         let value: Reactive<f32> = radius.into();
         self.visual.corner_radius = value.resolve();
+        self
+    }
+
+    /// Style overrides applied while the pointer is over this element (or a
+    /// descendant). Falls back to the base style for any field left unset.
+    ///
+    /// # Example
+    /// ```ignore
+    /// Div::new().background(Color::WHITE).hover(|s| s.background(Color::BLUE))
+    /// ```
+    pub fn hover(mut self, f: impl FnOnce(StateStyle) -> StateStyle) -> Self {
+        let styles = self.state_styles.get_or_insert_with(|| Box::new(StateStyles::default()));
+        styles.hover = f(std::mem::take(&mut styles.hover));
+        self
+    }
+
+    /// Style overrides applied while a primary-button press is active on this
+    /// element (the "pressed"/`:active` state).
+    pub fn active(mut self, f: impl FnOnce(StateStyle) -> StateStyle) -> Self {
+        let styles = self.state_styles.get_or_insert_with(|| Box::new(StateStyles::default()));
+        styles.active = f(std::mem::take(&mut styles.active));
+        self
+    }
+
+    /// Style overrides applied while the element is [disabled](Self::disabled).
+    /// Disabled wins over hover/active when resolving the painted style.
+    pub fn disabled_style(mut self, f: impl FnOnce(StateStyle) -> StateStyle) -> Self {
+        let styles = self.state_styles.get_or_insert_with(|| Box::new(StateStyles::default()));
+        styles.disabled = f(std::mem::take(&mut styles.disabled));
+        self
+    }
+
+    /// Mark this element disabled. A disabled element registers no event,
+    /// focus, or IME handlers (so it ignores clicks, hover callbacks, and Tab),
+    /// paints its [`disabled_style`](Self::disabled_style) override, and reports
+    /// `is_disabled` to AccessKit.
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
         self
     }
 

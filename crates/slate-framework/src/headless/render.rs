@@ -117,6 +117,19 @@ impl HeadlessApp {
         #[cfg(feature = "profiling")]
         let _paint_start = std::time::Instant::now();
         self.scene.clear();
+
+        // Resolve the simulated pointer to a hover/press target via the hit
+        // regions registered during the prepaint above, mirroring the windowed
+        // hover-diff that runs before the paint pass.
+        let interaction = {
+            let hovered = self.cursor_pos.and_then(|(x, y)| {
+                self.hit_test_list
+                    .hit_test(crate::types::Point::new(x, y))
+                    .map(|r| r.element_id)
+            });
+            let pressed = if self.pressing { hovered } else { None };
+            crate::interaction_state::InteractionSnapshot::new(hovered, pressed, &self.parent_map)
+        };
         {
             let mut cx = PaintCtx::new(
                 self.layout_tree.inner(),
@@ -131,6 +144,7 @@ impl HeadlessApp {
                 self.scale_factor,
                 &self.ime_registry,
                 None,
+                interaction,
             );
             root.paint(root_bounds, &mut cx);
         }

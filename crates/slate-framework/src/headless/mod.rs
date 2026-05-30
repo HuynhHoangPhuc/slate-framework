@@ -109,6 +109,13 @@ pub struct HeadlessApp {
     ime_registry: RefCell<ImeRegistry>,
     ime_handler_map: HashMap<ElementId, ImeHandlers>,
     ime_registered_ids: HashSet<ElementId>,
+
+    // Simulated pointer state for interaction-state styling tests. The cursor
+    // position is hit-tested against the prepaint hit regions just before the
+    // paint pass (mirroring the windowed hover-diff), so hover/press style
+    // overrides resolve without a real platform event loop.
+    cursor_pos: Option<(f32, f32)>,
+    pressing: bool,
 }
 
 /// Error creating or rendering with HeadlessApp.
@@ -213,5 +220,19 @@ impl HeadlessApp {
     pub fn set_ime_state(&mut self, id: ElementId, state: crate::ime::ImeState) {
         let rc = self.ime_registry.borrow_mut().register(id);
         *rc.borrow_mut() = state;
+    }
+
+    /// Simulate the pointer position (logical pixels) for interaction-state
+    /// styling. The next `render`/`render_view` hit-tests this point to drive
+    /// `hover` (and `active` when [`set_pressing`](Self::set_pressing) is set)
+    /// style overrides. Pass `None` to clear the cursor.
+    pub fn set_cursor(&mut self, pos: Option<(f32, f32)>) {
+        self.cursor_pos = pos;
+    }
+
+    /// Simulate the primary mouse button being held, so the element under the
+    /// cursor resolves its `active` (pressed) style override on the next render.
+    pub fn set_pressing(&mut self, pressing: bool) {
+        self.pressing = pressing;
     }
 }

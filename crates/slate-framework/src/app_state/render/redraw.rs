@@ -242,6 +242,24 @@ impl AppState {
             // WindowState::glyph_cache docs.
             let mut gc = win.glyph_cache.borrow_mut();
             let mut ic = win.image_cache.borrow_mut();
+
+            // Interaction-state snapshot for per-state style resolution. Hover
+            // comes from the just-updated hover diff; press is the auto-capture
+            // target while the primary (left) button is held. Explicit (sticky)
+            // capture is excluded — it can point at an element that was never
+            // pressed, which must not light up `:active`.
+            let interaction = {
+                let hovered = *win.hovered_element.borrow();
+                let left_down = (*win.button_state.borrow() & 0b1) != 0;
+                let pressed = if left_down && !*win.explicit_capture.borrow() {
+                    *win.capture_target.borrow()
+                } else {
+                    None
+                };
+                let pm = win.parent_map.borrow();
+                crate::interaction_state::InteractionSnapshot::new(hovered, pressed, &pm)
+            };
+
             let mut cx = PaintCtx::new(
                 tree.inner(),
                 &mut s,
@@ -255,6 +273,7 @@ impl AppState {
                 scale_factor,
                 &ime_rc_for_paint,
                 Some(window_arc_for_paint.as_ref()),
+                interaction,
             );
 
             root.paint(root_bounds, &mut cx);

@@ -15,6 +15,7 @@ use crate::element::{AnyElement, IntoElement, Sealed};
 use crate::event::{
     ElementKeyHandler, ElementTextInputHandler, MouseHandler, PointerHandler, ScrollHandler,
 };
+use crate::interaction_state::StateStyles;
 use crate::style::Style;
 use crate::types::ElementId;
 
@@ -34,6 +35,14 @@ pub struct Div {
     pub(super) children: Vec<AnyElement>,
     pub(super) layout_style: Style,
     pub(super) visual: DivVisual,
+    /// Per-interaction-state visual overrides (hover/active/disabled).
+    /// `None` keeps the zero-cost fast path: no allocation, no state lookup
+    /// at paint, byte-identical to a plain styled `Div`.
+    pub(super) state_styles: Option<Box<StateStyles>>,
+    /// When true the element is non-interactive: handlers/focus/IME are not
+    /// registered during prepaint, the disabled style override wins at paint,
+    /// and `is_disabled` is reported to AccessKit.
+    pub(super) disabled: bool,
     /// User-provided stability key for dynamic lists (consumed during prepaint).
     pub(super) user_key: Option<String>,
     /// Stable ElementId allocated during prepaint (available after prepaint).

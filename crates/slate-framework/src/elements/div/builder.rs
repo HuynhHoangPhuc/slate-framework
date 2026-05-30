@@ -12,6 +12,8 @@ impl Div {
             children: Vec::new(),
             layout_style: Style::default(),
             visual: DivVisual::default(),
+            state_styles: None,
+            disabled: false,
             user_key: None,
             last_id: None,
             on_click: None,

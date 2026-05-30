@@ -210,6 +210,8 @@ impl HeadlessApp {
             ime_registry: RefCell::new(ImeRegistry::new()),
             ime_handler_map: HashMap::new(),
             ime_registered_ids: HashSet::new(),
+            cursor_pos: None,
+            pressing: false,
         })
     }
 }

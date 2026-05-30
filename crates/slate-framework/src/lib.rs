@@ -50,6 +50,7 @@ pub mod headless;
 pub mod hit_test;
 pub(crate) mod image_cache;
 pub mod ime;
+pub mod interaction_state;
 pub mod layout;
 pub(crate) mod paint_cache;
 #[cfg(feature = "profiling")]
@@ -79,6 +80,7 @@ pub use event::{
     TextInputEvent, TextInputHandler,
 };
 pub use headless::{HeadlessApp, HeadlessError};
+pub use interaction_state::StateStyle;
 pub use reactive_value::Reactive;
 pub use render_cx::RenderCx;
 

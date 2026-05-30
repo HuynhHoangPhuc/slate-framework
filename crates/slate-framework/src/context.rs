@@ -23,6 +23,7 @@ use crate::focus_ring::FocusBounds;
 use crate::hit_test::{HitRegion, HitTestList};
 use crate::image_cache::ImageCache;
 use crate::ime::ImeRegistry;
+use crate::interaction_state::InteractionSnapshot;
 use crate::paint_cache::TextShapingCache;
 use crate::reactive_state::StateRegistry;
 use crate::text_system::TextSystem;
@@ -465,6 +466,9 @@ pub struct PaintCtx<'a> {
     /// Platform window, when one is attached. Animations (caret blink, etc.)
     /// call `schedule_redraw_at` through here. `None` in headless rendering.
     pub(crate) window: Option<&'a dyn slate_platform::Window>,
+    /// Hover/press chains for this frame, used to resolve interaction-state
+    /// style overrides. Built after the hover diff, before the paint walk.
+    pub(crate) interaction: InteractionSnapshot,
 }
 
 impl<'a> PaintCtx<'a> {
@@ -483,6 +487,7 @@ impl<'a> PaintCtx<'a> {
         scale_factor: f64,
         ime_registry: &'a RefCell<ImeRegistry>,
         window: Option<&'a dyn slate_platform::Window>,
+        interaction: InteractionSnapshot,
     ) -> Self {
         Self {
             taffy,
@@ -497,7 +502,18 @@ impl<'a> PaintCtx<'a> {
             scale_factor,
             ime_registry,
             window,
+            interaction,
         }
+    }
+
+    /// True when `id` is the hovered element or an ancestor of it this frame.
+    pub(crate) fn is_hovered(&self, id: ElementId) -> bool {
+        self.interaction.is_hovered(id)
+    }
+
+    /// True when `id` is the pressed element or an ancestor of it this frame.
+    pub(crate) fn is_pressed(&self, id: ElementId) -> bool {
+        self.interaction.is_pressed(id)
     }
 
     /// Request a one-shot redraw at `deadline`. No-op in headless mode (no
