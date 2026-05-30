@@ -150,6 +150,87 @@ pub struct GlyphInstance {
 const _: () = assert!(core::mem::size_of::<GlyphInstance>() == 64);
 
 // =====================================================================
+// ClipRect
+// =====================================================================
+
+/// An axis-aligned clip rectangle in **logical pixels** (lpx).
+///
+/// Carried per [`Layer`]; the renderer translates it into a `wgpu` scissor
+/// rect (physical pixels) before recording that layer's draws, so every
+/// primitive in the layer is masked to this rectangle. `None` on a layer means
+/// "no clip" (full viewport).
+///
+/// Nesting (scroll-inside-scroll) is expressed by feeding an already-
+/// intersected rect — use [`ClipRect::intersect`] to combine a parent clip
+/// with a child's bounds. Keeping the intersection in the caller leaves the
+/// renderer's per-frame loop a dumb "one scissor per layer" walk.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct ClipRect {
+    /// Left edge, logical pixels (top-left origin, +Y down).
+    pub x: Lpx,
+    /// Top edge, logical pixels.
+    pub y: Lpx,
+    /// Width, logical pixels. Always `>= 0` for a valid clip.
+    pub w: Lpx,
+    /// Height, logical pixels. Always `>= 0` for a valid clip.
+    pub h: Lpx,
+}
+
+impl ClipRect {
+    /// Construct a clip rect from logical-pixel `x, y, w, h`.
+    pub fn new(x: Lpx, y: Lpx, w: Lpx, h: Lpx) -> Self {
+        Self { x, y, w, h }
+    }
+
+    /// Intersect two clip rects. A non-overlapping pair yields a zero-area
+    /// rect (`w == 0` or `h == 0`), which the renderer treats as "draw
+    /// nothing for this layer". This is the nesting primitive: a child scroll
+    /// container clips to `parent.intersect(child_bounds)`.
+    pub fn intersect(&self, other: &ClipRect) -> ClipRect {
+        let x0 = self.x.0.max(other.x.0);
+        let y0 = self.y.0.max(other.y.0);
+        let x1 = (self.x.0 + self.w.0).min(other.x.0 + other.w.0);
+        let y1 = (self.y.0 + self.h.0).min(other.y.0 + other.h.0);
+        ClipRect {
+            x: Lpx(x0),
+            y: Lpx(y0),
+            w: Lpx((x1 - x0).max(0.0)),
+            h: Lpx((y1 - y0).max(0.0)),
+        }
+    }
+
+    /// Convert this logical-pixel clip into an integer **physical-pixel**
+    /// scissor rect, scaled by `scale` (= physical / logical) and clamped to
+    /// the `target_w × target_h` attachment.
+    ///
+    /// Returns `None` when the clip is fully off-screen or degenerate (zero
+    /// area after clamping) — the caller should then skip the layer's draws
+    /// entirely rather than issue a zero-area scissor.
+    pub fn to_scissor_px(
+        &self,
+        scale: f32,
+        target_w: u32,
+        target_h: u32,
+    ) -> Option<(u32, u32, u32, u32)> {
+        // Round the edges (not pos+size independently) so adjacent clips share
+        // a seam without a 1px gap or overlap.
+        let left = (self.x.0 * scale).round().max(0.0);
+        let top = (self.y.0 * scale).round().max(0.0);
+        let right = ((self.x.0 + self.w.0) * scale).round().min(target_w as f32);
+        let bottom = ((self.y.0 + self.h.0) * scale).round().min(target_h as f32);
+        if right <= left || bottom <= top {
+            return None;
+        }
+        Some((
+            left as u32,
+            top as u32,
+            (right - left) as u32,
+            (bottom - top) as u32,
+        ))
+    }
+}
+
+// =====================================================================
 // Layer
 // =====================================================================
 
@@ -168,17 +249,21 @@ pub struct Layer {
     pub images: Range<u32>,
     /// Range into [`Scene::glyphs`] belonging to this layer.
     pub glyphs: Range<u32>,
+    /// Optional clip rect (logical pixels). `None` = no clip (full viewport).
+    /// The renderer applies this as a scissor rect around the layer's draws.
+    pub clip: Option<ClipRect>,
 }
 
 impl Layer {
     /// New layer anchored at the supplied vec lengths (all four ranges
-    /// `start..start`, i.e. empty).
+    /// `start..start`, i.e. empty), with no clip.
     fn anchored(rect_len: u32, shadow_len: u32, image_len: u32, glyph_len: u32) -> Self {
         Self {
             rects: rect_len..rect_len,
             shadows: shadow_len..shadow_len,
             images: image_len..image_len,
             glyphs: glyph_len..glyph_len,
+            clip: None,
         }
     }
 }

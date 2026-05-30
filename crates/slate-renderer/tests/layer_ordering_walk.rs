@@ -144,12 +144,14 @@ fn multi_layer_overlap_resolves_via_painter_order() {
             shadows: 0..0,
             images: 0..1,
             glyphs: 0..0,
+            clip: None,
         },
         Layer {
             rects: 1..1,
             shadows: 0..0,
             images: 1..2,
             glyphs: 0..0,
+            clip: None,
         },
     ];
 

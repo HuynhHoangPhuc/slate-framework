@@ -143,8 +143,34 @@ impl Renderer {
             // strategy (depth buckets, BoundsTree) can be swapped post-v1
             // without touching this pass-recording code. The default is the v1
             // painter's walk; monomorphized here, so no per-frame vtable.
+            //
+            // Clip: each layer may carry an `Option<ClipRect>` (logical px).
+            // The scissor is render-pass state, so we update it once per layer
+            // (when the layer index changes — `for_each_draw` yields a layer's
+            // four primitive kinds consecutively, which the `idx != last_idx`
+            // guard relies on; both shipped orderings emit per-layer kinds back
+            // to back). A `None` clip resets to the full attachment; a clip
+            // that lands fully off-screen skips the layer's draws entirely.
+            let (target_w, target_h) = self._window.physical_size();
+            let scale = self._window.scale_factor() as f32;
+            let mut last_idx = usize::MAX;
+            let mut skip_layer = false;
             DefaultPainterOrder.for_each_draw(scene.layers.len(), |idx, kind| {
                 let layer = &scene.layers[idx];
+                if idx != last_idx {
+                    last_idx = idx;
+                    skip_layer = false;
+                    match layer.clip {
+                        Some(clip) => match clip.to_scissor_px(scale, target_w, target_h) {
+                            Some((x, y, w, h)) => pass.set_scissor_rect(x, y, w, h),
+                            None => skip_layer = true,
+                        },
+                        None => pass.set_scissor_rect(0, 0, target_w.max(1), target_h.max(1)),
+                    }
+                }
+                if skip_layer {
+                    return;
+                }
                 match kind {
                     ScenePrimitive::Shadow => self.shadow_pipeline.record(
                         &mut pass,

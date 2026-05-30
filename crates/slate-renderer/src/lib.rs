@@ -82,7 +82,7 @@ pub use pipeline_shared::{ViewportUniform, create_unit_quad, viewport_bind_group
 pub use shadow_pipeline::ShadowPipeline;
 
 // Re-exports from scene
-pub use scene::{GlyphInstance, ImageInstance, Layer, RectInstance, Scene, ShadowInstance};
+pub use scene::{ClipRect, GlyphInstance, ImageInstance, Layer, RectInstance, Scene, ShadowInstance};
 
 // Re-exports from device_lost_reason
 pub use device_lost_reason::DeviceLostReason;

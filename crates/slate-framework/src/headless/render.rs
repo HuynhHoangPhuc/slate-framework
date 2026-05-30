@@ -197,7 +197,22 @@ impl HeadlessApp {
                 multiview_mask: None::<NonZeroU32>,
             });
 
+            // Clip: mirror the windowed submit path — one scissor update per
+            // layer, `None` resets to the full attachment, an off-screen clip
+            // skips the layer. `width`/`height` are the headless layout size;
+            // this is exact at `scale_factor == 1.0` (every current headless
+            // test). A DPI-aware (scale != 1.0) headless clip test would need
+            // a separate physical target size — revisit when one is added.
+            let (target_w, target_h) = (self.width, self.height);
+            let scale = self.scale_factor as f32;
             for layer in &self.scene.layers {
+                match layer.clip {
+                    Some(clip) => match clip.to_scissor_px(scale, target_w, target_h) {
+                        Some((x, y, w, h)) => pass.set_scissor_rect(x, y, w, h),
+                        None => continue,
+                    },
+                    None => pass.set_scissor_rect(0, 0, target_w.max(1), target_h.max(1)),
+                }
                 self.shadow_pipeline.record(
                     &mut pass,
                     &self.viewport_bg,
