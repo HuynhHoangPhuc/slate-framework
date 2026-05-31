@@ -199,6 +199,10 @@ impl AppState {
             );
 
             fr.prune_missing();
+            // Modal focus lifecycle: auto-focus into newly-opened modals, restore
+            // prior focus when one closes. Runs after prune so a restore target
+            // that was unmounted is correctly skipped.
+            fr.reconcile_modal_focus(&mut win.modal_focus_stack.borrow_mut());
             win.ime_registry.borrow_mut().prune_missing(&iri);
             AppState::release_capture_if_unmounted(win, &hit);
         }
@@ -292,6 +296,10 @@ impl AppState {
                 drop(registry);
                 if show_ring && let Some(info) = win2.focus_bounds.borrow().get(&id).copied() {
                     let mut s = win2.scene.borrow_mut();
+                    // Emit into a top-most layer so a ring on an element *inside*
+                    // an overlay sorts above the overlay (overlays use high depth;
+                    // the post-walk default layer is depth 0).
+                    s.push_layer_with_depth(i32::MAX);
                     crate::focus_ring::emit_focus_ring(&mut s, info);
                 }
             }

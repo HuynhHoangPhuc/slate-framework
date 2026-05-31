@@ -1,5 +1,8 @@
 //! Overlay `Element` impl — absolute layout, anchor-solved translated paint.
 
+use slate_renderer::Lpx;
+use slate_renderer::scene::RectInstance;
+
 use crate::context::{LayoutCtx, PaintCtx, PrepaintCtx};
 use crate::element::Element;
 use crate::layout::resolve_child_bounds;
@@ -8,6 +11,11 @@ use crate::types::{Bounds, ElementId, LayoutId, NodeContext, Point};
 
 use super::anchor::solve;
 use super::{Overlay, OverlayLayoutState, OverlayPaintState};
+
+/// Modal scrim color — semi-transparent black, linear premultiplied per the
+/// renderer's [`RectInstance`] contract (rgb already multiplied by alpha; black
+/// stays `0`).
+const SCRIM_COLOR: [f32; 4] = [0.0, 0.0, 0.0, 0.4];
 
 impl Overlay {
     /// Absolute origin the content child paints at this frame, plus the delta
@@ -68,6 +76,11 @@ impl Element for Overlay {
         let translate = self.paint_translation(bounds.origin, solved);
 
         cx.push_frame(element_id);
+        // Modal: bracket the content so its focusables are trap-scoped to this
+        // overlay (keyboard focus cannot escape while it is the deepest modal).
+        if self.modal {
+            cx.enter_focus_trap(element_id, self.depth);
+        }
         if let Some(content) = self.content.as_mut()
             && let Some(mut cb) = resolve_child_bounds(cx.taffy, node, 0, bounds.origin)
         {
@@ -75,10 +88,14 @@ impl Element for Overlay {
             cb.origin.y += translate.y;
             content.prepaint(cb, cx);
         }
+        if self.modal {
+            cx.exit_focus_trap();
+        }
         cx.pop_frame();
 
         OverlayPaintState {
             solved_origin: solved,
+            viewport: cx.viewport,
         }
     }
 
@@ -95,6 +112,17 @@ impl Element for Overlay {
         // Paint content into a high-depth, unclipped layer: on top of the base
         // tree and free of any ancestor scroll-clip.
         cx.push_overlay_layer(self.depth);
+        // Modal scrim: a full-viewport dim drawn first into the overlay layer so
+        // it sits below the content but above everything at lower depth.
+        if self.modal {
+            let vp = paint_state.viewport;
+            cx.scene.push_rect(RectInstance {
+                rect: [Lpx(0.0), Lpx(0.0), Lpx(vp.width), Lpx(vp.height)],
+                color: SCRIM_COLOR,
+                corner_radius: Lpx(0.0),
+                _pad: [0.0; 3],
+            });
+        }
         if let Some(content) = self.content.as_mut()
             && let Some(mut cb) = resolve_child_bounds(cx.taffy, node, 0, bounds.origin)
         {

@@ -103,6 +103,10 @@ pub struct WindowState {
     /// dispatch walks against.
     pub(crate) focus_registry: Rc<RefCell<FocusRegistry>>,
     pub(crate) focus_bounds: RefCell<HashMap<ElementId, FocusBounds>>,
+    /// Open modal overlays as `(modal_id, focus_to_restore)`, in open order.
+    /// Reconciled each frame after the prepaint walk to auto-focus into newly
+    /// opened modals and restore prior focus when one closes.
+    pub(crate) modal_focus_stack: RefCell<Vec<(ElementId, Option<ElementId>)>>,
 
     // -- IME -------------------------------------------------------------
     /// Wrapped in `Rc` so dispatch loops can clone a reference out before
@@ -179,6 +183,7 @@ impl WindowState {
             key_handler_map: RefCell::new(HashMap::new()),
             focus_registry: Rc::new(RefCell::new(FocusRegistry::new())),
             focus_bounds: RefCell::new(HashMap::new()),
+            modal_focus_stack: RefCell::new(Vec::new()),
             ime_registry: Rc::new(RefCell::new(ImeRegistry::new())),
             ime_handler_map: RefCell::new(HashMap::new()),
             ime_registered_ids: RefCell::new(HashSet::new()),

@@ -207,6 +207,7 @@ impl HeadlessApp {
             key_handler_map,
             focus_registry,
             focus_bounds,
+            modal_focus_stack: Vec::new(),
             ime_registry: RefCell::new(ImeRegistry::new()),
             ime_handler_map: HashMap::new(),
             ime_registered_ids: HashSet::new(),

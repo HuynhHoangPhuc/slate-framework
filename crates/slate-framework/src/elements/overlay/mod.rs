@@ -51,7 +51,7 @@ pub use anchor::{Align, Placement, Side};
 
 use crate::element::{AnyElement, IntoElement, Sealed};
 use crate::style::Style;
-use crate::types::{Bounds, ElementId, Point};
+use crate::types::{Bounds, ElementId, Point, Size};
 
 /// An element whose content paints above the tree, anchored to a target rect.
 ///
@@ -69,6 +69,10 @@ pub struct Overlay {
     pub(super) depth: i32,
     /// Main-axis gap (logical px) between the anchor edge and the content.
     pub(super) gap: f32,
+    /// Modal mode: paints a full-viewport scrim behind the content and traps
+    /// keyboard focus to the overlay subtree while open (focus is auto-moved in
+    /// on open and restored on close). Default `false` (popover/tooltip).
+    pub(super) modal: bool,
     /// Sizing constraints for the overlay node (NOT visual styling). Forced to
     /// `Position::Absolute` at layout so the overlay leaves sibling flow.
     pub(super) layout_style: Style,
@@ -82,9 +86,11 @@ pub struct OverlayLayoutState {
 }
 
 /// Paint state for Overlay — the anchor-solved content origin (absolute logical
-/// px) resolved in prepaint and reused at paint so hit regions and pixels agree.
+/// px) resolved in prepaint and reused at paint so hit regions and pixels agree,
+/// plus the viewport size captured at prepaint for the modal scrim rect.
 pub struct OverlayPaintState {
     pub(super) solved_origin: Point,
+    pub(super) viewport: Size,
 }
 
 impl Overlay {

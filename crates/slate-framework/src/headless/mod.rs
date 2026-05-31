@@ -104,6 +104,10 @@ pub struct HeadlessApp {
     key_handler_map: HashMap<ElementId, KeyHandlers>,
     focus_registry: FocusRegistry,
     focus_bounds: HashMap<ElementId, FocusBounds>,
+    /// Open modal overlays as `(modal_id, focus_to_restore)`; mirrors the
+    /// windowed `WindowState::modal_focus_stack`. Reconciled via
+    /// [`reconcile_modal_focus`](Self::reconcile_modal_focus).
+    modal_focus_stack: Vec<(ElementId, Option<ElementId>)>,
 
     // IME state collected each prepaint (headless parity).
     ime_registry: RefCell<ImeRegistry>,
@@ -243,6 +247,36 @@ impl HeadlessApp {
     /// render's prepaint.
     pub fn set_focus(&mut self, id: ElementId) -> bool {
         self.focus_registry.set_focus(id)
+    }
+
+    /// The currently focused element id, if any. Test support for asserting the
+    /// modal focus trap (auto-focus on open, restore on close).
+    pub fn focused(&self) -> Option<ElementId> {
+        self.focus_registry.focused()
+    }
+
+    /// Simulate a Tab keystroke: shift focus forward (or backward when
+    /// `backward`) and apply it, returning the new focus. Honors the modal trap
+    /// (focus stays within the deepest open modal). Mirrors the windowed Tab
+    /// dispatch; run after a render so the focus registry is populated.
+    pub fn tab(&mut self, backward: bool) -> Option<ElementId> {
+        let next = if backward {
+            self.focus_registry.shift_backward()
+        } else {
+            self.focus_registry.shift_forward()
+        };
+        if let Some(id) = next {
+            self.focus_registry.set_focus(id);
+        }
+        next
+    }
+
+    /// Run the modal focus lifecycle reconcile against the persistent stack,
+    /// mirroring the windowed per-frame call. Call after a render to auto-focus
+    /// into a newly-rendered modal or restore focus when one is gone.
+    pub fn reconcile_modal_focus(&mut self) {
+        self.focus_registry
+            .reconcile_modal_focus(&mut self.modal_focus_stack);
     }
 
     /// The focusable elements registered during the last render, as

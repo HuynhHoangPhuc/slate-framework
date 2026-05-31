@@ -342,6 +342,21 @@ impl<'a> PrepaintCtx<'a> {
         );
     }
 
+    /// Begin a modal focus-trap scope around an overlay's content prepaint.
+    ///
+    /// Focusables registered until the matching [`exit_focus_trap`](Self::exit_focus_trap)
+    /// are tagged with `scope` (the overlay's id) and become the only
+    /// Tab-reachable entries while this is the deepest open modal. `depth` is the
+    /// overlay's z-depth (deepest modal wins the trap).
+    pub(crate) fn enter_focus_trap(&mut self, scope: ElementId, depth: i32) {
+        self.focus_registry.enter_trap_scope(scope, depth);
+    }
+
+    /// End the modal focus-trap scope opened by [`enter_focus_trap`](Self::enter_focus_trap).
+    pub(crate) fn exit_focus_trap(&mut self) {
+        self.focus_registry.exit_trap_scope();
+    }
+
     /// Pop the current frame after recursing children.
     ///
     /// Call after all children have been prepainted.

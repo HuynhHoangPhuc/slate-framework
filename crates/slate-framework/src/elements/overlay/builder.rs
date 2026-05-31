@@ -19,6 +19,7 @@ impl Overlay {
             placement: Placement::default(),
             depth: Self::DEFAULT_DEPTH,
             gap: Self::DEFAULT_GAP,
+            modal: false,
             layout_style: Style::default(),
             last_id: None,
         }
@@ -60,6 +61,18 @@ impl Overlay {
     /// Set the main-axis gap (logical px) between the anchor edge and content.
     pub fn gap(mut self, gap: f32) -> Self {
         self.gap = gap;
+        self
+    }
+
+    /// Make the overlay **modal**: paint a full-viewport scrim behind the
+    /// content and trap keyboard focus to the overlay subtree while open.
+    ///
+    /// On open, focus moves to the overlay's first focusable; Tab/Shift+Tab
+    /// cycle only within the overlay; on close, the previously-focused element
+    /// is restored. Use for dialogs. Non-modal (the default) is for
+    /// popovers/tooltips/dropdowns that leave focus and the base tree alone.
+    pub fn modal(mut self, modal: bool) -> Self {
+        self.modal = modal;
         self
     }
 
