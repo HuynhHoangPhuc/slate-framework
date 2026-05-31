@@ -145,6 +145,26 @@ impl AppContext {
         guard.get(&window)?.focus_registry.borrow().focused()
     }
 
+    /// The app-global theme-mode signal (light/dark).
+    ///
+    /// Hold the returned [`Signal`](slate_reactive::Signal) in your view and
+    /// flip it from an event handler to switch palettes; the change re-renders
+    /// the whole view (Strategy A). Returns `None` only in test constructions
+    /// without an [`AppState`].
+    ///
+    /// ```ignore
+    /// let mode = cx.theme_mode().unwrap();
+    /// // in a handler:
+    /// mode.update(|m| *m = match *m {
+    ///     ThemeMode::Light => ThemeMode::Dark,
+    ///     ThemeMode::Dark => ThemeMode::Light,
+    /// });
+    /// ```
+    pub fn theme_mode(&self) -> Option<slate_reactive::Signal<crate::theme::ThemeMode>> {
+        let state = self.state.as_ref()?.upgrade()?;
+        Some(state.theme_mode.clone())
+    }
+
     /// Construct an `AppContext` directly. Test-only.
     #[cfg(any(test, feature = "test-hooks"))]
     #[doc(hidden)]
@@ -198,6 +218,7 @@ pub struct App {
     on_ime_commit: Vec<ImeCommitHandler>,
     on_ime_enabled: Vec<ImeLifecycleHandler>,
     on_ime_disabled: Vec<ImeLifecycleHandler>,
+    themes: Option<crate::theme::ThemeSet>,
 }
 
 impl App {
@@ -219,7 +240,18 @@ impl App {
             on_ime_commit: Vec::new(),
             on_ime_enabled: Vec::new(),
             on_ime_disabled: Vec::new(),
+            themes: None,
         }
+    }
+
+    /// Install custom light and dark palettes.
+    ///
+    /// Build each from [`Theme::light`](crate::Theme::light) /
+    /// [`Theme::dark`](crate::Theme::dark) and tweak fields. When unset, the
+    /// framework defaults are used. Call before [`App::run`].
+    pub fn theme(mut self, light: crate::theme::Theme, dark: crate::theme::Theme) -> Self {
+        self.themes = Some(crate::theme::ThemeSet::new(light, dark));
+        self
     }
 
     /// Open an additional window before entering the run loop.
@@ -340,6 +372,7 @@ impl App {
             on_ime_commit,
             on_ime_enabled,
             on_ime_disabled,
+            themes,
         } = self;
 
         // Create executor and reactive runtime.
@@ -356,6 +389,11 @@ impl App {
             redraw_requester.clone(),
             runtime.clone(),
         ));
+
+        // Swap in adopter-supplied palettes, if any (default otherwise).
+        if let Some(set) = themes {
+            state.theme_set.replace(set);
+        }
 
         // Install platform handle so `AppContext::create_window` can allocate
         // additional platform windows mid-dispatch.

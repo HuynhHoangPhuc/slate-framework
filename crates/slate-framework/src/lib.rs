@@ -59,6 +59,7 @@ pub(crate) mod reactive_state;
 pub mod reactive_value;
 pub mod render_cx;
 pub mod style;
+pub mod theme;
 #[cfg(all(target_os = "windows", feature = "test-hooks"))]
 #[doc(hidden)]
 pub mod test_support;
@@ -115,6 +116,7 @@ pub use ime::{CachedImeQuery, ImeRegistry, ImeState, PendingImeOp, Preedit};
 pub use layout::{LayoutTree, compute_layout, resolve_bounds, resolve_child_bounds};
 pub use smol::Timer;
 pub use style::{DisplayMode, Length, Overflow, Position, SizeConstraint, Style};
+pub use theme::{Radii, Spacing, Theme, ThemeMode, ThemeSet, TypeStyle, Typography, theme};
 pub use text_system::{PlatformFont, TextSystem};
 pub use types::{
     AccessibilityAction, AccessibilityInfo, AccessibilityNode, AccessibilityRelationships,

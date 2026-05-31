@@ -2648,6 +2648,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "theme-switch"
+version = "1.0.1"
+dependencies = [
+ "env_logger",
+ "log",
+ "slate-framework",
+]
+
+[[package]]
 name = "thiserror"
 version = "2.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"

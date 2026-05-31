@@ -17,6 +17,7 @@ members = [
     "examples/reactive-counter",
     "examples/recovery-gallery",
     "examples/textarea",
+    "examples/theme-switch",
     "examples/two-window-counters",
     "examples/win-dcomp-spike",
 ]

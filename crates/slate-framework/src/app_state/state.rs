@@ -94,6 +94,13 @@ pub struct AppState {
     // Process-level quit flag. Producers: recovery exhaustion, last-window-close.
     pub pending_quit: std::cell::Cell<bool>,
 
+    // Ambient design tokens (process-wide). `theme_set` holds the light/dark
+    // palettes (swapped once at `App::run` if the adopter supplied custom
+    // ones); `theme_mode` is read by every `theme()` call during render so
+    // flipping it re-renders the view (Strategy A).
+    pub(crate) theme_set: RefCell<crate::theme::ThemeSet>,
+    pub(crate) theme_mode: slate_reactive::Signal<crate::theme::ThemeMode>,
+
     // Platform handle, installed by `App::run` immediately before entering
     // the event loop. `None` for unit tests that exercise AppState without
     // a real platform. Used by `AppContext::create_window` so a handler can

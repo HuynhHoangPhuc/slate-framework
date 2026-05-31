@@ -68,6 +68,12 @@ impl AppState {
 
         let state_registry = StateRegistry::new(runtime.clone());
 
+        // Default design tokens; `App::run` swaps `theme_set` if the adopter
+        // supplied custom palettes. Mode defaults to light.
+        let theme_set = RefCell::new(crate::theme::ThemeSet::default());
+        let theme_mode =
+            slate_reactive::Signal::new(runtime.clone(), crate::theme::ThemeMode::default());
+
         // Shared, atlas-independent caches.
         let text_system = Rc::new(RefCell::new(None));
         let text_shaping_cache = Rc::new(RefCell::new(TextShapingCache::new()));
@@ -89,6 +95,8 @@ impl AppState {
             state_registry: RefCell::new(state_registry),
             redraw_requesters,
             pending_quit: std::cell::Cell::new(false),
+            theme_set,
+            theme_mode,
             platform: RefCell::new(None),
             pending_window_creates: RefCell::new(Vec::new()),
             on_key_down: RefCell::new(Vec::new()),

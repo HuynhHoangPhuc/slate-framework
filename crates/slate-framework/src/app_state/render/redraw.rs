@@ -62,6 +62,13 @@ impl AppState {
         self.runtime.drain_dirty();
         self.runtime.drain_effects();
 
+        // Publish the active theme for the whole redraw (render → layout →
+        // paint) so `theme()` resolves ambiently. Cleared on drop (RAII).
+        let _theme_scope = crate::theme::ThemeScope::install(crate::theme::ActiveTheme {
+            set: *self.theme_set.borrow(),
+            mode: self.theme_mode.clone(),
+        });
+
         // 1. Build element tree — borrows view + view_observer_id.
         #[cfg(feature = "profiling")]
         let _vr_start = std::time::Instant::now();
