@@ -22,11 +22,12 @@
 mod builder;
 mod handlers;
 mod layout;
+mod scrollbar;
 
 use crate::element::{AnyElement, IntoElement, Sealed};
 use crate::reactive::Signal;
 use crate::style::{Overflow, Style};
-use crate::types::ElementId;
+use crate::types::{Bounds, ElementId};
 
 /// A clipped, vertically scrollable flexbox container.
 ///
@@ -60,11 +61,15 @@ pub struct ScrollViewLayoutState {
     pub(super) node_id: taffy::NodeId,
 }
 
-/// Paint state for ScrollView — the clamped offset and content/viewport
-/// extents resolved during prepaint, reused at paint.
+/// Paint state for ScrollView — the clamped offset and the scrollbar thumb
+/// resolved during prepaint, reused at paint.
 pub struct ScrollViewPaintState {
     /// Offset after clamping to `[0, max_offset]`, in logical pixels.
     pub(super) clamped_offset: f32,
+    /// The scrollbar thumb's `(id, bounds)` when the content overflows and an
+    /// offset signal is bound; `None` for a non-scrolling / clip-only view.
+    /// `id` resolves the hover/press fill at paint time.
+    pub(super) thumb: Option<(ElementId, Bounds)>,
 }
 
 impl Default for ScrollView {
@@ -92,4 +97,19 @@ impl IntoElement for ScrollView {
     fn into_element(self) -> Self {
         self
     }
+}
+
+/// Expose the production scrollbar-thumb handlers (down/move/up) so end-to-end
+/// tests can drive a real drag through `AppState::dispatch_mouse_*` (auto-capture
+/// routes move/up to the thumb), rather than re-implementing the closures. The
+/// persistent drag-anchor slot is backed by a private runtime here — across-frame
+/// persistence is covered separately by `StateRegistry` tests. Test-only.
+#[cfg(feature = "test-hooks")]
+pub fn build_thumb_handlers_for_test(
+    offset: Signal<f32>,
+    max_offset: f32,
+    track_travel: f32,
+) -> crate::event::MouseHandlers {
+    let drag = Signal::new(slate_reactive::Runtime::new(), scrollbar::ScrollDrag::default());
+    scrollbar::build_thumb_handlers(offset, drag, max_offset, track_travel)
 }

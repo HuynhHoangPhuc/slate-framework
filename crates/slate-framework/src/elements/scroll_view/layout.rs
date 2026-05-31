@@ -14,6 +14,7 @@ use crate::types::{
 };
 
 use super::handlers::{clamp_offset, key_handler, scroll_handler};
+use super::scrollbar::{paint_thumb, register_thumb};
 use super::{ScrollView, ScrollViewLayoutState, ScrollViewPaintState};
 
 impl ScrollView {
@@ -101,7 +102,8 @@ impl Element for ScrollView {
 
         // Resolve the scrollable range, then clamp the (caller-owned) offset.
         let viewport = bounds.size.height;
-        let max_offset = (self.content_height(cx, node) - viewport).max(0.0);
+        let content_height = self.content_height(cx, node);
+        let max_offset = (content_height - viewport).max(0.0);
         let clamped_offset = clamp_offset(self.offset_value, max_offset);
 
         // Wire scroll behaviour only when an offset signal is bound; otherwise
@@ -154,12 +156,23 @@ impl Element for ScrollView {
                 child.prepaint(cb, cx);
             }
         }
+
+        // Scrollbar thumb: a hittable, draggable overlay registered after the
+        // children (topmost z), only when an offset signal is bound and the
+        // content overflows.
+        let thumb = self.offset.clone().and_then(|offset| {
+            register_thumb(cx, offset, bounds, content_height, clamped_offset, max_offset)
+        });
+
         cx.pop_frame();
         if opened_a11y {
             cx.prepaint_node_close();
         }
 
-        ScrollViewPaintState { clamped_offset }
+        ScrollViewPaintState {
+            clamped_offset,
+            thumb,
+        }
     }
 
     fn paint(
@@ -187,6 +200,10 @@ impl Element for ScrollView {
             }
         }
         cx.pop_clip();
+
+        if let Some((thumb_id, tb)) = paint_state.thumb {
+            paint_thumb(cx, thumb_id, tb);
+        }
     }
 
     fn accessibility(&self) -> Option<AccessibilityInfo> {

@@ -82,6 +82,13 @@ name = "event_capture_and_window_id"
 harness = false
 required-features = ["test-hooks"]
 
+# Scrollbar-thumb drag end-to-end: real thumb handlers driven through
+# AppState::dispatch_mouse_* (auto-capture → move → up) update the offset signal.
+[[test]]
+name = "scroll_view_thumb_drag"
+harness = false
+required-features = ["test-hooks"]
+
 # Golden-trace dispatch pin. `harness = false` so its `fn main` runs on the
 # process main thread — required on macOS for `DefaultPlatform::new()` and
 # its `MainThreadMarker` use. `required-features = ["test-hooks"]` keeps the
