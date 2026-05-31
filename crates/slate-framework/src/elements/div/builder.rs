@@ -1,7 +1,9 @@
 //! Div constructor and child-management builders.
 
 use crate::element::{AnyElement, IntoElement};
+use crate::reactive::Signal;
 use crate::style::Style;
+use crate::types::Bounds;
 
 use super::{Div, DivVisual};
 
@@ -16,6 +18,7 @@ impl Div {
             disabled: false,
             user_key: None,
             last_id: None,
+            track_bounds: None,
             on_click: None,
             on_mouse_down: None,
             on_mouse_up: None,
@@ -42,6 +45,28 @@ impl Div {
     /// Static trees can omit — tree-position keying handles them automatically.
     pub fn key(mut self, k: impl Into<String>) -> Self {
         self.user_key = Some(k.into());
+        self
+    }
+
+    /// Report this element's painted bounds into a caller-owned signal each
+    /// frame, enabling **anchor-to-element** overlays.
+    ///
+    /// The signal receives the element's absolute (window-relative) [`Bounds`]
+    /// once known during prepaint. Pass the same signal to
+    /// [`Overlay::anchor`](crate::Overlay::anchor) so the overlay tracks this
+    /// element's live rect (e.g. a popover anchored under a button that
+    /// re-positions on window resize) instead of a hardcoded rect.
+    ///
+    /// The write is guarded — it fires only when the bounds change — so it does
+    /// not spin the Strategy-A whole-view rebuild loop. Create `bounds` once
+    /// outside `render` (like a scroll offset) so it survives view rebuilds.
+    ///
+    /// The signal reflects the element's *previous-prepaint* rect, so opening an
+    /// overlay the same frame the trigger first mounts shows one frame at the
+    /// signal's initial value before it snaps into place. Keeping a popover
+    /// closed until its trigger has painted once (the common case) avoids this.
+    pub fn track_bounds(mut self, bounds: Signal<Bounds>) -> Self {
+        self.track_bounds = Some(bounds);
         self
     }
 

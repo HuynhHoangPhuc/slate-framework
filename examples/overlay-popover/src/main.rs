@@ -1,13 +1,16 @@
-//! overlay-popover — anchored Overlay demo (P3 foundation).
+//! overlay-popover — anchored Overlay demo.
 //!
 //! Click the button to toggle a popover that:
-//! - is **anchored** below the button via the pure anchor solver,
+//! - is **anchored** to the button's *live* rect via `Div::track_bounds` +
+//!   `Overlay::anchor` (anchor-to-element — no hardcoded coordinates),
 //! - paints **on top** of the background list (high-depth scene layer),
 //! - **flips** above the button automatically if the window is short enough
 //!   that there's no room below (drag the bottom edge up to see it).
 //!
-//! The popover's `open` flag is a caller-owned `Signal<bool>` held by the view,
-//! so toggling it re-renders under the render observer (Strategy-A rebuild).
+//! Both the popover's `open` flag and the button's anchor rect are caller-owned
+//! `Signal`s held by the view: toggling `open` re-renders under the render
+//! observer (Strategy-A rebuild), and the button reports its painted bounds into
+//! `anchor` each frame so the popover follows it (e.g. on window resize).
 //!
 //! Run: `cargo run -p overlay-popover`
 
@@ -17,20 +20,18 @@ use slate_framework::{
     WindowOptions,
 };
 
-/// The button's fixed rect (outer padding 40 + explicit button size), reused as
-/// the popover anchor. Kept in one place so the marker and the anchor agree.
-fn button_bounds() -> Bounds {
-    Bounds::from_origin_size(40.0, 40.0, 220.0, 48.0)
-}
-
 struct PopoverDemo {
+    /// Whether the popover is shown (toggled by the button).
     open: Signal<bool>,
+    /// The button's live painted rect, written via `Div::track_bounds` and read
+    /// back as the popover's anchor — no hardcoded coordinates.
+    anchor: Signal<Bounds>,
 }
 
 impl PopoverDemo {
     fn background_list() -> Div {
         let mut list = Div::new().style(|s| s.column().gap(8.0).padding_all(40.0).flex_grow(1.0));
-        // A toggle button at the top, then filler rows the popover will cover.
+        // Filler rows the popover will cover.
         for i in 0..8 {
             list = list.child(
                 Div::new()
@@ -54,6 +55,8 @@ impl PopoverDemo {
             .background(Color::from_hex("#89b4fa").unwrap_or(Color::BLUE))
             .corner_radius(8.0)
             .style(|s| s.width(220.0).height(48.0).padding_all(12.0))
+            // Report the button's live rect so the popover anchors to it.
+            .track_bounds(self.anchor.clone())
             .on_click(move |_, _| open.update(|o| *o = !*o))
             .child(
                 Text::new_reactive(move || {
@@ -68,9 +71,10 @@ impl PopoverDemo {
             )
     }
 
-    fn popover() -> Overlay {
+    fn popover(&self) -> Overlay {
         Overlay::new()
-            .anchor(button_bounds())
+            // Anchor to the button's tracked rect (anchor-to-element).
+            .anchor(self.anchor.clone())
             .placement(Placement::bottom())
             .child(
                 Div::new()
@@ -97,8 +101,6 @@ impl View for PopoverDemo {
         let root = Div::new()
             .background(Color::from_hex("#1e1e2e").unwrap_or(Color::BLACK))
             .style(|s| s.column().flex_grow(1.0))
-            // The button is the first child inside 40px padding, so it lands at
-            // exactly `button_bounds()` — the rect the popover anchors to.
             .child(
                 Div::new()
                     .style(|s| s.padding_all(40.0))
@@ -109,7 +111,7 @@ impl View for PopoverDemo {
         // Reading `open` under the render observer subscribes the view, so the
         // toggle rebuilds and shows/hides the overlay.
         if self.open.get() {
-            root.child(Self::popover()).into_any()
+            root.child(self.popover()).into_any()
         } else {
             root.into_any()
         }
@@ -127,6 +129,9 @@ fn main() {
         ..Default::default()
     })
     .run(|cx: &AppContext| PopoverDemo {
-        open: Signal::new(cx.runtime(), true),
+        // Start closed: the button paints first and populates `anchor`, so the
+        // popover is correctly anchored the moment it opens (no first-frame flash).
+        open: Signal::new(cx.runtime(), false),
+        anchor: Signal::new(cx.runtime(), Bounds::ZERO),
     });
 }

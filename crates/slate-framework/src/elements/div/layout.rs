@@ -94,6 +94,16 @@ impl Element for Div {
         let element_id = cx.allocate_id::<Div>();
         self.last_id = Some(element_id);
 
+        // Report painted bounds into the caller's signal for overlay
+        // anchor-to-element. Guard the write: `Signal::set` always notifies and
+        // marks the runtime dirty, so an unconditional set every prepaint would
+        // spin the whole-view rebuild loop. Read untracked (no observer here).
+        if let Some(sig) = &self.track_bounds
+            && sig.get_untracked() != bounds
+        {
+            sig.set(bounds);
+        }
+
         // Disabled elements are non-interactive: skip registering event,
         // keyboard, IME, and focus participation so dispatch never reaches them
         // (the hit region below is still registered so they block fall-through).

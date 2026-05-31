@@ -16,10 +16,11 @@
 //! rect, a [`Placement`], and the viewport, with flip/shift at window edges.
 //!
 //! ```ignore
-//! // `button_bounds` is the target's absolute rect (e.g. captured from a hit
-//! // region). The popover flips above the button if there's no room below.
+//! // `anchor` is a `Signal<Bounds>` the button writes via `Div::track_bounds`,
+//! // so the popover follows the button's live rect (a fixed `Bounds` also
+//! // works). The popover flips above the button if there's no room below.
 //! Overlay::new()
-//!     .anchor(button_bounds)
+//!     .anchor(anchor.clone())
 //!     .placement(Placement::bottom())
 //!     .child(Div::new().background(...).child(Text::new("Menu")))
 //! ```

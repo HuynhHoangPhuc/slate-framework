@@ -1,6 +1,7 @@
 //! Overlay constructor and builder methods.
 
 use crate::element::{AnyElement, IntoElement};
+use crate::reactive_value::Reactive;
 use crate::style::Style;
 use crate::types::Bounds;
 
@@ -23,9 +24,21 @@ impl Overlay {
         }
     }
 
-    /// Set the absolute (window-relative) target rect the content anchors to.
-    pub fn anchor(mut self, anchor: Bounds) -> Self {
-        self.anchor = anchor;
+    /// Set the target rect the content anchors to.
+    ///
+    /// Accepts a fixed [`Bounds`] or a signal-backed [`Reactive`] for
+    /// **anchor-to-element**: pair a `Signal<Bounds>` here with
+    /// [`Div::track_bounds`](crate::Div::track_bounds) on the target so the
+    /// overlay follows that element's live painted rect (e.g. a popover under a
+    /// button that re-anchors on window resize) instead of a hardcoded rect. A
+    /// signal value is read here under the render observer, so the view
+    /// re-renders and the overlay re-anchors when the tracked bounds change.
+    /// The resolved rect is the tracked element's *previous-prepaint* bounds
+    /// (see [`Div::track_bounds`](crate::Div::track_bounds)); a change re-anchors
+    /// on the next frame.
+    pub fn anchor(mut self, anchor: impl Into<Reactive<Bounds>>) -> Self {
+        let value: Reactive<Bounds> = anchor.into();
+        self.anchor = value.resolve();
         self
     }
 

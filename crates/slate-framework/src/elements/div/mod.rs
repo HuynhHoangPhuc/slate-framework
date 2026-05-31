@@ -16,8 +16,9 @@ use crate::event::{
     ElementKeyHandler, ElementTextInputHandler, MouseHandler, PointerHandler, ScrollHandler,
 };
 use crate::interaction_state::StateStyles;
+use crate::reactive::Signal;
 use crate::style::Style;
-use crate::types::ElementId;
+use crate::types::{Bounds, ElementId};
 
 /// Flexbox container element.
 ///
@@ -47,6 +48,11 @@ pub struct Div {
     pub(super) user_key: Option<String>,
     /// Stable ElementId allocated during prepaint (available after prepaint).
     pub(super) last_id: Option<ElementId>,
+    /// Caller-owned signal that receives this element's painted bounds each
+    /// frame (absolute, window-relative). Lets an [`Overlay`](crate::Overlay)
+    /// anchor to this element's live rect (anchor-to-element). The write is
+    /// guarded (only on change) so it never spins the whole-view rebuild loop.
+    pub(super) track_bounds: Option<Signal<Bounds>>,
     // -------------------------------------------------------------------------
     // Event handlers
     // -------------------------------------------------------------------------
