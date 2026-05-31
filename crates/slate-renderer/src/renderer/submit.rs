@@ -18,7 +18,7 @@ use wgpu::{
     RenderPassDescriptor, StoreOp,
 };
 
-use crate::layer_ordering::{DefaultPainterOrder, LayerOrdering, ScenePrimitive};
+use crate::layer_ordering::{DepthBucketOrder, LayerOrdering, ScenePrimitive};
 use crate::scene::Scene;
 use crate::surface_target::{ConfigureError, FrameAcquireError};
 // On macOS, `Renderer.target` is the concrete `Box<MacSurface>` (not a trait
@@ -140,9 +140,13 @@ impl Renderer {
             });
 
             // Draw order is driven through the `LayerOrdering` seam so the
-            // strategy (depth buckets, BoundsTree) can be swapped post-v1
-            // without touching this pass-recording code. The default is the v1
-            // painter's walk; monomorphized here, so no per-frame vtable.
+            // strategy can be swapped without touching this pass-recording code.
+            // Production uses `DepthBucketOrder`: layers walk lowest-depth-first
+            // so high-depth overlays/popovers draw on top. An all-depth-`0`
+            // scene walks in plain push order (the regression lock). Building
+            // `depths` is a small per-frame alloc; if frame profiling ever flags
+            // it, hoist it (and the sort's index Vec) to reusable scratch on
+            // `Renderer`.
             //
             // Clip: each layer may carry an `Option<ClipRect>` (logical px).
             // The scissor is render-pass state, so we update it once per layer
@@ -153,9 +157,10 @@ impl Renderer {
             // that lands fully off-screen skips the layer's draws entirely.
             let (target_w, target_h) = self._window.physical_size();
             let scale = self._window.scale_factor() as f32;
+            let depths: Vec<i32> = scene.layers.iter().map(|l| l.depth).collect();
             let mut last_idx = usize::MAX;
             let mut skip_layer = false;
-            DefaultPainterOrder.for_each_draw(scene.layers.len(), |idx, kind| {
+            DepthBucketOrder::new(&depths).for_each_draw(scene.layers.len(), |idx, kind| {
                 let layer = &scene.layers[idx];
                 if idx != last_idx {
                     last_idx = idx;

@@ -77,7 +77,9 @@ pub use color::{
 pub use glyph_pipeline::{GlyphPipeline, allocate_glyph};
 pub use image_pipeline::{ImagePipeline, allocate_image, pad_rgba_with_gutter};
 pub use instanced_rect_pipeline::InstancedRectPipeline;
-pub use layer_ordering::{DefaultPainterOrder, DepthBucketOrder, LayerOrdering, ScenePrimitive};
+pub use layer_ordering::{
+    DefaultPainterOrder, DepthBucketOrder, LayerOrdering, ScenePrimitive, depth_sorted_layers,
+};
 pub use pipeline_shared::{ViewportUniform, create_unit_quad, viewport_bind_group_layout};
 pub use shadow_pipeline::ShadowPipeline;
 

@@ -191,6 +191,7 @@ fn clip_masks_layer_to_scissor_rect() {
             images: 0..0,
             glyphs: 0..0,
             clip: None,
+            depth: 0,
         },
         Layer {
             rects: 1..2,
@@ -198,6 +199,7 @@ fn clip_masks_layer_to_scissor_rect() {
             images: 0..0,
             glyphs: 0..0,
             clip: Some(band),
+            depth: 0,
         },
     ];
 
@@ -233,6 +235,7 @@ fn nested_clip_intersects() {
             images: 0..0,
             glyphs: 0..0,
             clip: None,
+            depth: 0,
         },
         Layer {
             rects: 1..2,
@@ -240,6 +243,7 @@ fn nested_clip_intersects() {
             images: 0..0,
             glyphs: 0..0,
             clip: Some(window),
+            depth: 0,
         },
     ];
 

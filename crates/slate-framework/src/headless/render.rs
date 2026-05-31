@@ -203,9 +203,16 @@ impl HeadlessApp {
             // this is exact at `scale_factor == 1.0` (every current headless
             // test). A DPI-aware (scale != 1.0) headless clip test would need
             // a separate physical target size — revisit when one is added.
+            //
+            // Layer draw order mirrors the windowed path's `DepthBucketOrder`:
+            // walk layers lowest-depth-first (stable among equal depths) so
+            // golden images match on-screen z-order. All-depth-`0` scenes walk
+            // in push order — byte-identical to the pre-depth headless path.
             let (target_w, target_h) = (self.width, self.height);
             let scale = self.scale_factor as f32;
-            for layer in &self.scene.layers {
+            let depths: Vec<i32> = self.scene.layers.iter().map(|l| l.depth).collect();
+            for idx in slate_renderer::depth_sorted_layers(&depths) {
+                let layer = &self.scene.layers[idx];
                 match layer.clip {
                     Some(clip) => match clip.to_scissor_px(scale, target_w, target_h) {
                         Some((x, y, w, h)) => pass.set_scissor_rect(x, y, w, h),

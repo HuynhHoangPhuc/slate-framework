@@ -252,11 +252,17 @@ pub struct Layer {
     /// Optional clip rect (logical pixels). `None` = no clip (full viewport).
     /// The renderer applies this as a scissor rect around the layer's draws.
     pub clip: Option<ClipRect>,
+    /// Z-depth bucket for the draw walk. Layers are recorded lowest-depth-first
+    /// (stable among equal depths, so the default all-`0` scene matches push
+    /// order byte-for-byte). Overlays/popovers push layers at a higher depth so
+    /// they draw on top of the base tree regardless of their position in it.
+    /// See [`crate::layer_ordering::depth_sorted_layers`].
+    pub depth: i32,
 }
 
 impl Layer {
     /// New layer anchored at the supplied vec lengths (all four ranges
-    /// `start..start`, i.e. empty), with no clip.
+    /// `start..start`, i.e. empty), with no clip and depth `0`.
     fn anchored(rect_len: u32, shadow_len: u32, image_len: u32, glyph_len: u32) -> Self {
         Self {
             rects: rect_len..rect_len,
@@ -264,6 +270,7 @@ impl Layer {
             images: image_len..image_len,
             glyphs: glyph_len..glyph_len,
             clip: None,
+            depth: 0,
         }
     }
 }
@@ -354,6 +361,30 @@ impl Scene {
     pub fn push_clip_layer(&mut self, clip: ClipRect) {
         self.layers.push(Layer {
             clip: Some(clip),
+            ..Layer::anchored(
+                len_as_u32(self.rects.len()),
+                len_as_u32(self.shadows.len()),
+                len_as_u32(self.images.len()),
+                len_as_u32(self.glyphs.len()),
+            )
+        });
+        self.cur_layer_open = true;
+    }
+
+    /// Start a new layer at z-`depth`; subsequent `push_*` calls extend it.
+    /// Layers are recorded lowest-depth-first (stable among equal depths), so a
+    /// higher `depth` draws on top of the base tree no matter where in the push
+    /// sequence it lands. This is the overlay/popover hook: an element declared
+    /// deep in the tree paints into a high-depth, unclipped layer to escape
+    /// ancestor clips and sit above everything below it.
+    ///
+    /// Like [`push_clip_layer`](Self::push_clip_layer), this *always* opens a
+    /// fresh layer and never collapses onto an empty predecessor — collapsing
+    /// would silently drop the depth. An empty high-depth layer is harmless (the
+    /// renderer just records nothing for it).
+    pub fn push_layer_with_depth(&mut self, depth: i32) {
+        self.layers.push(Layer {
+            depth,
             ..Layer::anchored(
                 len_as_u32(self.rects.len()),
                 len_as_u32(self.shadows.len()),
@@ -591,6 +622,45 @@ mod tests {
         s.push_clip_layer(clip);
         assert_eq!(s.layers.len(), 2);
         assert_eq!(s.layers[1].clip, Some(clip));
+    }
+
+    #[test]
+    fn layers_default_to_depth_zero() {
+        let mut s = Scene::new();
+        s.push_rect(dummy_rect());
+        s.push_layer();
+        s.push_rect(dummy_rect());
+        let clip = ClipRect::new(Lpx(0.0), Lpx(0.0), Lpx(10.0), Lpx(10.0));
+        s.push_clip_layer(clip);
+        // Every layer pushed through the ordinary paths sits at depth 0, so the
+        // depth-sorted walk is a no-op against push order (the regression lock).
+        assert!(s.layers.iter().all(|l| l.depth == 0));
+    }
+
+    #[test]
+    fn push_layer_with_depth_tags_layer_and_opens_fresh() {
+        let mut s = Scene::new();
+        s.push_rect(dummy_rect()); // layer 0, depth 0
+        s.push_layer_with_depth(10);
+        s.push_rect(dummy_rect()); // lands in the depth-10 layer
+        assert_eq!(s.layers.len(), 2);
+        assert_eq!(s.layers[0].depth, 0);
+        assert_eq!(s.layers[1].depth, 10);
+        assert_eq!(s.layers[0].rects, 0..1);
+        assert_eq!(s.layers[1].rects, 1..2);
+        // Depth layer carries no clip by default (overlays escape ancestor clips).
+        assert_eq!(s.layers[1].clip, None);
+    }
+
+    #[test]
+    fn push_layer_with_depth_never_collapses_onto_empty_predecessor() {
+        // Even when sitting on an empty open layer, a depth layer must be
+        // distinct — collapsing would drop the depth.
+        let mut s = Scene::new();
+        s.push_layer(); // empty, depth 0, open
+        s.push_layer_with_depth(5);
+        assert_eq!(s.layers.len(), 2);
+        assert_eq!(s.layers[1].depth, 5);
     }
 
     #[test]
