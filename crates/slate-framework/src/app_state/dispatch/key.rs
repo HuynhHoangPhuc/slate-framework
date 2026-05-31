@@ -130,6 +130,23 @@ impl AppState {
         self.apply_pending_focus_op(window, pending_focus_op);
         self.apply_pending_capture_op(window, pending_capture_op);
 
+        // Esc dismisses the top-most open overlay (popover/dropdown/dialog),
+        // unless a focused handler consumed the key first. Clone the dismiss
+        // callback out under a brief borrow, then invoke it AFTER the borrow
+        // drops — the callback flips a caller signal and must not run while the
+        // overlay registry / windows map is borrowed (deferred-op discipline).
+        if !stopped && matches!(event.key, Key::Named(NamedKey::Escape)) {
+            let dismiss = {
+                let guard = self.windows.borrow();
+                guard
+                    .get(&window)
+                    .and_then(|w| w.overlay_registry.borrow().topmost_dismiss())
+            };
+            if let Some(cb) = dismiss.flatten() {
+                cb();
+            }
+        }
+
         // Tab during active composition: synthetically commit the preedit on
         // the still-focused element before the focus shift. Enqueue + drain
         // pattern — mutating IME state inline would conflict with the borrow

@@ -22,6 +22,7 @@ use crate::focus::{FocusRegistry, FocusableEntry};
 use crate::focus_ring::FocusBounds;
 use crate::hit_test::{HitRegion, HitTestList};
 use crate::image_cache::ImageCache;
+use crate::elements::overlay::{OverlayEntry, OverlayRegistry};
 use crate::ime::ImeRegistry;
 use crate::interaction_state::InteractionSnapshot;
 use crate::paint_cache::TextShapingCache;
@@ -151,6 +152,11 @@ pub struct PrepaintCtx<'a> {
     /// Used by the host after the prepaint walk to prune entries belonging to
     /// unmounted elements (mirrors the focus registry lifecycle).
     pub(crate) ime_registered_ids: &'a mut std::collections::HashSet<ElementId>,
+
+    // --- Overlay registry (open overlays + dismiss callbacks) ---
+    /// Open overlays registered this frame, consulted by the dispatch path for
+    /// Esc / outside-click dismissal. Fully rebuilt each prepaint (no prune).
+    pub(crate) overlay_registry: &'a mut OverlayRegistry,
 }
 
 impl<'a> PrepaintCtx<'a> {
@@ -183,6 +189,7 @@ impl<'a> PrepaintCtx<'a> {
         ime_registry: &'a RefCell<ImeRegistry>,
         ime_handler_map: &'a mut HashMap<ElementId, ImeHandlers>,
         ime_registered_ids: &'a mut std::collections::HashSet<ElementId>,
+        overlay_registry: &'a mut OverlayRegistry,
     ) -> Self {
         Self {
             taffy,
@@ -207,6 +214,7 @@ impl<'a> PrepaintCtx<'a> {
             ime_registry,
             ime_handler_map,
             ime_registered_ids,
+            overlay_registry,
         }
     }
 
@@ -355,6 +363,13 @@ impl<'a> PrepaintCtx<'a> {
     /// End the modal focus-trap scope opened by [`enter_focus_trap`](Self::enter_focus_trap).
     pub(crate) fn exit_focus_trap(&mut self) {
         self.focus_registry.exit_trap_scope();
+    }
+
+    /// Register an open overlay so the dispatch path can route Esc / outside-click
+    /// dismissal to it. Called by [`Overlay::prepaint`](crate::Overlay) after the
+    /// anchor solve, with the solved content rect.
+    pub(crate) fn register_overlay(&mut self, entry: OverlayEntry) {
+        self.overlay_registry.register(entry);
     }
 
     /// Pop the current frame after recursing children.

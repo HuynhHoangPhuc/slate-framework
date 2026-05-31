@@ -5,13 +5,17 @@
 //!   `Overlay::anchor` (anchor-to-element — no hardcoded coordinates),
 //! - paints **on top** of the background list (high-depth scene layer),
 //! - **flips** above the button automatically if the window is short enough
-//!   that there's no room below (drag the bottom edge up to see it).
+//!   that there's no room below (drag the bottom edge up to see it),
+//! - **dismisses** on Esc or a click outside it (`Overlay::on_dismiss`); the
+//!   anchor button is excluded so it still toggles.
 //!
 //! **Modal dialog** (second button) toggles a `modal(true)` overlay that:
 //! - dims the whole window behind it with a **scrim**,
 //! - **traps Tab focus** to its two buttons (Tab/Shift+Tab cycle inside only),
 //! - **auto-focuses** its first button on open and **restores** the previously
-//!   focused element when it closes.
+//!   focused element when it closes,
+//! - **dismisses** on Esc or a scrim click, which also **blocks** clicks from
+//!   reaching the content behind it.
 //!
 //! The popover's `open` flag, the dialog's `dialog_open` flag, and the button's
 //! anchor rect are caller-owned `Signal`s held by the view: toggling a flag
@@ -80,10 +84,14 @@ impl PopoverDemo {
     }
 
     fn popover(&self) -> Overlay {
+        let open = self.open.clone();
         Overlay::new()
             // Anchor to the button's tracked rect (anchor-to-element).
             .anchor(self.anchor.clone())
             .placement(Placement::bottom())
+            // Dismiss on Esc or a click outside the popover (clicks on the
+            // anchor button are excluded, so the button still toggles).
+            .on_dismiss(move || open.set(false))
             .child(
                 Div::new()
                     .background(Color::from_hex("#cdd6f4").unwrap_or(Color::WHITE))
@@ -124,10 +132,14 @@ impl PopoverDemo {
     /// Tab-reachable elements while open; closing restores the prior focus.
     fn dialog(&self) -> Overlay {
         let close = self.dialog_open.clone();
+        let dismiss = self.dialog_open.clone();
         Overlay::new()
             .modal(true)
             .anchor(Bounds::from_origin_size(140.0, 90.0, 200.0, 0.0))
             .placement(Placement::bottom())
+            // Dismiss on Esc or a click on the scrim (outside the dialog). The
+            // scrim also blocks clicks from reaching the content behind it.
+            .on_dismiss(move || dismiss.set(false))
             .child(
                 Div::new()
                     .background(Color::from_hex("#cdd6f4").unwrap_or(Color::WHITE))

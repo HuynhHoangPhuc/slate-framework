@@ -5,6 +5,7 @@ use std::time::Instant;
 use slate_platform::{Modifiers, MouseButton, WindowId};
 use smallvec::SmallVec;
 
+use crate::elements::overlay::ClickOutcome;
 use crate::event::{
     EventCtx, MouseEvent, MouseHandler, PendingCaptureOp, PendingFocusOp, PointerEvent,
     PointerEventKind, PointerHandler,
@@ -37,6 +38,31 @@ impl AppState {
             modifiers,
             timestamp: Instant::now(),
         };
+
+        // Overlay outside-click dismiss. Consult the open-overlay registry
+        // before the normal hit-test. A click outside the top-most overlay's
+        // content dismisses it; for a modal the click lands on the scrim and is
+        // also swallowed (input-blocking — the base tree behind it gets nothing).
+        // The dismiss callback runs after the registry borrow drops and flips a
+        // caller signal (deferred-op discipline, ADR-001 re-entrancy safety).
+        {
+            let outcome = {
+                let guard = self.windows.borrow();
+                guard.get(&window).map(|w| {
+                    w.overlay_registry
+                        .borrow()
+                        .click_outcome(Point::new(position.0, position.1))
+                })
+            };
+            if let Some(ClickOutcome::Dismiss { callback, block }) = outcome {
+                if let Some(cb) = callback {
+                    cb();
+                }
+                if block {
+                    return AppSignal::RequestRedraw { window };
+                }
+            }
+        }
 
         // Update button state.
         let bit = button_to_bit(button);

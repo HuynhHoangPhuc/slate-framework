@@ -46,8 +46,12 @@
 mod anchor;
 mod builder;
 mod layout;
+mod registry;
 
 pub use anchor::{Align, Placement, Side};
+pub(crate) use registry::{ClickOutcome, OverlayEntry, OverlayRegistry};
+
+use std::rc::Rc;
 
 use crate::element::{AnyElement, IntoElement, Sealed};
 use crate::style::Style;
@@ -73,6 +77,12 @@ pub struct Overlay {
     /// keyboard focus to the overlay subtree while open (focus is auto-moved in
     /// on open and restored on close). Default `false` (popover/tooltip).
     pub(super) modal: bool,
+    /// Caller's dismiss callback, invoked when the user requests dismissal (Esc
+    /// while top-most, click outside the content, or a modal scrim click). The
+    /// overlay has no open/closed state of its own — the callback flips the
+    /// caller's `open` signal so the overlay drops out of the next rebuild.
+    /// `None` opts the overlay out of dismissal.
+    pub(super) on_dismiss: Option<Rc<dyn Fn()>>,
     /// Sizing constraints for the overlay node (NOT visual styling). Forced to
     /// `Position::Absolute` at layout so the overlay leaves sibling flow.
     pub(super) layout_style: Style,

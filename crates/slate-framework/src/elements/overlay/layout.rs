@@ -10,7 +10,7 @@ use crate::style::Position;
 use crate::types::{Bounds, ElementId, LayoutId, NodeContext, Point};
 
 use super::anchor::solve;
-use super::{Overlay, OverlayLayoutState, OverlayPaintState};
+use super::{Overlay, OverlayEntry, OverlayLayoutState, OverlayPaintState};
 
 /// Modal scrim color — semi-transparent black, linear premultiplied per the
 /// renderer's [`RectInstance`] contract (rgb already multiplied by alpha; black
@@ -92,6 +92,23 @@ impl Element for Overlay {
             cx.exit_focus_trap();
         }
         cx.pop_frame();
+
+        // Register as an open overlay so the dispatch path can route Esc /
+        // outside-click dismissal here. The content rect is the solved origin +
+        // the measured content size (the overlay node sizes to its content).
+        cx.register_overlay(OverlayEntry {
+            id: element_id,
+            content_bounds: Bounds::from_origin_size(
+                solved.x,
+                solved.y,
+                bounds.size.width,
+                bounds.size.height,
+            ),
+            anchor_bounds: self.anchor,
+            modal: self.modal,
+            depth: self.depth,
+            dismiss: self.on_dismiss.clone(),
+        });
 
         OverlayPaintState {
             solved_origin: solved,

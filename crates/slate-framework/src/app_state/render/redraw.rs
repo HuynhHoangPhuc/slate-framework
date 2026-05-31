@@ -150,6 +150,7 @@ impl AppState {
             let mut fb = win.focus_bounds.borrow_mut();
             let mut ihm = win.ime_handler_map.borrow_mut();
             let mut iri = win.ime_registered_ids.borrow_mut();
+            let mut ovr = win.overlay_registry.borrow_mut();
 
             hit.clear();
             a11y.clear();
@@ -161,6 +162,7 @@ impl AppState {
             fb.clear();
             ihm.clear();
             iri.clear();
+            ovr.clear();
             win.ime_registry.borrow_mut().clear();
 
             let mut cx = PrepaintCtx::new(
@@ -182,6 +184,7 @@ impl AppState {
                 &win.ime_registry,
                 &mut ihm,
                 &mut iri,
+                &mut ovr,
             );
 
             cx.init_root_frame();

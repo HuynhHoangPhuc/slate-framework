@@ -109,6 +109,11 @@ pub struct HeadlessApp {
     /// [`reconcile_modal_focus`](Self::reconcile_modal_focus).
     modal_focus_stack: Vec<(ElementId, Option<ElementId>)>,
 
+    /// Open overlays collected each prepaint (headless parity). Drives the
+    /// dismiss test hooks ([`overlay_escape`](Self::overlay_escape),
+    /// [`overlay_click`](Self::overlay_click)).
+    overlay_registry: crate::elements::overlay::OverlayRegistry,
+
     // IME state collected each prepaint (headless parity).
     ime_registry: RefCell<ImeRegistry>,
     ime_handler_map: HashMap<ElementId, ImeHandlers>,
@@ -297,6 +302,45 @@ impl HeadlessApp {
         self.hit_test_list
             .hit_test(crate::types::Point::new(x, y))
             .map(|r| r.element_id)
+    }
+
+    /// Fire the top-most open overlay's dismiss callback, mirroring the windowed
+    /// Esc-dismiss path. Returns `true` if an overlay was open this frame
+    /// (whether or not it wired an `on_dismiss`), `false` if none was open. Run
+    /// after a render so the overlay registry is populated.
+    pub fn overlay_escape(&self) -> bool {
+        match self.overlay_registry.topmost_dismiss() {
+            Some(callback) => {
+                if let Some(cb) = callback {
+                    cb();
+                }
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Simulate a mouse-down at `(x, y)` (logical px) against the open overlays,
+    /// mirroring the windowed outside-click path: when the click falls outside
+    /// the top-most overlay's content, its dismiss callback fires. Returns
+    /// `(dismissed, blocked)` where `dismissed` is whether a dismiss callback
+    /// actually fired (a modal that opted out of `on_dismiss` still blocks but
+    /// reports `false`), and `blocked` marks a modal scrim click the base tree
+    /// must not receive (input-blocking). Run after a render.
+    pub fn overlay_click(&self, x: f32, y: f32) -> (bool, bool) {
+        match self
+            .overlay_registry
+            .click_outcome(crate::types::Point::new(x, y))
+        {
+            crate::elements::overlay::ClickOutcome::Pass => (false, false),
+            crate::elements::overlay::ClickOutcome::Dismiss { callback, block } => {
+                let dismissed = callback.is_some();
+                if let Some(cb) = callback {
+                    cb();
+                }
+                (dismissed, block)
+            }
+        }
     }
 
     /// The OS-IME caret rect (client-relative physical px) an element published

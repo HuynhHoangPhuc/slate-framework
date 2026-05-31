@@ -208,6 +208,7 @@ impl HeadlessApp {
             focus_registry,
             focus_bounds,
             modal_focus_stack: Vec::new(),
+            overlay_registry: crate::elements::overlay::OverlayRegistry::default(),
             ime_registry: RefCell::new(ImeRegistry::new()),
             ime_handler_map: HashMap::new(),
             ime_registered_ids: HashSet::new(),

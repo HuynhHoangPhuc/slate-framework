@@ -31,6 +31,7 @@ use slate_text::GlyphCache;
 
 use crate::erased_view::ErasedView;
 use crate::event::{Handlers, ImeHandlers, KeyHandlers, MouseHandlers};
+use crate::elements::overlay::OverlayRegistry;
 use crate::focus::FocusRegistry;
 use crate::focus_ring::FocusBounds;
 use crate::hit_test::HitTestList;
@@ -108,6 +109,12 @@ pub struct WindowState {
     /// opened modals and restore prior focus when one closes.
     pub(crate) modal_focus_stack: RefCell<Vec<(ElementId, Option<ElementId>)>>,
 
+    // -- Overlays --------------------------------------------------------
+    /// Open overlays registered during the prepaint walk, consulted by the
+    /// key/mouse dispatch path for Esc / outside-click dismissal. Rebuilt each
+    /// frame (cleared before prepaint); holds the dismiss callbacks.
+    pub(crate) overlay_registry: RefCell<OverlayRegistry>,
+
     // -- IME -------------------------------------------------------------
     /// Wrapped in `Rc` so dispatch loops can clone a reference out before
     /// dropping the outer `windows` borrow (mirrors `focus_registry`).
@@ -184,6 +191,7 @@ impl WindowState {
             focus_registry: Rc::new(RefCell::new(FocusRegistry::new())),
             focus_bounds: RefCell::new(HashMap::new()),
             modal_focus_stack: RefCell::new(Vec::new()),
+            overlay_registry: RefCell::new(OverlayRegistry::default()),
             ime_registry: Rc::new(RefCell::new(ImeRegistry::new())),
             ime_handler_map: RefCell::new(HashMap::new()),
             ime_registered_ids: RefCell::new(HashSet::new()),

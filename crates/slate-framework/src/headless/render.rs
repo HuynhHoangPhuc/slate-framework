@@ -66,6 +66,7 @@ impl HeadlessApp {
         self.ime_handler_map.clear();
         self.ime_registered_ids.clear();
         self.ime_registry.borrow_mut().clear();
+        self.overlay_registry.clear();
         {
             let mut cx = PrepaintCtx::new(
                 self.layout_tree.inner(),
@@ -86,6 +87,7 @@ impl HeadlessApp {
                 &self.ime_registry,
                 &mut self.ime_handler_map,
                 &mut self.ime_registered_ids,
+                &mut self.overlay_registry,
             );
 
             // Initialize tree-position keying for stable ElementIds

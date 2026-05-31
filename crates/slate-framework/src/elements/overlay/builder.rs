@@ -20,6 +20,7 @@ impl Overlay {
             depth: Self::DEFAULT_DEPTH,
             gap: Self::DEFAULT_GAP,
             modal: false,
+            on_dismiss: None,
             layout_style: Style::default(),
             last_id: None,
         }
@@ -73,6 +74,28 @@ impl Overlay {
     /// popovers/tooltips/dropdowns that leave focus and the base tree alone.
     pub fn modal(mut self, modal: bool) -> Self {
         self.modal = modal;
+        self
+    }
+
+    /// Set the callback invoked when the user requests this overlay be
+    /// dismissed: pressing **Esc** while it is the top-most overlay, clicking
+    /// **outside** its content (for a non-modal popover, clicks on the
+    /// [`anchor`](Self::anchor) are excluded so the trigger can toggle), or
+    /// clicking a **modal**'s scrim.
+    ///
+    /// The overlay has no open/closed state of its own — wire this to flip the
+    /// caller-owned `open` signal so the overlay drops out of the next rebuild:
+    ///
+    /// ```ignore
+    /// let open = self.open.clone();
+    /// Overlay::new().on_dismiss(move || open.set(false))
+    /// ```
+    ///
+    /// The callback runs after event dispatch unwinds (deferred), so it may
+    /// freely read/write signals without re-entrant borrow panics. Without it,
+    /// the overlay cannot be dismissed by Esc/outside-click.
+    pub fn on_dismiss<F: Fn() + 'static>(mut self, on_dismiss: F) -> Self {
+        self.on_dismiss = Some(std::rc::Rc::new(on_dismiss));
         self
     }
 

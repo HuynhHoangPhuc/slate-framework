@@ -113,3 +113,10 @@ required-features = ["test-hooks"]
 name = "golden_trace_two_window"
 harness = false
 required-features = ["test-hooks"]
+
+# Overlay × IME coexistence: drives `set_ime_state` (a `test-hooks`-gated hook)
+# to compose while an overlay opens/closes. Standard headless harness (no real
+# window), so no `harness = false` — only the feature gate.
+[[test]]
+name = "overlay_coexistence"
+required-features = ["test-hooks"]
