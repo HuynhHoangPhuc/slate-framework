@@ -254,4 +254,24 @@ impl HeadlessApp {
             .map(|(&id, fb)| (id, fb.bounds))
             .collect()
     }
+
+    /// Topmost element whose hit region contains `(x, y)` (logical px), from the
+    /// hit regions registered during the last render. Test support for asserting
+    /// that a scrolled child's hit region tracks the scroll offset — same
+    /// inspection category as [`focusables`](Self::focusables).
+    pub fn hit_test(&self, x: f32, y: f32) -> Option<ElementId> {
+        self.hit_test_list
+            .hit_test(crate::types::Point::new(x, y))
+            .map(|r| r.element_id)
+    }
+
+    /// The OS-IME caret rect (client-relative physical px) an element published
+    /// during the last render, or `None` if it registered no caret. Lets a test
+    /// confirm a TextField's caret rect maps through an enclosing scroll offset.
+    pub fn ime_caret_rect(&self, id: ElementId) -> Option<slate_platform::PhysicalRect> {
+        self.ime_registry
+            .borrow()
+            .get(id)
+            .and_then(|rc| rc.borrow().caret_client_rect)
+    }
 }

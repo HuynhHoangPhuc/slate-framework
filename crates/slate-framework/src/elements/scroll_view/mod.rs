@@ -24,6 +24,7 @@ mod handlers;
 mod layout;
 mod reveal;
 mod scrollbar;
+mod virtual_list;
 
 use crate::element::{AnyElement, IntoElement, Sealed};
 use crate::reactive::Signal;
@@ -53,6 +54,15 @@ pub struct ScrollView {
     pub(super) offset_value: f32,
     /// Logical pixels scrolled per discrete (non-precise) wheel notch.
     pub(super) scroll_speed: f32,
+    /// Lazy uniform-height row source. When `Some`, `children` is rebuilt each
+    /// `request_layout` from the current visible window and any manually-added
+    /// children are ignored; when `None` the container renders `children`
+    /// directly.
+    pub(in crate::elements::scroll_view) virtual_list: Option<virtual_list::VirtualList>,
+    /// First absolute row index materialized this frame (window start). `0` in
+    /// non-virtual mode. Set in `request_layout`, reused by prepaint/paint to
+    /// translate the built window into content space.
+    pub(super) virtual_first: usize,
     /// Stable ElementId allocated during prepaint (available after prepaint).
     pub(super) last_id: Option<ElementId>,
 }

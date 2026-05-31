@@ -16,16 +16,22 @@ use crate::types::{
 use super::handlers::{clamp_offset, key_handler, scroll_handler};
 use super::reveal::reveal_focused_descendant;
 use super::scrollbar::{paint_thumb, register_thumb};
+use super::virtual_list::{resolve_viewport_height, virtual_content_height, visible_window};
 use super::{ScrollView, ScrollViewLayoutState, ScrollViewPaintState};
 
 impl ScrollView {
-    /// Total scrollable height of the content, in logical pixels: the bottom
-    /// edge of the lowest child (measured from the node's border-box top, which
-    /// already includes top border + padding) plus the node's bottom padding
-    /// and border. Including the trailing inset lets a fully-scrolled view
-    /// reveal it; omitting it would under-count `max_offset`. Used to bound the
-    /// scroll offset.
+    /// Total scrollable height of the content, in logical pixels.
+    ///
+    /// Virtual mode is arithmetic: `count * row_height`. Otherwise it is the
+    /// bottom edge of the lowest child (measured from the node's border-box top,
+    /// which already includes top border + padding) plus the node's bottom
+    /// padding and border. Including the trailing inset lets a fully-scrolled
+    /// view reveal it; omitting it would under-count `max_offset`. Used to bound
+    /// the scroll offset.
     fn content_height(&self, cx: &PrepaintCtx, node: taffy::NodeId) -> f32 {
+        if let Some(vl) = &self.virtual_list {
+            return virtual_content_height(vl.count, vl.row_height);
+        }
         let mut bottom = 0.0_f32;
         for i in 0..self.children.len() {
             if let Some(b) = resolve_child_bounds(cx.taffy, node, i, Point::ZERO) {
@@ -37,6 +43,65 @@ impl ScrollView {
         }
         bottom
     }
+
+    /// Logical-pixel Y shift applied to each materialized child so it lands in
+    /// content space, given this frame's clamped scroll offset.
+    ///
+    /// Non-virtual: children sit at their true content positions, so the shift
+    /// is just `-offset`. Virtual: Taffy lays the materialized window starting
+    /// at `y = 0`, but its first row is absolute index `virtual_first` living at
+    /// content `y = virtual_first * row_height`, so the window is shifted down
+    /// by that much before subtracting the offset. (`virtual_first = 0` and
+    /// `row_height = 0` collapse this to `-offset` for the non-virtual case.)
+    fn child_shift(&self, clamped_offset: f32) -> f32 {
+        let row_height = self.virtual_list.as_ref().map_or(0.0, |vl| vl.row_height);
+        self.virtual_first as f32 * row_height - clamped_offset
+    }
+
+    /// Rebuild `children` from the current visible window (virtual mode only).
+    ///
+    /// Called at the top of `request_layout`, before child Taffy nodes are
+    /// created, using the offset resolved under the render observer at builder
+    /// time plus the viewport height read off the style. With no fixed pixel
+    /// height the window can't be sized, so every row is materialized and
+    /// virtualization is effectively disabled (logged once per frame).
+    fn materialize_virtual_window(&mut self) {
+        let Some((count, row_height)) = self
+            .virtual_list
+            .as_ref()
+            .map(|vl| (vl.count, vl.row_height))
+        else {
+            return;
+        };
+
+        let (first, last) = match resolve_viewport_height(&self.layout_style) {
+            Some(viewport_h) => {
+                let content_h = virtual_content_height(count, row_height);
+                let max_offset = (content_h - viewport_h).max(0.0);
+                let clamped = clamp_offset(self.offset_value, max_offset);
+                visible_window(clamped, viewport_h, row_height, count)
+            }
+            None => {
+                log::warn!(
+                    "ScrollView::virtualized needs a fixed pixel height to window \
+                     its rows; rendering all {count} rows (virtualization disabled)"
+                );
+                (0, count)
+            }
+        };
+
+        // Borrow the builder only to fill a local vec, then swap — keeps the
+        // immutable borrow of `virtual_list` from colliding with `self.children`.
+        let rows = {
+            let vl = self
+                .virtual_list
+                .as_ref()
+                .expect("virtual_list present (checked above)");
+            (first..last).map(|i| (vl.builder)(i)).collect::<Vec<_>>()
+        };
+        self.children = rows;
+        self.virtual_first = first;
+    }
 }
 
 impl Element for ScrollView {
@@ -46,6 +111,10 @@ impl Element for ScrollView {
     fn request_layout(&mut self, cx: &mut LayoutCtx) -> (LayoutId, Self::LayoutState) {
         // Force a scroll viewport: a fixed box whose content may exceed it.
         self.layout_style.overflow = Self::viewport_overflow();
+
+        // Virtual mode: replace `children` with just the visible window before
+        // creating any layout nodes (so only that window costs anything).
+        self.materialize_virtual_window();
 
         let mut child_nodes = Vec::with_capacity(self.children.len());
         for child in &mut self.children {
@@ -59,14 +128,30 @@ impl Element for ScrollView {
         // an explicit `flex_shrink` set on a direct child — inside a scroll
         // container "shrink to fit" is the wrong semantic. Only direct children
         // are pinned; a shrinking grandchild inside a child Div is unaffected.
+        //
+        // Virtual mode additionally pins each row's height to the uniform
+        // `row_height`, so the arithmetic window math matches the laid-out
+        // geometry regardless of what height the row builder requested.
+        let row_height = self.virtual_list.as_ref().map(|vl| vl.row_height);
         for &cn in &child_nodes {
-            if let Ok(style) = cx.taffy.style(cn)
-                && style.flex_shrink != 0.0
-            {
-                let mut pinned = style.clone();
-                pinned.flex_shrink = 0.0;
-                if let Err(e) = cx.taffy.set_style(cn, pinned) {
-                    log::error!("ScrollView: failed to pin child flex_shrink: {e}");
+            if let Ok(style) = cx.taffy.style(cn) {
+                let needs_height = row_height.is_some();
+                if style.flex_shrink != 0.0 || needs_height {
+                    let mut pinned = style.clone();
+                    pinned.flex_shrink = 0.0;
+                    if let Some(rh) = row_height {
+                        // Pin size AND min/max height: Taffy clamps an explicit
+                        // size into `[min, max]`, so a row builder that set its
+                        // own min/max height would otherwise lay out at a height
+                        // the arithmetic window math doesn't expect.
+                        let h = taffy::Dimension::length(rh);
+                        pinned.size.height = h;
+                        pinned.min_size.height = h;
+                        pinned.max_size.height = h;
+                    }
+                    if let Err(e) = cx.taffy.set_style(cn, pinned) {
+                        log::error!("ScrollView: failed to pin child style: {e}");
+                    }
                 }
             }
         }
@@ -150,10 +235,11 @@ impl Element for ScrollView {
         } else {
             false
         };
+        let child_shift = self.child_shift(clamped_offset);
         cx.push_frame(element_id);
         for (i, child) in self.children.iter_mut().enumerate() {
             if let Some(mut cb) = resolve_child_bounds(cx.taffy, node, i, bounds.origin) {
-                cb.origin.y -= clamped_offset;
+                cb.origin.y += child_shift;
                 child.prepaint(cb, cx);
             }
         }
@@ -192,7 +278,7 @@ impl Element for ScrollView {
         cx: &mut PaintCtx,
     ) {
         let node = layout_state.node_id;
-        let offset = paint_state.clamped_offset;
+        let child_shift = self.child_shift(paint_state.clamped_offset);
 
         // Clip subsequent draws to the viewport (absolute bounds — NOT the
         // scroll-translated child positions), then paint children shifted up.
@@ -204,7 +290,7 @@ impl Element for ScrollView {
         ));
         for (i, child) in self.children.iter_mut().enumerate() {
             if let Some(mut cb) = resolve_child_bounds(cx.taffy, node, i, bounds.origin) {
-                cb.origin.y -= offset;
+                cb.origin.y += child_shift;
                 child.paint(cb, cx);
             }
         }

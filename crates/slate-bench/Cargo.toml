@@ -37,3 +37,7 @@ harness = false
 [[bench]]
 name = "ime_textfield"
 harness = false
+
+[[bench]]
+name = "large_scroll_list"
+harness = false
