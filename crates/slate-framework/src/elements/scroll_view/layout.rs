@@ -14,6 +14,7 @@ use crate::types::{
 };
 
 use super::handlers::{clamp_offset, key_handler, scroll_handler};
+use super::reveal::reveal_focused_descendant;
 use super::scrollbar::{paint_thumb, register_thumb};
 use super::{ScrollView, ScrollViewLayoutState, ScrollViewPaintState};
 
@@ -155,6 +156,14 @@ impl Element for ScrollView {
                 cb.origin.y -= clamped_offset;
                 child.prepaint(cb, cx);
             }
+        }
+
+        // Keyboard / screen-reader reveal: if focus moved to an off-screen
+        // descendant this frame, scroll it into view (sets the offset signal so
+        // the reveal lands next frame). Runs after the children so their parent
+        // links and focus bounds are recorded; only when scrolling is enabled.
+        if let Some(offset) = self.offset.clone() {
+            reveal_focused_descendant(cx, element_id, &offset, bounds, clamped_offset, max_offset);
         }
 
         // Scrollbar thumb: a hittable, draggable overlay registered after the

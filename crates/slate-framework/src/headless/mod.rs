@@ -235,4 +235,23 @@ impl HeadlessApp {
     pub fn set_pressing(&mut self, pressing: bool) {
         self.pressing = pressing;
     }
+
+    /// Set keyboard focus to `id` (test support for focus-driven behaviour such
+    /// as ScrollView scroll-into-view). Focus only applies when `id` was
+    /// registered as focusable in the preceding render; `clear()` at the next
+    /// render preserves `focused`, so the focus is observed during that
+    /// render's prepaint.
+    pub fn set_focus(&mut self, id: ElementId) -> bool {
+        self.focus_registry.set_focus(id)
+    }
+
+    /// The focusable elements registered during the last render, as
+    /// `(id, bounds)` pairs. Test support for locating a focusable (e.g. an
+    /// off-screen child) without predicting its hashed `ElementId`.
+    pub fn focusables(&self) -> Vec<(ElementId, crate::types::Bounds)> {
+        self.focus_bounds
+            .iter()
+            .map(|(&id, fb)| (id, fb.bounds))
+            .collect()
+    }
 }

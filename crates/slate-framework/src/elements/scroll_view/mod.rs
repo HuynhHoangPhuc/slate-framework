@@ -22,6 +22,7 @@
 mod builder;
 mod handlers;
 mod layout;
+mod reveal;
 mod scrollbar;
 
 use crate::element::{AnyElement, IntoElement, Sealed};
