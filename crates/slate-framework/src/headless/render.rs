@@ -74,6 +74,7 @@ impl HeadlessApp {
                 &mut self.text_system,
                 &self.executor.foreground,
                 self.scale_factor,
+                Size::new(w as f32, h as f32),
                 &mut self.state_registry,
                 &mut self.text_shaping_cache,
                 &mut self.handler_map,

@@ -170,6 +170,7 @@ impl AppState {
                 ts,
                 &self.executor.foreground,
                 scale_factor,
+                Size::new(lw as f32, lh as f32),
                 &mut sr,
                 &mut tsc,
                 &mut hm,

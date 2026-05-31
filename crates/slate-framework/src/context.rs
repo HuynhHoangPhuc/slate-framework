@@ -27,7 +27,7 @@ use crate::interaction_state::InteractionSnapshot;
 use crate::paint_cache::TextShapingCache;
 use crate::reactive_state::StateRegistry;
 use crate::text_system::TextSystem;
-use crate::types::{AccessibilityInfo, AccessibilityNode, Bounds, ElementId, NodeContext};
+use crate::types::{AccessibilityInfo, AccessibilityNode, Bounds, ElementId, NodeContext, Size};
 
 /// Context for the `request_layout` phase.
 ///
@@ -88,6 +88,9 @@ pub struct PrepaintCtx<'a> {
     pub executor: &'a ForegroundExecutor,
     /// Display scale factor.
     pub scale_factor: f64,
+    /// Window/viewport size in logical pixels (the root bounds' size). Used by
+    /// anchored overlays to flip/shift against the visible viewport rect.
+    pub(crate) viewport: Size,
 
     // --- Element-level state registry ---
     /// State registry for element-level reactive state slots.
@@ -168,6 +171,7 @@ impl<'a> PrepaintCtx<'a> {
         text: &'a mut TextSystem,
         executor: &'a ForegroundExecutor,
         scale_factor: f64,
+        viewport: Size,
         state_registry: &'a mut StateRegistry,
         text_shaping_cache: &'a mut TextShapingCache,
         handler_map: &'a mut HashMap<ElementId, Handlers>,
@@ -187,6 +191,7 @@ impl<'a> PrepaintCtx<'a> {
             text,
             executor,
             scale_factor,
+            viewport,
             state_registry,
             text_shaping_cache,
             id_stack: Vec::new(),
@@ -538,6 +543,40 @@ impl<'a> PaintCtx<'a> {
         match self.clip_stack.last() {
             Some(parent) => self.scene.push_clip_layer(*parent),
             None => self.scene.push_layer(),
+        }
+    }
+
+    /// Open a fresh, unclipped scene layer at z-`depth` for overlay content.
+    ///
+    /// The new layer carries no clip, so overlay content **escapes any enclosing
+    /// scroll/clip** even when the overlay is declared deep inside a clipped
+    /// subtree; the high `depth` lifts it above the base tree under the
+    /// production depth-sort regardless of emission order (see
+    /// [`Scene::push_layer_with_depth`](slate_renderer::scene::Scene::push_layer_with_depth)).
+    ///
+    /// Unlike [`push_clip`](Self::push_clip) this does **not** touch the clip
+    /// stack — the overlay layer is intentionally unclipped — so the matching
+    /// [`pop_overlay_layer`](Self::pop_overlay_layer) restores whatever clip was
+    /// in effect before. Callers MUST pair the two.
+    pub fn push_overlay_layer(&mut self, depth: i32) {
+        self.scene.push_layer_with_depth(depth);
+    }
+
+    /// Resume painting under the clip in effect before the matching
+    /// [`push_overlay_layer`](Self::push_overlay_layer) (or unclipped at base
+    /// depth when no clip was active), in a fresh layer.
+    ///
+    /// The no-clip branch uses `push_layer_with_depth(0)` rather than
+    /// [`push_layer`](slate_renderer::scene::Scene::push_layer) precisely
+    /// because it must **not** collapse onto the overlay's layer: when the
+    /// overlay painted nothing, that high-depth layer is still empty and open,
+    /// and `push_layer`'s empty-predecessor collapse would leave it open — so
+    /// every following sibling (and the focus ring) would inherit the overlay
+    /// depth. A depth-`0` push always opens a fresh layer, restoring base depth.
+    pub fn pop_overlay_layer(&mut self) {
+        match self.clip_stack.last() {
+            Some(parent) => self.scene.push_clip_layer(*parent),
+            None => self.scene.push_layer_with_depth(0),
         }
     }
 
