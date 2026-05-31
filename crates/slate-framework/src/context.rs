@@ -12,7 +12,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use slate_renderer::atlas::Atlas;
-use slate_renderer::scene::Scene;
+use slate_renderer::scene::{ClipRect, Scene};
 use slate_text::GlyphCache;
 use taffy::TaffyTree;
 
@@ -469,6 +469,10 @@ pub struct PaintCtx<'a> {
     /// Hover/press chains for this frame, used to resolve interaction-state
     /// style overrides. Built after the hover diff, before the paint walk.
     pub(crate) interaction: InteractionSnapshot,
+    /// Stack of *effective* (already-intersected) clip rects. `last()` is the
+    /// clip applied to subsequent draws; empty = unclipped (full viewport).
+    /// Pushed/popped by [`push_clip`](Self::push_clip) / [`pop_clip`](Self::pop_clip).
+    clip_stack: Vec<ClipRect>,
 }
 
 impl<'a> PaintCtx<'a> {
@@ -503,6 +507,37 @@ impl<'a> PaintCtx<'a> {
             ime_registry,
             window,
             interaction,
+            clip_stack: Vec::new(),
+        }
+    }
+
+    /// Push a clip rectangle and open a fresh clipped scene layer. Every
+    /// primitive painted until the matching [`pop_clip`](Self::pop_clip) is
+    /// scissored to `clip` intersected with any enclosing clip (so nested
+    /// scroll containers compose). `clip` is in logical pixels, absolute
+    /// (window-relative) coordinates — pass the element's viewport bounds, not
+    /// the scroll-translated child positions.
+    ///
+    /// Callers MUST pair every `push_clip` with a `pop_clip`; an unbalanced
+    /// push leaves later siblings (and the framework focus-ring overlay)
+    /// wrongly clipped.
+    pub fn push_clip(&mut self, clip: ClipRect) {
+        let effective = match self.clip_stack.last() {
+            Some(parent) => parent.intersect(&clip),
+            None => clip,
+        };
+        self.clip_stack.push(effective);
+        self.scene.push_clip_layer(effective);
+    }
+
+    /// Pop the most recent clip and resume painting under the enclosing clip
+    /// (or unclipped when the stack empties) in a fresh layer. Pairs with
+    /// [`push_clip`](Self::push_clip).
+    pub fn pop_clip(&mut self) {
+        self.clip_stack.pop();
+        match self.clip_stack.last() {
+            Some(parent) => self.scene.push_clip_layer(*parent),
+            None => self.scene.push_layer(),
         }
     }
 

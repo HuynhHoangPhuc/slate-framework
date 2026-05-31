@@ -102,9 +102,11 @@ pub mod reactive {
 // Re-export smol::Timer for async timing.
 pub use context::{LayoutCtx, PaintCtx, PrepaintCtx};
 pub use element::{AnyElement, Element, IntoElement};
+/// Axis-aligned clip rectangle (logical px); appears in [`PaintCtx::push_clip`].
+pub use slate_renderer::ClipRect;
 pub use elements::{
-    Div, Image, MAX_IMAGE_DIM, Text, TextAlign, TextArea, TextAreaStyle, TextField, TextFieldStyle,
-    TextWrap,
+    Div, Image, MAX_IMAGE_DIM, ScrollView, Text, TextAlign, TextArea, TextAreaStyle, TextField,
+    TextFieldStyle, TextWrap,
 };
 pub use executor::{BackgroundExecutor, Executor, ForegroundExecutor, RedrawRequester};
 pub use focus::{FocusRegistry, FocusableEntry};

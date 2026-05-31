@@ -338,6 +338,32 @@ impl Scene {
         self.cur_layer_open = true;
     }
 
+    /// Start a new layer clipped to `clip` (logical pixels); subsequent
+    /// `push_*` calls extend it. The renderer applies `clip` as a `wgpu`
+    /// scissor around every draw in this layer.
+    ///
+    /// Unlike [`push_layer`](Self::push_layer) this *always* opens a fresh
+    /// layer and never collapses onto an empty predecessor: an unclipped empty
+    /// layer and a clipped empty layer are not interchangeable, so collapsing
+    /// would silently drop the clip. An empty clipped layer is harmless — the
+    /// renderer issues a scissor then draws nothing.
+    ///
+    /// Nesting (scroll-inside-scroll) is the caller's responsibility: pass an
+    /// already-intersected rect (see [`ClipRect::intersect`]) so the renderer's
+    /// per-frame loop stays a dumb "one scissor per layer" walk.
+    pub fn push_clip_layer(&mut self, clip: ClipRect) {
+        self.layers.push(Layer {
+            clip: Some(clip),
+            ..Layer::anchored(
+                len_as_u32(self.rects.len()),
+                len_as_u32(self.shadows.len()),
+                len_as_u32(self.images.len()),
+                len_as_u32(self.glyphs.len()),
+            )
+        });
+        self.cur_layer_open = true;
+    }
+
     fn layer_is_empty(l: &Layer) -> bool {
         l.rects.is_empty() && l.shadows.is_empty() && l.images.is_empty() && l.glyphs.is_empty()
     }
@@ -539,6 +565,32 @@ mod tests {
         // Repeating push_layer on the (now empty) second layer collapses.
         s.push_layer();
         assert_eq!(s.layers.len(), 2);
+    }
+
+    #[test]
+    fn push_clip_layer_sets_clip_and_opens_fresh_layer() {
+        let mut s = Scene::new();
+        s.push_rect(dummy_rect()); // layer 0, unclipped
+        let clip = ClipRect::new(Lpx(5.0), Lpx(6.0), Lpx(20.0), Lpx(30.0));
+        s.push_clip_layer(clip);
+        s.push_rect(dummy_rect()); // lands in the clipped layer
+        assert_eq!(s.layers.len(), 2);
+        assert_eq!(s.layers[0].clip, None);
+        assert_eq!(s.layers[1].clip, Some(clip));
+        assert_eq!(s.layers[0].rects, 0..1);
+        assert_eq!(s.layers[1].rects, 1..2);
+    }
+
+    #[test]
+    fn push_clip_layer_never_collapses_onto_empty_predecessor() {
+        // Even when the current layer is empty, a clip layer must be distinct —
+        // collapsing would drop the clip.
+        let mut s = Scene::new();
+        s.push_layer(); // empty, unclipped, open
+        let clip = ClipRect::new(Lpx(0.0), Lpx(0.0), Lpx(10.0), Lpx(10.0));
+        s.push_clip_layer(clip);
+        assert_eq!(s.layers.len(), 2);
+        assert_eq!(s.layers[1].clip, Some(clip));
     }
 
     #[test]
