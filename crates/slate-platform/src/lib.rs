@@ -171,6 +171,14 @@ pub trait Window: HasWindowHandle + HasDisplayHandle + 'static {
     fn is_live_resizing(&self) -> bool {
         false
     }
+
+    /// Bring the window to the front and make it the key/active window.
+    ///
+    /// macOS: `makeKeyAndOrderFront:`. Windows: `SetForegroundWindow`. Used by
+    /// `focus_window`-style app helpers to raise a specific window in a
+    /// multi-window app. Default is a no-op so headless/mock windows compile;
+    /// concrete platform impls override.
+    fn focus(&self) {}
 }
 
 /// Window placement state reported by [`Window::placement`].
@@ -485,6 +493,15 @@ pub enum Event {
     /// Window's native resources have been released; the [`WindowId`] is now invalid.
     WindowDestroyed {
         /// Target window.
+        window: WindowId,
+    },
+    /// Window became the key/active window (gained focus). Used by per-window
+    /// native menus: on macOS — which has a single app menu bar — the framework
+    /// swaps the focused window's menu into `NSApp.mainMenu` on this event.
+    /// Windows has true per-window menu bars (`SetMenu` per `HWND`), so it does
+    /// not need to emit this for menus.
+    WindowFocused {
+        /// Window that became key/active.
         window: WindowId,
     },
     /// OS asks the application to redraw the window now.

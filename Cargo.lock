@@ -1570,6 +1570,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "multi-window-menus"
+version = "1.0.1"
+dependencies = [
+ "env_logger",
+ "log",
+ "slate-framework",
+]
+
+[[package]]
 name = "naga"
 version = "29.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

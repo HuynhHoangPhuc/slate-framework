@@ -65,18 +65,18 @@ pub(crate) mod reactive_state;
 pub mod reactive_value;
 pub mod render_cx;
 pub mod style;
-pub mod theme;
 #[cfg(all(target_os = "windows", feature = "test-hooks"))]
 #[doc(hidden)]
 pub mod test_support;
 pub mod text_system;
+pub mod theme;
 pub mod types;
 pub mod view;
 pub mod viz;
 
 // Re-export underlying crates
 pub use slate_platform;
-pub use slate_platform::{Key, KeyCode, Modifiers, MouseButton, NamedKey, WindowOptions};
+pub use slate_platform::{Key, KeyCode, Modifiers, MouseButton, NamedKey, WindowId, WindowOptions};
 pub use slate_renderer;
 pub use slate_text;
 
@@ -110,33 +110,34 @@ pub mod reactive {
 // Re-export smol::Timer for async timing.
 pub use context::{LayoutCtx, PaintCtx, PrepaintCtx};
 pub use element::{AnyElement, Element, IntoElement};
-/// Axis-aligned clip rectangle (logical px); appears in [`PaintCtx::push_clip`].
-pub use slate_renderer::ClipRect;
 pub use elements::{
     Align, Border, Button, Checkbox, Column, ContextMenu, DataGrid, Div, IconButton, Image, List,
-    ListEntry,
-    MAX_IMAGE_DIM, MenuEntry, MenuList, Overlay, Panel, Placement, ScrollView, Select, Side, Slider,
-    SplitAxis, Splitter, StatusBar, Switch, Text, TextAlign, TextArea, TextAreaStyle, TextField,
-    TextFieldStyle, TextWrap, Toolbar, Tooltip, Tree, TreeNode, VirtualList,
+    ListEntry, MAX_IMAGE_DIM, MenuEntry, MenuList, Overlay, Panel, Placement, ScrollView, Select,
+    Side, Slider, SplitAxis, Splitter, StatusBar, Switch, Text, TextAlign, TextArea, TextAreaStyle,
+    TextField, TextFieldStyle, TextWrap, Toolbar, Tooltip, Tree, TreeNode, VirtualList,
 };
 pub use executor::{BackgroundExecutor, Executor, ForegroundExecutor, RedrawRequester};
 pub use focus::{FocusRegistry, FocusableEntry};
 pub use hit_test::{CursorStyle, HitRegion, HitTestList, HitTestResult};
 pub use ime::{CachedImeQuery, ImeRegistry, ImeState, PendingImeOp, Preedit};
 pub use layout::{LayoutTree, compute_layout, resolve_bounds, resolve_child_bounds};
-pub use menu::{Accelerator, Menu, MenuAction, MenuHandler, MenuId, MenuItem, MenuRegistry, SubMenu};
+pub use menu::{
+    Accelerator, Menu, MenuAction, MenuHandler, MenuId, MenuItem, MenuRegistry, SubMenu,
+};
 pub use persistence::{InMemoryStore, PersistenceStore, WindowGeometry};
 pub use slate_platform::{PlatformMenu, PlatformMenuItem, WindowPlacement};
+/// Axis-aligned clip rectangle (logical px); appears in [`PaintCtx::push_clip`].
+pub use slate_renderer::ClipRect;
 pub use smol::Timer;
 pub use style::{DisplayMode, Length, Overflow, Position, SizeConstraint, Style};
-pub use theme::{Radii, Spacing, Theme, ThemeMode, ThemeSet, TypeStyle, Typography, theme};
-pub use viz::{BarChart, Sparkline};
 pub use text_system::{PlatformFont, TextSystem};
+pub use theme::{Radii, Spacing, Theme, ThemeMode, ThemeSet, TypeStyle, Typography, theme};
 pub use types::{
     AccessibilityAction, AccessibilityInfo, AccessibilityNode, AccessibilityRelationships,
     AccessibilityRole, Bounds, Edges, ElementId, LayoutId, LiveRegion, NodeContext, Point, Size,
 };
 pub use view::{IntoAny, View};
+pub use viz::{BarChart, Sparkline};
 
 // Note: TaffyTree is NOT re-exported — internal modules import taffy::TaffyTree directly.
 // This hides the layout tree implementation from external consumers.

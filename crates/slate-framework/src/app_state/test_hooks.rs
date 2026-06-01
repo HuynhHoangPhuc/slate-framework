@@ -511,6 +511,16 @@ impl AppState {
         self.install_menu(menu);
     }
 
+    /// Install a per-window native menu override. Test-only wrapper.
+    pub fn install_window_menu_for_test(&self, window: WindowId, menu: crate::menu::Menu) {
+        self.install_window_menu(window, menu);
+    }
+
+    /// Drive the focus-driven menu swap. Test-only wrapper.
+    pub fn handle_window_focused_for_test(&self, window: WindowId) -> AppSignal {
+        self.handle_window_focused(window)
+    }
+
     /// Dispatch a synthetic native-menu activation. Test-only.
     pub fn dispatch_menu_for_test(&self, window: WindowId, id: crate::menu::MenuId) -> AppSignal {
         self.dispatch_menu(window, id)

@@ -134,8 +134,16 @@ pub struct AppState {
 
     // The active native menu-bar model. Lowered to a `PlatformMenu` and pushed
     // to each window via the platform `set_menu` seam when installed. `None`
-    // until an adopter calls `AppContext::set_menu`.
+    // until an adopter calls `AppContext::set_menu`. Acts as the fallback menu
+    // for windows without a per-window override (see `window_menus`).
     pub(super) active_menu: RefCell<Option<crate::menu::Menu>>,
+
+    // Per-window menu overrides (multi-window polish). When a window has an
+    // entry here, it takes precedence over `active_menu`. On macOS — a single
+    // shared app menu bar — the focused window's resolved menu is installed on
+    // `Event::WindowFocused`; on Windows each window owns its own `HMENU`.
+    // Dropped on window destroy.
+    pub(super) window_menus: RefCell<HashMap<WindowId, crate::menu::Menu>>,
 
     // Adopter-supplied geometry-persistence store (window position/size/maximized
     // across launches). `None` until `App::persistence` installs one — every

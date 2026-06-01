@@ -20,9 +20,9 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
     CW_USEDEFAULT, CreateWindowExW, DestroyWindow, GetClientRect, GetWindowPlacement, KillTimer,
-    SW_SHOWMAXIMIZED, SW_SHOWMINIMIZED, SetTimer, SetWindowTextW, ShowWindow, USER_TIMER_MINIMUM,
-    WINDOWPLACEMENT, WS_DISABLED, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_OVERLAPPEDWINDOW,
-    WS_POPUP, WS_VISIBLE,
+    SW_SHOWMAXIMIZED, SW_SHOWMINIMIZED, SetForegroundWindow, SetTimer, SetWindowTextW, ShowWindow,
+    USER_TIMER_MINIMUM, WINDOWPLACEMENT, WS_DISABLED, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW,
+    WS_OVERLAPPEDWINDOW, WS_POPUP, WS_VISIBLE,
 };
 use windows::core::PCWSTR;
 
@@ -270,10 +270,7 @@ impl Window for WinWindow {
         // physical pixels. Scale to client pixels here; the menu backend handles
         // the client→screen conversion.
         let scale = self.scale_factor() as f32;
-        let client = (
-            (at.0 * scale).round() as i32,
-            (at.1 * scale).round() as i32,
-        );
+        let client = ((at.0 * scale).round() as i32, (at.1 * scale).round() as i32);
         super::menu::pop_up_context_menu(self.inner.hwnd, menu, client);
     }
 
@@ -347,6 +344,13 @@ impl Window for WinWindow {
                 "SetTimer failed in schedule_redraw_at; redraw deferred to next natural event"
             );
         }
+    }
+
+    fn focus(&self) {
+        // Raise to the foreground. Each Windows window owns its own `HMENU`
+        // (per-`HWND` `SetMenu`), so no menu swap is needed on focus.
+        // SAFETY: hwnd is valid for the lifetime of this WinWindow.
+        let _ = unsafe { SetForegroundWindow(self.inner.hwnd) };
     }
 }
 

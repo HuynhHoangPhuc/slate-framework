@@ -37,8 +37,9 @@ fn menu_target(mtm: MainThreadMarker) -> Retained<MenuTarget> {
 /// Install `model` as the application menu bar (`NSApp.mainMenu`).
 ///
 /// macOS has a single app-global menu bar; `window` is recorded as the owner
-/// credited on the next activation (last-writer-wins until per-window menu
-/// ownership lands in a later polish phase).
+/// credited on the next activation. The framework drives per-window menu
+/// ownership by re-installing the focused window's menu here on
+/// `Event::WindowFocused`, so the recorded owner always tracks the key window.
 pub(crate) fn set_menu_bar(window: WindowId, model: &PlatformMenu, mtm: MainThreadMarker) {
     let target = menu_target(mtm);
     target.set_window(window);

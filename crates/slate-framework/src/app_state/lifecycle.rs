@@ -108,6 +108,7 @@ impl AppState {
             on_ime_disabled: RefCell::new(Vec::new()),
             menu_registry: RefCell::new(crate::menu::MenuRegistry::new()),
             active_menu: RefCell::new(None),
+            window_menus: RefCell::new(HashMap::new()),
             persistence: RefCell::new(None),
             persistence_keys: RefCell::new(HashMap::new()),
         }
@@ -115,10 +116,7 @@ impl AppState {
 
     /// Install the adopter's geometry-persistence store. Called once by
     /// `App::run` when the adopter supplied one via `App::persistence`.
-    pub(crate) fn install_persistence(
-        &self,
-        store: Rc<dyn crate::persistence::PersistenceStore>,
-    ) {
+    pub(crate) fn install_persistence(&self, store: Rc<dyn crate::persistence::PersistenceStore>) {
         *self.persistence.borrow_mut() = Some(store);
     }
 
@@ -239,6 +237,12 @@ impl AppState {
         for mut pending in drained {
             let id = pending.window.id();
             self.install_window(pending.window, pending.persistence_key);
+            // Apply any per-window (or app-global) menu now that the window is
+            // in the map. A menu set during the spawning handler couldn't be
+            // pushed then (the window wasn't materialised yet); do it here so
+            // both platforms get it deterministically without depending on a
+            // focus notification.
+            self.apply_window_menu(id);
             if let Err(e) = self.init_surfaces(id, &mut pending.view_factory, cx, platform) {
                 log::error!(
                     "drain_pending_window_creates: init_surfaces failed for {:?}: {}",
@@ -311,6 +315,7 @@ impl AppState {
         // while it is still in the map, so this must precede the removal below.
         self.save_window_geometry(id);
         self.persistence_keys.borrow_mut().remove(&id);
+        self.window_menus.borrow_mut().remove(&id);
 
         // Drop the WindowState — renderer, view, and all per-window resources
         // are freed here. This is the only correct place to do it: the borrow

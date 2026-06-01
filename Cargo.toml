@@ -15,6 +15,7 @@ members = [
     "examples/hello-element",
     "examples/hello-rect",
     "examples/ime-textfield",
+    "examples/multi-window-menus",
     "examples/native-menu",
     "examples/overlay-popover",
     "examples/overlay-widgets",

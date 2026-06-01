@@ -226,6 +226,58 @@ impl AppContext {
         state.register_menu_action(id, handler);
     }
 
+    /// Install `menu` as `window`'s native menu, overriding the app-global menu
+    /// set via [`set_menu`](Self::set_menu) for that window only.
+    ///
+    /// Items route through the same action registry; register their handlers
+    /// via [`on_menu_action`](Self::on_menu_action). On Windows each window owns
+    /// a distinct `HMENU` so this is immediate; on macOS — one shared app menu
+    /// bar — the override is installed whenever the window becomes key. No-op
+    /// outside a live [`App::run`].
+    pub fn set_window_menu(&self, window: slate_platform::WindowId, menu: crate::menu::Menu) {
+        let Some(weak) = &self.state else { return };
+        let Some(state) = weak.upgrade() else { return };
+        state.install_window_menu(window, menu);
+    }
+
+    /// Ids of all currently-open windows, in arbitrary order.
+    ///
+    /// Useful for building a "Window" menu or iterating windows in a
+    /// multi-window app. Returns an empty `Vec` outside a live [`App::run`].
+    pub fn window_ids(&self) -> Vec<slate_platform::WindowId> {
+        let Some(weak) = &self.state else {
+            return Vec::new();
+        };
+        let Some(state) = weak.upgrade() else {
+            return Vec::new();
+        };
+        state.windows.borrow().keys().copied().collect()
+    }
+
+    /// Bring `window` to the front and make it the key/active window.
+    ///
+    /// No-op for an unknown `window` or outside a live [`App::run`].
+    pub fn focus_window(&self, window: slate_platform::WindowId) {
+        let Some(weak) = &self.state else { return };
+        let Some(state) = weak.upgrade() else { return };
+        let guard = state.windows.borrow();
+        if let Some(win) = guard.get(&window) {
+            win.window.focus();
+        }
+    }
+
+    /// Compute a cascaded top-left position for the next new window so windows
+    /// don't stack exactly on top of one another.
+    ///
+    /// Offsets `base` by `step` for each window already open: the first new
+    /// window lands at `base`, the next at `base + step`, and so on. Feed the
+    /// result into [`WindowOptions::position`](slate_platform::WindowOptions).
+    /// Falls back to `base` outside a live [`App::run`].
+    pub fn cascade_position(&self, base: (i32, i32), step: i32) -> (i32, i32) {
+        let n = self.window_ids().len() as i32;
+        (base.0 + n * step, base.1 + n * step)
+    }
+
     /// Construct an `AppContext` directly. Test-only.
     #[cfg(any(test, feature = "test-hooks"))]
     #[doc(hidden)]
@@ -618,6 +670,7 @@ impl App {
                     AppSignal::None
                 }
                 Event::WindowDestroyed { window, .. } => state_ref.handle_window_destroyed(window),
+                Event::WindowFocused { window, .. } => state_ref.handle_window_focused(window),
                 Event::Wake => state_ref.handle_wake(),
                 Event::MouseDown {
                     window,

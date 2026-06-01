@@ -526,6 +526,7 @@ impl WindowDelegate {
     /// absorbs cross-app modifier drift (e.g. Shift pressed in another app
     /// during Alt-Tab).
     pub(super) fn responder_window_did_become_key(&self, notification: &NSNotification) {
+        let window_id = self.ivars().window_id.get();
         ffi_boundary(|| {
             let Some(win) = notification
                 .object()
@@ -547,6 +548,12 @@ impl WindowDelegate {
                     .prev_modifier_flags
                     .set(event.modifierFlags());
             }
+            // Notify the framework so it can swap this window's native menu into
+            // the single shared app menu bar (per-window menu ownership). macOS
+            // has one `NSApp.mainMenu`, so the focused window's menu is installed
+            // on focus rather than per window. Re-entrancy-safe: `dispatch_event`
+            // drops the event if a handler is already on the stack.
+            dispatch_event(Event::WindowFocused { window: window_id });
         });
     }
 }
