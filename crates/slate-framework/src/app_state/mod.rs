@@ -18,6 +18,7 @@ mod dispatch;
 mod focus;
 mod guards;
 mod lifecycle;
+mod menu;
 mod render;
 mod state;
 #[cfg(any(test, feature = "test-hooks"))]

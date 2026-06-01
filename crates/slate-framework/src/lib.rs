@@ -56,6 +56,7 @@ pub(crate) mod image_cache;
 pub mod ime;
 pub mod interaction_state;
 pub mod layout;
+pub mod menu;
 pub(crate) mod paint_cache;
 #[cfg(feature = "profiling")]
 pub mod profiling;
@@ -122,6 +123,8 @@ pub use focus::{FocusRegistry, FocusableEntry};
 pub use hit_test::{CursorStyle, HitRegion, HitTestList, HitTestResult};
 pub use ime::{CachedImeQuery, ImeRegistry, ImeState, PendingImeOp, Preedit};
 pub use layout::{LayoutTree, compute_layout, resolve_bounds, resolve_child_bounds};
+pub use menu::{Accelerator, Menu, MenuAction, MenuHandler, MenuId, MenuItem, MenuRegistry, SubMenu};
+pub use slate_platform::{PlatformMenu, PlatformMenuItem};
 pub use smol::Timer;
 pub use style::{DisplayMode, Length, Overflow, Position, SizeConstraint, Style};
 pub use theme::{Radii, Spacing, Theme, ThemeMode, ThemeSet, TypeStyle, Typography, theme};

@@ -165,6 +165,42 @@ impl AppContext {
         Some(state.theme_mode.clone())
     }
 
+    /// Install `menu` as the application's native menu bar.
+    ///
+    /// The model is stored and lowered to a platform descriptor, then pushed to
+    /// every window through the platform menu seam. Until a native backend is
+    /// wired (P6b macOS / P6c Windows) the platform call is a no-op, but the
+    /// model + action routing are fully live and testable. Register a handler
+    /// for each actionable item's [`MenuId`](crate::MenuId) via
+    /// [`on_menu_action`](Self::on_menu_action).
+    ///
+    /// No-op outside a live [`App::run`] (e.g. `new_for_test`).
+    pub fn set_menu(&self, menu: crate::menu::Menu) {
+        let Some(weak) = &self.state else { return };
+        let Some(state) = weak.upgrade() else { return };
+        state.install_menu(menu);
+    }
+
+    /// Register the handler invoked when the menu item carrying `id` is
+    /// activated. Replaces any prior handler for the same id.
+    ///
+    /// Handlers run on the main thread; capture `Signal`/`AppContext` clones to
+    /// mutate state — the mutation schedules the next view rebuild (Strategy A),
+    /// exactly like an `on_click`/key handler. No-op outside a live
+    /// [`App::run`].
+    ///
+    /// Handler registration is **independent of menu installation** and in any
+    /// order: register before or after [`set_menu`](Self::set_menu). Handlers
+    /// persist across menu swaps (installing a new menu does not clear them),
+    /// so apps with dynamic menus should reuse stable [`MenuId`](crate::MenuId)s
+    /// and overwrite a handler by re-registering its id. Activating an id with
+    /// no registered handler is a safe no-op.
+    pub fn on_menu_action(&self, id: crate::menu::MenuId, handler: impl Fn() + 'static) {
+        let Some(weak) = &self.state else { return };
+        let Some(state) = weak.upgrade() else { return };
+        state.register_menu_action(id, handler);
+    }
+
     /// Construct an `AppContext` directly. Test-only.
     #[cfg(any(test, feature = "test-hooks"))]
     #[doc(hidden)]

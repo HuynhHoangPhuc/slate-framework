@@ -128,6 +128,19 @@ pub trait Window: HasWindowHandle + HasDisplayHandle + 'static {
     fn schedule_redraw_at(&self, deadline: std::time::Instant) {
         let _ = deadline;
     }
+
+    /// Install `menu` as the window's menu bar (macOS: the shared app menu bar;
+    /// Windows: the per-window `HMENU`).
+    ///
+    /// `menu` is the platform-neutral descriptor the framework lowers from its
+    /// richer menu model; native backends translate it to `NSMenu`/`HMENU`.
+    /// Default is a no-op so headless harnesses and the framework's
+    /// pre-backend path compile; concrete platform impls override (P6b/P6c).
+    fn set_menu(&self, _menu: &PlatformMenu) {}
+
+    /// Pop up `menu` as a context menu anchored at `at` (logical view points,
+    /// top-left origin). Default is a no-op; native backends override.
+    fn show_context_menu(&self, _menu: &PlatformMenu, _at: (f32, f32)) {}
 }
 
 /// Configuration for creating a window via [`Platform::create_window`].
@@ -168,6 +181,58 @@ pub struct WindowId(
     /// Underlying numeric handle (platform-assigned).
     pub u64,
 );
+
+/// Platform-neutral menu descriptor consumed by [`Window::set_menu`] /
+/// [`Window::show_context_menu`].
+///
+/// The framework owns the richer ergonomic menu model and *lowers* it into this
+/// flat descriptor; native backends (P6b macOS `NSMenu`, P6c Windows `HMENU`)
+/// build the real native tree from it. Keeping the boundary type plain data
+/// (no closures, ids as `u64`) preserves the framework→platform dependency
+/// direction — the action closures stay framework-side, keyed by the `u64` id.
+#[derive(Clone, Debug, Default)]
+pub struct PlatformMenu {
+    /// Top-level items in display order.
+    pub items: Vec<PlatformMenuItem>,
+}
+
+impl PlatformMenu {
+    /// Build a menu from its top-level items.
+    pub fn new(items: Vec<PlatformMenuItem>) -> Self {
+        Self { items }
+    }
+}
+
+/// One entry of a [`PlatformMenu`].
+#[derive(Clone, Debug)]
+pub enum PlatformMenuItem {
+    /// Actionable command. `id` routes activation back to the framework's
+    /// action registry.
+    Action {
+        /// Stable routing id (the framework `MenuId`'s numeric value).
+        id: u64,
+        /// Display label.
+        label: String,
+        /// Optional accelerator: modifier state + logical key. Backends map it
+        /// to an `NSMenuItem` key-equivalent / Win32 accelerator.
+        accelerator: Option<(Modifiers, Key)>,
+        /// Greyed-out and non-activatable when `false`.
+        enabled: bool,
+        /// Shows a check mark when `true`.
+        checked: bool,
+    },
+    /// Nested submenu.
+    Submenu {
+        /// Submenu title.
+        label: String,
+        /// Greyed-out when `false`.
+        enabled: bool,
+        /// Child entries.
+        items: Vec<PlatformMenuItem>,
+    },
+    /// Horizontal separator line.
+    Separator,
+}
 
 /// Mouse button identifier.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]

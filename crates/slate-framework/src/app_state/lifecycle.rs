@@ -106,6 +106,8 @@ impl AppState {
             on_ime_commit: RefCell::new(Vec::new()),
             on_ime_enabled: RefCell::new(Vec::new()),
             on_ime_disabled: RefCell::new(Vec::new()),
+            menu_registry: RefCell::new(crate::menu::MenuRegistry::new()),
+            active_menu: RefCell::new(None),
         }
     }
 

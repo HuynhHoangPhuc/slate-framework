@@ -492,4 +492,27 @@ impl AppState {
         use slate_platform::WindowImeDelegate;
         WindowImeDelegate::ime_text(self, window, range)
     }
+
+    // -------------------------------------------------------------------------
+    // Native-menu test-hook accessors
+    // -------------------------------------------------------------------------
+
+    /// Register a native-menu action handler. Test-only wrapper.
+    pub fn register_menu_action_for_test(
+        &self,
+        id: crate::menu::MenuId,
+        handler: impl Fn() + 'static,
+    ) {
+        self.register_menu_action(id, handler);
+    }
+
+    /// Install the active native menu model. Test-only wrapper.
+    pub fn install_menu_for_test(&self, menu: crate::menu::Menu) {
+        self.install_menu(menu);
+    }
+
+    /// Dispatch a synthetic native-menu activation. Test-only.
+    pub fn dispatch_menu_for_test(&self, window: WindowId, id: crate::menu::MenuId) -> AppSignal {
+        self.dispatch_menu(window, id)
+    }
 }

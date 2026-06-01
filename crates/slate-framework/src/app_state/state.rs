@@ -124,6 +124,15 @@ pub struct AppState {
     pub(super) on_ime_commit: RefCell<Vec<ImeCommitHandler>>,
     pub(super) on_ime_enabled: RefCell<Vec<ImeLifecycleHandler>>,
     pub(super) on_ime_disabled: RefCell<Vec<ImeLifecycleHandler>>,
+
+    // Native-menu action handlers, keyed by `MenuId`. Populated via
+    // `AppContext::on_menu_action`; activation routes through `dispatch_menu`.
+    pub(super) menu_registry: RefCell<crate::menu::MenuRegistry>,
+
+    // The active native menu-bar model. Lowered to a `PlatformMenu` and pushed
+    // to each window via the platform `set_menu` seam when installed. `None`
+    // until an adopter calls `AppContext::set_menu`.
+    pub(super) active_menu: RefCell<Option<crate::menu::Menu>>,
 }
 
 impl Drop for AppState {
