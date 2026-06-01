@@ -226,9 +226,38 @@ impl Element for Div {
         // to a plain styled Div.
         let (background, corner_radius) = self.resolved_visual(cx);
 
-        // Paint background if set. Scene wire format is in logical pixels;
-        // the renderer's viewport maps lpx → NDC, so no `* scale_factor` here.
-        if let Some(color) = background {
+        // Border (if any) is an outer frame in the border colour with the
+        // background painted inset on top — no stroke pipeline exists, so a
+        // border is two filled rects. The background path stays byte-identical
+        // when no border is set. Scene wire format is in logical pixels; the
+        // renderer's viewport maps lpx → NDC, so no `* scale_factor` here.
+        if let Some(border) = self.visual.border {
+            cx.scene.push_rect(RectInstance {
+                rect: [
+                    Lpx(bounds.origin.x),
+                    Lpx(bounds.origin.y),
+                    Lpx(bounds.size.width),
+                    Lpx(bounds.size.height),
+                ],
+                color: border.color,
+                corner_radius: Lpx(corner_radius),
+                _pad: [0.0; 3],
+            });
+            if let Some(color) = background {
+                let w = border.width;
+                cx.scene.push_rect(RectInstance {
+                    rect: [
+                        Lpx(bounds.origin.x + w),
+                        Lpx(bounds.origin.y + w),
+                        Lpx((bounds.size.width - 2.0 * w).max(0.0)),
+                        Lpx((bounds.size.height - 2.0 * w).max(0.0)),
+                    ],
+                    color,
+                    corner_radius: Lpx((corner_radius - w).max(0.0)),
+                    _pad: [0.0; 3],
+                });
+            }
+        } else if let Some(color) = background {
             cx.scene.push_rect(RectInstance {
                 rect: [
                     Lpx(bounds.origin.x),
@@ -255,6 +284,7 @@ impl Element for Div {
     fn accessibility(&self) -> Option<AccessibilityInfo> {
         Some(AccessibilityInfo {
             role: AccessibilityRole::Group,
+            label: self.a11y_label.clone(),
             is_disabled: self.disabled,
             ..Default::default()
         })

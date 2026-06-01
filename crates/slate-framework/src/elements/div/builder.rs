@@ -19,6 +19,7 @@ impl Div {
             user_key: None,
             last_id: None,
             track_bounds: None,
+            a11y_label: None,
             on_click: None,
             on_mouse_down: None,
             on_mouse_up: None,

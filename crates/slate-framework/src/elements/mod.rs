@@ -29,9 +29,20 @@ mod control_paint;
 pub mod slider;
 pub mod switch;
 
+// Layout-container widget set (P5b dashboard shell). Thin Div compositions +
+// the resizable Splitter.
+pub mod panel;
+pub mod splitter;
+pub mod status_bar;
+pub mod toolbar;
+
 pub use button::{Button, IconButton};
 pub use checkbox::Checkbox;
-pub use div::Div;
+pub use div::{Border, Div};
+pub use panel::Panel;
+pub use splitter::{SplitAxis, Splitter};
+pub use status_bar::StatusBar;
+pub use toolbar::Toolbar;
 pub use image::{Image, MAX_IMAGE_DIM};
 pub use overlay::{Align, Overlay, Placement, Side};
 pub use scroll_view::ScrollView;

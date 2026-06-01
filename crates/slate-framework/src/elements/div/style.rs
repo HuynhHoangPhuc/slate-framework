@@ -41,6 +41,26 @@ impl Div {
         self
     }
 
+    /// Draw a hairline [`Border`](super::Border) of `color` and `width` logical
+    /// pixels: an outer frame in `color` with the background inset on top. A
+    /// `width <= 0.0` clears the border.
+    pub fn border(mut self, color: impl Into<Color>, width: f32) -> Self {
+        self.visual.border = (width > 0.0).then(|| super::Border {
+            color: color.into().into(),
+            width,
+        });
+        self
+    }
+
+    /// Set the accessible name announced for this Div's `Group` node.
+    ///
+    /// Used by container widgets so a screen reader names the group by its
+    /// title; leaving it unset keeps the group unlabelled.
+    pub fn a11y_label(mut self, label: impl Into<String>) -> Self {
+        self.a11y_label = Some(label.into());
+        self
+    }
+
     /// Style overrides applied while the pointer is over this element (or a
     /// descendant). Falls back to the base style for any field left unset.
     ///

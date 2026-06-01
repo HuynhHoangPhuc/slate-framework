@@ -53,6 +53,10 @@ pub struct Div {
     /// anchor to this element's live rect (anchor-to-element). The write is
     /// guarded (only on change) so it never spins the whole-view rebuild loop.
     pub(super) track_bounds: Option<Signal<Bounds>>,
+    /// Optional accessible name for this Div's `Group` node. `None` leaves the
+    /// group unlabelled (the default). Container widgets (Panel) set it so a
+    /// screen reader announces the group by its title.
+    pub(super) a11y_label: Option<String>,
     // -------------------------------------------------------------------------
     // Event handlers
     // -------------------------------------------------------------------------
@@ -106,6 +110,20 @@ pub struct Div {
     pub(crate) on_ime_commit: Option<crate::event::ElementImeCommitHandler>,
 }
 
+/// A hairline border for a [`Div`], drawn as an outer frame behind the
+/// background, which is inset by [`width`](Border::width) on every edge.
+///
+/// There is no stroke pipeline in the renderer (only filled rects), so a border
+/// is two filled rounded rects: the outer frame in the border colour, then the
+/// background painted inset on top. Cheap and KISS, like the 4-rect focus ring.
+#[derive(Clone, Copy, Debug)]
+pub struct Border {
+    /// Border colour (linear, premultiplied RGBA).
+    pub color: [f32; 4],
+    /// Border thickness in logical pixels (inset applied to the background).
+    pub width: f32,
+}
+
 /// Visual styling for a Div (non-layout properties).
 #[derive(Clone, Debug, Default)]
 pub struct DivVisual {
@@ -113,6 +131,8 @@ pub struct DivVisual {
     pub background: Option<[f32; 4]>,
     /// Corner radius in logical pixels.
     pub corner_radius: f32,
+    /// Optional hairline border drawn behind the (inset) background.
+    pub border: Option<Border>,
 }
 
 /// Layout state for Div — stores Taffy node ID.
