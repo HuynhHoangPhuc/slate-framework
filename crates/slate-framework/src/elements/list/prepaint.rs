@@ -80,5 +80,14 @@ pub(super) fn build(list: &mut List, bounds: Bounds, layout: &mut ListLayout, cx
     }
     cx.prepaint_node_close();
 
+    // Prepaint each presentational row label (no a11y node, but paint requires
+    // the ElementState to have been prepainted first).
+    for i in 0..list.rows.len() {
+        let rb = resolve_child_bounds(cx.taffy, layout.container, i, bounds.origin).unwrap_or(Bounds::ZERO);
+        if let Some(lb) = resolve_child_bounds(cx.taffy, layout.rows[i], 0, rb.origin) {
+            list.rows[i].prepaint(lb, cx);
+        }
+    }
+
     cx.pop_frame();
 }

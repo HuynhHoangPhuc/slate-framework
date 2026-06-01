@@ -20,7 +20,6 @@ pub(super) fn render(grid: &mut DataGrid, bounds: Bounds, cx: &mut PaintCtx) {
     let total_w = cols.total_width();
     let style = grid.style;
     let row_h = grid.row_h;
-    let pad_x = grid.pad_x;
     let data_h = grid.data_viewport_h();
     let selected = grid.selected_value;
 
@@ -29,16 +28,7 @@ pub(super) fn render(grid: &mut DataGrid, bounds: Bounds, cx: &mut PaintCtx) {
     let content: Vec<Bounds> = grid
         .cells
         .iter()
-        .map(|(r, c, _)| {
-            let cb = grid.cell_bounds(&cols, *r, *c);
-            let y = cb.origin.y + (row_h - grid.font_size) * 0.5;
-            Bounds::from_origin_size(
-                cb.origin.x + pad_x,
-                y,
-                (cb.size.width - 2.0 * pad_x).max(0.0),
-                grid.font_size,
-            )
-        })
+        .map(|(r, c, _)| grid.cell_content_bounds(&cols, *r, *c))
         .collect();
 
     // Header strip (sticky, above the clip) + bottom hairline.

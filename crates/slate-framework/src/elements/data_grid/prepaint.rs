@@ -116,6 +116,19 @@ pub(super) fn build(grid: &mut DataGrid, bounds: Bounds, cx: &mut PrepaintCtx) {
     }
     cx.prepaint_node_close(); // grid
 
+    // Prepaint the windowed cell content (presentational labels emit no a11y
+    // node, but the ElementState wrapper requires prepaint before paint).
+    // Precompute bounds first to release the immutable borrow before the
+    // mutable cell iteration.
+    let content: Vec<Bounds> = grid
+        .cells
+        .iter()
+        .map(|(r, c, _)| grid.cell_content_bounds(&cols_model, *r, *c))
+        .collect();
+    for ((.., elem), cb) in grid.cells.iter_mut().zip(content) {
+        elem.prepaint(cb, cx);
+    }
+
     cx.pop_frame();
 }
 

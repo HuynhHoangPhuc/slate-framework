@@ -80,6 +80,15 @@ pub(super) fn build(
     }
     cx.prepaint_node_close();
 
+    // Prepaint each presentational row label (no a11y node, but paint requires
+    // the ElementState to have been prepainted first).
+    for i in 0..menu.rows.len() {
+        let rb = resolve_child_bounds(cx.taffy, layout.container, i, bounds.origin).unwrap_or(Bounds::ZERO);
+        if let Some(lb) = resolve_child_bounds(cx.taffy, layout.rows[i], 0, rb.origin) {
+            menu.rows[i].prepaint(lb, cx);
+        }
+    }
+
     cx.pop_frame();
 }
 

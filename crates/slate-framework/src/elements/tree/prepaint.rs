@@ -80,6 +80,15 @@ pub(super) fn build(tree: &mut Tree, bounds: Bounds, layout: &mut TreeLayout, cx
     }
     cx.prepaint_node_close();
 
+    // Prepaint each presentational row label (no a11y node, but paint requires
+    // the ElementState to have been prepainted first).
+    for i in 0..tree.rows.len() {
+        let rb = resolve_child_bounds(cx.taffy, layout.container, i, bounds.origin).unwrap_or(Bounds::ZERO);
+        if let Some(lb) = resolve_child_bounds(cx.taffy, layout.rows[i], 0, rb.origin) {
+            tree.rows[i].prepaint(lb, cx);
+        }
+    }
+
     cx.pop_frame();
 }
 

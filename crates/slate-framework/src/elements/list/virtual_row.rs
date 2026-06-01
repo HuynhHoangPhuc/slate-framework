@@ -112,7 +112,7 @@ impl Element for VirtualRow {
     fn prepaint(
         &mut self,
         bounds: Bounds,
-        _layout: &mut Self::LayoutState,
+        layout: &mut Self::LayoutState,
         cx: &mut PrepaintCtx,
     ) -> Self::PaintState {
         // Stable id keyed by absolute index: the same row keeps its id across
@@ -120,6 +120,12 @@ impl Element for VirtualRow {
         cx.set_next_key(format!("vrow-{}", self.row_index));
         let id = cx.allocate_id::<VirtualRow>();
         self.last_id = Some(id);
+
+        // Prepaint the presentational label (no a11y node of its own, but paint
+        // requires the ElementState to have been prepainted first).
+        if let Some(lb) = resolve_child_bounds(cx.taffy, layout.row, 0, bounds.origin) {
+            self.label_elem.prepaint(lb, cx);
+        }
 
         cx.register_a11y_node(list_item_node(
             id,

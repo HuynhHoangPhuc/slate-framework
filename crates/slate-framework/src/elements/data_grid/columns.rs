@@ -108,6 +108,20 @@ impl DataGrid {
         Bounds::from_origin_size(x, y, cols.col_w(col), self.row_h)
     }
 
+    /// Inner text bounds of cell `(total_row, col)`: the cell box inset by
+    /// horizontal padding and vertically centred for the font. Shared by
+    /// prepaint (to prepaint the label) and paint (to paint it) so the two
+    /// passes agree on geometry.
+    pub(super) fn cell_content_bounds(&self, cols: &ColumnModel, total_row: usize, col: usize) -> Bounds {
+        let cb = self.cell_bounds(cols, total_row, col);
+        Bounds::from_origin_size(
+            cb.origin.x + self.pad_x,
+            cb.origin.y + (self.row_h - self.font_size) * 0.5,
+            (cb.size.width - 2.0 * self.pad_x).max(0.0),
+            self.font_size,
+        )
+    }
+
     /// Height of the scrollable data area below the sticky header.
     pub(super) fn data_viewport_h(&self) -> f32 {
         (self.height - self.row_h).max(0.0)
