@@ -36,9 +36,20 @@ pub mod splitter;
 pub mod status_bar;
 pub mod toolbar;
 
+// Overlay-based widget set (P5c). All consume the Overlay layer + the shared
+// MenuList core.
+pub mod context_menu;
+pub mod menu;
+pub mod select;
+pub mod tooltip;
+
 pub use button::{Button, IconButton};
 pub use checkbox::Checkbox;
+pub use context_menu::ContextMenu;
 pub use div::{Border, Div};
+pub use menu::{MenuEntry, MenuList};
+pub use select::Select;
+pub use tooltip::Tooltip;
 pub use panel::Panel;
 pub use splitter::{SplitAxis, Splitter};
 pub use status_bar::StatusBar;

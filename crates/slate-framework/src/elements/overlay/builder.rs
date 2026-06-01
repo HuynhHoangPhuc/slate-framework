@@ -20,6 +20,7 @@ impl Overlay {
             depth: Self::DEFAULT_DEPTH,
             gap: Self::DEFAULT_GAP,
             modal: false,
+            scrim: true,
             on_dismiss: None,
             layout_style: Style::default(),
             last_id: None,
@@ -96,6 +97,20 @@ impl Overlay {
     /// the overlay cannot be dismissed by Esc/outside-click.
     pub fn on_dismiss<F: Fn() + 'static>(mut self, on_dismiss: F) -> Self {
         self.on_dismiss = Some(std::rc::Rc::new(on_dismiss));
+        self
+    }
+
+    /// Control whether a [`modal`](Self::modal) overlay paints its dimming
+    /// scrim. Default `true`. Passing `false` keeps all modal focus behaviour
+    /// (auto-focus in, focus-trap, focus-restore, Esc / click-away dismiss) but
+    /// skips the full-viewport dim — use it for a focus-managed popup menu that
+    /// should not darken the app behind it. No effect on a non-modal overlay.
+    ///
+    /// Note: a click outside the content of a modal overlay is still *blocked*
+    /// from the base tree (the dismiss gesture is swallowed), scrim painted or
+    /// not — matching native popup-menu behaviour (first click closes the menu).
+    pub fn scrim(mut self, scrim: bool) -> Self {
+        self.scrim = scrim;
         self
     }
 

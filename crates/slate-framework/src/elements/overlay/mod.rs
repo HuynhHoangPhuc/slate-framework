@@ -77,6 +77,12 @@ pub struct Overlay {
     /// keyboard focus to the overlay subtree while open (focus is auto-moved in
     /// on open and restored on close). Default `false` (popover/tooltip).
     pub(super) modal: bool,
+    /// Whether a modal overlay paints its dimming scrim. Default `true`. Set
+    /// `false` to keep modal focus-management (auto-focus, trap, focus-restore,
+    /// click-away dismiss) **without** the full-viewport dim — the right shape
+    /// for a focus-managed popup menu (Select dropdown, in-canvas ContextMenu)
+    /// that should not darken the app behind it. Ignored for non-modal overlays.
+    pub(super) scrim: bool,
     /// Caller's dismiss callback, invoked when the user requests dismissal (Esc
     /// while top-most, click outside the content, or a modal scrim click). The
     /// overlay has no open/closed state of its own — the callback flips the

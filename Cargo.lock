@@ -2007,6 +2007,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "overlay-widgets"
+version = "1.0.1"
+dependencies = [
+ "env_logger",
+ "log",
+ "slate-framework",
+]
+
+[[package]]
 name = "parking"
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

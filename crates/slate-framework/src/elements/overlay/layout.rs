@@ -130,8 +130,10 @@ impl Element for Overlay {
         // tree and free of any ancestor scroll-clip.
         cx.push_overlay_layer(self.depth);
         // Modal scrim: a full-viewport dim drawn first into the overlay layer so
-        // it sits below the content but above everything at lower depth.
-        if self.modal {
+        // it sits below the content but above everything at lower depth. Gated
+        // by `scrim` so a focus-managed popup menu can be modal (trap + dismiss)
+        // without dimming the app behind it.
+        if self.modal && self.scrim {
             let vp = paint_state.viewport;
             cx.scene.push_rect(RectInstance {
                 rect: [Lpx(0.0), Lpx(0.0), Lpx(vp.width), Lpx(vp.height)],

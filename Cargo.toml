@@ -16,6 +16,7 @@ members = [
     "examples/hello-rect",
     "examples/ime-textfield",
     "examples/overlay-popover",
+    "examples/overlay-widgets",
     "examples/primitive-gallery",
     "examples/reactive-counter",
     "examples/recovery-gallery",
