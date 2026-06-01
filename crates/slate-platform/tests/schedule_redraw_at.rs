@@ -20,6 +20,7 @@ fn make_offscreen() -> std::sync::Arc<DefaultWindow> {
         resizable: false,
         visible: false,
         position: Some((-32000, -32000)),
+        ..Default::default()
     })
 }
 

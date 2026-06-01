@@ -47,10 +47,15 @@ impl MetalView {
         });
     }
 
-    /// Closes the live-resize gate.
+    /// Closes the live-resize gate and signals the size/move settle so the
+    /// framework can persist geometry (mirrors Win32 `WM_EXITSIZEMOVE`, which
+    /// drives `on_size_move_end`). The per-tick `windowDidResize:` saves are
+    /// suppressed mid-drag by the gate, so this is the macOS settle point.
     pub(super) fn resize_view_did_end_live_resize(&self) {
         ffi_boundary(|| {
             self.ivars().live_resize.set(false);
+            let id = self.ivars().window_id.get();
+            with_window_delegate(id, |d| d.on_size_move_end(id));
         });
     }
 }

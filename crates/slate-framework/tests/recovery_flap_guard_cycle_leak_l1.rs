@@ -48,6 +48,7 @@ fn l1_cycle_leak_regression_luid_after_luid() {
         resizable: false,
         visible: false,
         position: Some((-32000, -32000)),
+        ..Default::default()
     });
     let redraw_requester = RedrawRequester::new(wake_run_loop);
     let executor = Executor::new(redraw_requester.clone());

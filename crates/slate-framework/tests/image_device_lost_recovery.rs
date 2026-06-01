@@ -73,6 +73,7 @@ fn image_survives_device_lost_recovery() {
         resizable: false,
         visible: false,
         position: Some((-32000, -32000)),
+        ..Default::default()
     });
 
     let redraw_requester = RedrawRequester::new(wake_run_loop);

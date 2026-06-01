@@ -50,6 +50,7 @@ fn destroyed_reason_does_not_trigger_recovery() {
         resizable: false,
         visible: false,
         position: Some((-32000, -32000)),
+        ..Default::default()
     });
 
     let redraw_requester = RedrawRequester::new(wake_run_loop);
@@ -158,6 +159,7 @@ fn unknown_reason_triggers_recovery_state_machine() {
         resizable: false,
         visible: false,
         position: Some((-32000, -32000)),
+        ..Default::default()
     });
 
     let redraw_requester = RedrawRequester::new(wake_run_loop);

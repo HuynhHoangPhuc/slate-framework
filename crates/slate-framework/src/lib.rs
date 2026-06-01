@@ -58,6 +58,7 @@ pub mod interaction_state;
 pub mod layout;
 pub mod menu;
 pub(crate) mod paint_cache;
+pub mod persistence;
 #[cfg(feature = "profiling")]
 pub mod profiling;
 pub(crate) mod reactive_state;
@@ -124,7 +125,8 @@ pub use hit_test::{CursorStyle, HitRegion, HitTestList, HitTestResult};
 pub use ime::{CachedImeQuery, ImeRegistry, ImeState, PendingImeOp, Preedit};
 pub use layout::{LayoutTree, compute_layout, resolve_bounds, resolve_child_bounds};
 pub use menu::{Accelerator, Menu, MenuAction, MenuHandler, MenuId, MenuItem, MenuRegistry, SubMenu};
-pub use slate_platform::{PlatformMenu, PlatformMenuItem};
+pub use persistence::{InMemoryStore, PersistenceStore, WindowGeometry};
+pub use slate_platform::{PlatformMenu, PlatformMenuItem, WindowPlacement};
 pub use smol::Timer;
 pub use style::{DisplayMode, Length, Overflow, Position, SizeConstraint, Style};
 pub use theme::{Radii, Spacing, Theme, ThemeMode, ThemeSet, TypeStyle, Typography, theme};

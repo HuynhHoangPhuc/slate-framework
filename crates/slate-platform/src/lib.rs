@@ -141,6 +141,47 @@ pub trait Window: HasWindowHandle + HasDisplayHandle + 'static {
     /// Pop up `menu` as a context menu anchored at `at` (logical view points,
     /// top-left origin). Default is a no-op; native backends override.
     fn show_context_menu(&self, _menu: &PlatformMenu, _at: (f32, f32)) {}
+
+    /// Current top-left position of the window in this platform's screen
+    /// coordinate space, or `None` when the platform cannot report it
+    /// (headless/mock windows). Used by geometry persistence to save where the
+    /// window sits so it can be restored on the next launch.
+    ///
+    /// The unit is platform-native and intentionally not normalised across
+    /// platforms (macOS: Cocoa points; Windows: physical pixels). The contract
+    /// that matters is the round-trip: a value returned here, fed back through
+    /// [`WindowOptions::position`] on the same platform, reproduces the same
+    /// placement. Default returns `None`; concrete platform impls override.
+    fn position(&self) -> Option<(i32, i32)> {
+        None
+    }
+
+    /// Current placement state (normal / maximized / minimized) used by
+    /// geometry persistence. Default returns [`WindowPlacement::Normal`];
+    /// concrete platform impls override.
+    fn placement(&self) -> WindowPlacement {
+        WindowPlacement::Normal
+    }
+
+    /// True while the window is inside a user-driven live resize drag.
+    ///
+    /// Geometry persistence uses this to suppress save-on-resize storms: a
+    /// settle save runs only when this returns `false` (steady state / drag
+    /// end). Default returns `false`; macOS/Windows impls override.
+    fn is_live_resizing(&self) -> bool {
+        false
+    }
+}
+
+/// Window placement state reported by [`Window::placement`].
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum WindowPlacement {
+    /// Restored / floating — `position()` + `logical_size()` describe its bounds.
+    Normal,
+    /// Maximized (macOS "zoomed", Win32 `SW_SHOWMAXIMIZED`).
+    Maximized,
+    /// Minimized to the dock / taskbar.
+    Minimized,
 }
 
 /// Configuration for creating a window via [`Platform::create_window`].
@@ -160,6 +201,16 @@ pub struct WindowOptions {
     /// Top-left position in screen coordinates. `None` defers to the OS default
     /// (`CW_USEDEFAULT` on Win32).
     pub position: Option<(i32, i32)>,
+    /// Create the window maximized (macOS "zoomed", Win32 `SW_SHOWMAXIMIZED`).
+    /// Set by geometry persistence when restoring a previously-maximized window.
+    pub maximized: bool,
+    /// Opaque, adopter-chosen key identifying this window for geometry
+    /// persistence. When set and a `PersistenceStore` is installed, the
+    /// framework restores saved geometry into this `WindowOptions` before
+    /// allocation and saves it back on resize-settle/close. The platform layer
+    /// ignores this field — it is framework metadata carried on the shared
+    /// options struct.
+    pub persistence_key: Option<String>,
 }
 
 impl Default for WindowOptions {
@@ -171,6 +222,8 @@ impl Default for WindowOptions {
             resizable: true,
             visible: true,
             position: None,
+            maximized: false,
+            persistence_key: None,
         }
     }
 }

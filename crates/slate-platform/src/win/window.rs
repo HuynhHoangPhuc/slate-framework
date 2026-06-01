@@ -19,9 +19,10 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CW_USEDEFAULT, CreateWindowExW, DestroyWindow, GetClientRect, KillTimer, SetTimer,
-    SetWindowTextW, USER_TIMER_MINIMUM, WS_DISABLED, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW,
-    WS_OVERLAPPEDWINDOW, WS_POPUP, WS_VISIBLE,
+    CW_USEDEFAULT, CreateWindowExW, DestroyWindow, GetClientRect, GetWindowPlacement, KillTimer,
+    SW_SHOWMAXIMIZED, SW_SHOWMINIMIZED, SetTimer, SetWindowTextW, ShowWindow, USER_TIMER_MINIMUM,
+    WINDOWPLACEMENT, WS_DISABLED, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_OVERLAPPEDWINDOW,
+    WS_POPUP, WS_VISIBLE,
 };
 use windows::core::PCWSTR;
 
@@ -30,7 +31,7 @@ use super::platform::CLASS_NAME;
 use super::{
     REDRAW_TIMER_ID, increment_live_window_count, next_window_id, register_wake_hwnd, to_wide,
 };
-use crate::{Window, WindowId, WindowImeDelegate, WindowOptions, WindowRenderDelegate};
+use crate::{Window, WindowId, WindowImeDelegate, WindowOptions, WindowPlacement, WindowRenderDelegate};
 
 // ---------------------------------------------------------------------------
 // WinWindow — public window handle (thin Arc wrapper)
@@ -145,6 +146,15 @@ impl WinWindow {
         // First window wins; subsequent calls are no-ops (CAS).
         register_wake_hwnd(hwnd);
 
+        // Restore a maximized window (geometry persistence). The visible window
+        // was created normal above; maximize it now. CreateWindowExW already
+        // positioned the restored normal bounds, which Windows tracks as the
+        // un-maximize target.
+        if opts.maximized {
+            // SAFETY: hwnd is a valid window handle just returned by CreateWindowExW.
+            let _ = unsafe { ShowWindow(hwnd, SW_SHOWMAXIMIZED) };
+        }
+
         #[allow(clippy::arc_with_non_send_sync)]
         Arc::new(WinWindow { inner })
     }
@@ -245,6 +255,47 @@ impl Window for WinWindow {
     }
 
     fn in_size_move(&self) -> bool {
+        self.inner.in_size_move.get()
+    }
+
+    fn position(&self) -> Option<(i32, i32)> {
+        // `rcNormalPosition` is the restored (un-maximized) frame in workspace
+        // coordinates — the bounds Windows returns the window to when
+        // un-maximized. Persisting this means a window saved while maximized
+        // still has sane normal bounds on restore. Round-trips with the screen
+        // coordinates `CreateWindowExW` consumes via `WindowOptions::position`.
+        let mut placement = WINDOWPLACEMENT {
+            length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
+            ..Default::default()
+        };
+        // SAFETY: hwnd is valid; `placement` is a correctly-sized output struct.
+        unsafe { GetWindowPlacement(self.inner.hwnd, &mut placement).ok()? };
+        Some((
+            placement.rcNormalPosition.left,
+            placement.rcNormalPosition.top,
+        ))
+    }
+
+    fn placement(&self) -> WindowPlacement {
+        let mut placement = WINDOWPLACEMENT {
+            length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
+            ..Default::default()
+        };
+        // SAFETY: hwnd is valid; `placement` is a correctly-sized output struct.
+        if unsafe { GetWindowPlacement(self.inner.hwnd, &mut placement) }.is_err() {
+            return WindowPlacement::Normal;
+        }
+        // `showCmd` is a `u32`; the `SW_*` constants are `SHOW_WINDOW_CMD(i32)`.
+        if placement.showCmd == SW_SHOWMAXIMIZED.0 as u32 {
+            WindowPlacement::Maximized
+        } else if placement.showCmd == SW_SHOWMINIMIZED.0 as u32 {
+            WindowPlacement::Minimized
+        } else {
+            WindowPlacement::Normal
+        }
+    }
+
+    fn is_live_resizing(&self) -> bool {
         self.inner.in_size_move.get()
     }
 

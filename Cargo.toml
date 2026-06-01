@@ -25,6 +25,7 @@ members = [
     "examples/theme-switch",
     "examples/two-window-counters",
     "examples/win-dcomp-spike",
+    "examples/window-persistence",
 ]
 resolver = "2"
 

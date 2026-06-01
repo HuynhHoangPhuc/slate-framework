@@ -78,12 +78,17 @@ impl AppContext {
         let weak = self.state.as_ref()?;
         let state = weak.upgrade()?;
         let platform_rc = state.platform.borrow().clone()?;
+        // Restore saved geometry (if a store + key are present) before the
+        // platform allocates the window, then remember the key for save-back.
+        let mut opts = opts;
+        state.restore_options(&mut opts);
+        let persistence_key = opts.persistence_key.clone();
         let window = platform_rc.create_window(opts);
         let cx_clone = self.clone();
         let factory: ErasedViewFactory = Box::new(move |_cx: &AppContext| -> Box<dyn ErasedView> {
             Box::new(view_fn(&cx_clone))
         });
-        Some(state.push_pending_window_create(window, factory))
+        Some(state.push_pending_window_create(window, factory, persistence_key))
     }
 
     /// Get the background executor for spawning async tasks.
@@ -242,6 +247,7 @@ impl AppContext {
 struct PendingPreRunWindow {
     window: Arc<DefaultWindow>,
     view_factory: ErasedViewFactory,
+    persistence_key: Option<String>,
 }
 
 /// Application container.
@@ -265,7 +271,11 @@ struct PendingPreRunWindow {
 /// ```
 pub struct App {
     platform: Rc<DefaultPlatform>,
-    window: Arc<DefaultWindow>,
+    /// Options for the first window. Held (not allocated) until `run` so that a
+    /// persistence store installed via `App::persistence` can restore the saved
+    /// geometry onto these options *before* the window is created — avoiding a
+    /// visible jump from a centered default to the restored position.
+    first_options: WindowOptions,
     pending_windows: Vec<PendingPreRunWindow>,
     on_key_down: Vec<KeyHandler>,
     on_key_up: Vec<KeyHandler>,
@@ -275,19 +285,21 @@ pub struct App {
     on_ime_enabled: Vec<ImeLifecycleHandler>,
     on_ime_disabled: Vec<ImeLifecycleHandler>,
     themes: Option<crate::theme::ThemeSet>,
+    persistence: Option<Rc<dyn crate::persistence::PersistenceStore>>,
 }
 
 impl App {
     /// Create a new application with the given window options.
     ///
-    /// The renderer and text system are initialized lazily on `Event::Resumed`.
+    /// The first window is allocated lazily in [`App::run`] (so an installed
+    /// [`App::persistence`] store can restore its geometry before creation);
+    /// the renderer and text system initialise on `Event::Resumed`.
     pub fn new(options: WindowOptions) -> Self {
         let platform = Rc::new(DefaultPlatform::new());
-        let window = platform.create_window(options);
 
         Self {
             platform,
-            window,
+            first_options: options,
             pending_windows: Vec::new(),
             on_key_down: Vec::new(),
             on_key_up: Vec::new(),
@@ -297,7 +309,26 @@ impl App {
             on_ime_enabled: Vec::new(),
             on_ime_disabled: Vec::new(),
             themes: None,
+            persistence: None,
         }
+    }
+
+    /// Install a geometry-persistence store (window position/size/maximized
+    /// across launches).
+    ///
+    /// Tag each window with a stable
+    /// [`persistence_key`](slate_platform::WindowOptions::persistence_key); the
+    /// framework then restores saved geometry on create and saves it back on
+    /// resize-settle and close. Call **before** [`App::create_window`] for any
+    /// pre-run extra window whose geometry should be restored (the store must
+    /// be present when that window is allocated). The first window is always
+    /// restored regardless of call order. See [`PersistenceStore`] and the
+    /// [`persistence`](crate::persistence) module.
+    ///
+    /// [`PersistenceStore`]: crate::persistence::PersistenceStore
+    pub fn persistence(mut self, store: Rc<dyn crate::persistence::PersistenceStore>) -> Self {
+        self.persistence = Some(store);
+        self
     }
 
     /// Install custom light and dark palettes.
@@ -326,6 +357,11 @@ impl App {
         opts: WindowOptions,
         mut view_fn: impl FnMut(&AppContext) -> V + 'static,
     ) -> WindowId {
+        // Restore saved geometry (if a store was installed via `App::persistence`
+        // first) before allocation, then remember the key for save-back.
+        let mut opts = opts;
+        crate::persistence::restore_options(self.persistence.as_ref(), &mut opts);
+        let persistence_key = opts.persistence_key.clone();
         let window = self.platform.create_window(opts);
         let id = window.id();
         let factory: ErasedViewFactory =
@@ -333,6 +369,7 @@ impl App {
         self.pending_windows.push(PendingPreRunWindow {
             window,
             view_factory: factory,
+            persistence_key,
         });
         id
     }
@@ -419,7 +456,7 @@ impl App {
     pub fn run<V: View>(self, mut view_fn: impl FnMut(&AppContext) -> V + 'static) {
         let App {
             platform,
-            window,
+            first_options,
             pending_windows,
             on_key_down,
             on_key_up,
@@ -429,6 +466,7 @@ impl App {
             on_ime_enabled,
             on_ime_disabled,
             themes,
+            persistence,
         } = self;
 
         // Create executor and reactive runtime.
@@ -455,11 +493,25 @@ impl App {
         // additional platform windows mid-dispatch.
         state.install_platform(platform.clone());
 
+        // Install the geometry-persistence store (if any) so restore/save paths
+        // are live for every window.
+        if let Some(store) = persistence {
+            state.install_persistence(store);
+        }
+
+        // Allocate the FIRST window now (deferred from `App::new`), restoring
+        // saved geometry onto its options first so the OS places it correctly
+        // on creation rather than after a visible jump.
+        let mut first_options = first_options;
+        state.restore_options(&mut first_options);
+        let first_persistence_key = first_options.persistence_key.clone();
+        let window = platform.create_window(first_options);
+
         // Wire the FIRST window (its WindowState, redraw requester, and
         // render+IME delegates) using the same helper the dynamic
         // `AppContext::create_window` path uses.
         let first_window_id = window.id();
-        state.install_window(window.clone());
+        state.install_window(window.clone(), first_persistence_key);
 
         let cx = AppContext {
             runtime,
@@ -490,7 +542,7 @@ impl App {
         resumed_factories.push((first_window_id, first_erased));
         for pre in pending_windows {
             let id = pre.window.id();
-            state.install_window(pre.window);
+            state.install_window(pre.window, pre.persistence_key);
             resumed_factories.push((id, pre.view_factory));
         }
 
@@ -549,6 +601,12 @@ impl App {
                     ..
                 } => {
                     state_ref.handle_window_resized(window, physical_size);
+                    // Persist geometry once the resize settles. Skipped mid
+                    // live-drag to avoid a save storm; save-on-close captures
+                    // the final state regardless. No-op without a store/key.
+                    if !state_ref.window_is_live_resizing(window) {
+                        state_ref.save_window_geometry(window);
+                    }
                     AppSignal::None
                 }
                 Event::WindowRedrawRequested { window, .. } => state_ref.dispatch_redraw(window),

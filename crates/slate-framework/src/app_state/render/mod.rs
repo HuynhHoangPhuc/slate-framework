@@ -132,5 +132,10 @@ impl WindowRenderDelegate for AppState {
                 win.window.request_redraw();
             }
         }
+
+        // Settle point for geometry persistence: a size/move drag has ended, so
+        // capture the final geometry now (the per-tick `WindowResized` saves are
+        // suppressed mid-drag by the live-resize gate). No-op without a store.
+        self.save_window_geometry(window_id);
     }
 }

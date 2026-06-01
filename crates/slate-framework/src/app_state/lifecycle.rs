@@ -11,8 +11,8 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use slate_platform::{
-    DefaultPlatform, DefaultWindow, Window, WindowId, WindowImeDelegate, WindowRenderDelegate,
-    wake_run_loop,
+    DefaultPlatform, DefaultWindow, Window, WindowId, WindowImeDelegate, WindowOptions,
+    WindowRenderDelegate, wake_run_loop,
 };
 
 use crate::app::AppContext;
@@ -108,7 +108,57 @@ impl AppState {
             on_ime_disabled: RefCell::new(Vec::new()),
             menu_registry: RefCell::new(crate::menu::MenuRegistry::new()),
             active_menu: RefCell::new(None),
+            persistence: RefCell::new(None),
+            persistence_keys: RefCell::new(HashMap::new()),
         }
+    }
+
+    /// Install the adopter's geometry-persistence store. Called once by
+    /// `App::run` when the adopter supplied one via `App::persistence`.
+    pub(crate) fn install_persistence(
+        &self,
+        store: Rc<dyn crate::persistence::PersistenceStore>,
+    ) {
+        *self.persistence.borrow_mut() = Some(store);
+    }
+
+    /// Apply any saved geometry onto `opts` (restore-on-create) for the
+    /// dynamic `AppContext::create_window` path. Delegates to the shared
+    /// helper; no-op without a store / key / saved entry.
+    pub(crate) fn restore_options(&self, opts: &mut WindowOptions) {
+        crate::persistence::restore_options(self.persistence.borrow().as_ref(), opts);
+    }
+
+    /// Whether the window with `id` is currently in a live resize drag. Used to
+    /// gate save-on-settle so a drag does not storm the store. Unknown window
+    /// (race with destroy) reports `false`.
+    pub(crate) fn window_is_live_resizing(&self, id: WindowId) -> bool {
+        self.windows
+            .borrow()
+            .get(&id)
+            .map(|w| w.window.is_live_resizing())
+            .unwrap_or(false)
+    }
+
+    /// Save a window's current geometry through the persistence store.
+    ///
+    /// No-op when no store is installed or the window has no persistence key.
+    /// Reads geometry via the platform getters under a short `windows` borrow,
+    /// then drops it before calling the (adopter) store — the store may run
+    /// arbitrary I/O and must not alias the borrow.
+    pub(crate) fn save_window_geometry(&self, id: WindowId) {
+        let Some(store) = self.persistence.borrow().clone() else {
+            return;
+        };
+        let Some(key) = self.persistence_keys.borrow().get(&id).cloned() else {
+            return;
+        };
+        let geometry = {
+            let guard = self.windows.borrow();
+            let Some(win) = guard.get(&id) else { return };
+            crate::persistence::WindowGeometry::capture(&*win.window)
+        };
+        store.save(&key, geometry);
     }
 
     /// Register a new window's redraw requester so the reactive wake-all bridge
@@ -136,8 +186,18 @@ impl AppState {
     /// here — `init_surfaces` does that, called by the caller after the
     /// `Event::Resumed` rendezvous (pre-run) or immediately at drain time
     /// (dynamic).
-    pub(crate) fn install_window(self: &Rc<Self>, window: Arc<DefaultWindow>) {
+    pub(crate) fn install_window(
+        self: &Rc<Self>,
+        window: Arc<DefaultWindow>,
+        persistence_key: Option<String>,
+    ) {
         let id = window.id();
+
+        // Remember the geometry-persistence key (if any) so save-on-settle and
+        // save-on-close can store under the adopter's chosen key.
+        if let Some(key) = persistence_key {
+            self.persistence_keys.borrow_mut().insert(id, key);
+        }
 
         // 1. Insert WindowState.
         let win_state = WindowState::new(window.clone(), self.runtime.clone());
@@ -178,7 +238,7 @@ impl AppState {
             self.pending_window_creates.borrow_mut().drain(..).collect();
         for mut pending in drained {
             let id = pending.window.id();
-            self.install_window(pending.window);
+            self.install_window(pending.window, pending.persistence_key);
             if let Err(e) = self.init_surfaces(id, &mut pending.view_factory, cx, platform) {
                 log::error!(
                     "drain_pending_window_creates: init_surfaces failed for {:?}: {}",
@@ -196,6 +256,7 @@ impl AppState {
         &self,
         window: Arc<DefaultWindow>,
         view_factory: ErasedViewFactory,
+        persistence_key: Option<String>,
     ) -> WindowId {
         let id = window.id();
         self.pending_window_creates
@@ -203,6 +264,7 @@ impl AppState {
             .push(PendingWindowCreate {
                 window,
                 view_factory,
+                persistence_key,
             });
         id
     }
@@ -244,6 +306,12 @@ impl AppState {
     pub fn handle_window_destroyed(&self, id: WindowId) -> AppSignal {
         log::debug!("WindowDestroyed for {:?}", id);
 
+        // Persist final geometry before the window handle is dropped. No-op
+        // unless a store + key are installed for this window. Reads the window
+        // while it is still in the map, so this must precede the removal below.
+        self.save_window_geometry(id);
+        self.persistence_keys.borrow_mut().remove(&id);
+
         // Drop the WindowState — renderer, view, and all per-window resources
         // are freed here. This is the only correct place to do it: the borrow
         // on `windows` is NOT held when user handlers could fire (dispatch
@@ -284,5 +352,64 @@ impl AppState {
             .borrow()
             .get(&window)
             .map(|w| w.recovery_state.borrow().clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::persistence::{InMemoryStore, PersistenceStore, WindowGeometry};
+
+    fn empty_state() -> Rc<AppState> {
+        let redraw = RedrawRequester::new(wake_run_loop);
+        let executor = crate::executor::Executor::new(redraw.clone());
+        let runtime = slate_reactive::Runtime::new();
+        Rc::new(AppState::new(executor, redraw, runtime))
+    }
+
+    #[test]
+    fn restore_options_no_store_is_noop() {
+        let state = empty_state();
+        let mut opts = WindowOptions {
+            size: (800, 600),
+            persistence_key: Some("main".into()),
+            ..Default::default()
+        };
+        state.restore_options(&mut opts);
+        assert_eq!(opts.size, (800, 600));
+    }
+
+    #[test]
+    fn restore_options_applies_saved_geometry_through_installed_store() {
+        let state = empty_state();
+        let store: Rc<dyn PersistenceStore> = Rc::new(InMemoryStore::new());
+        store.save(
+            "main",
+            WindowGeometry {
+                position: Some((33, 44)),
+                size: (1024, 768),
+                maximized: true,
+            },
+        );
+        state.install_persistence(store);
+
+        let mut opts = WindowOptions {
+            size: (800, 600),
+            position: None,
+            persistence_key: Some("main".into()),
+            ..Default::default()
+        };
+        state.restore_options(&mut opts);
+        assert_eq!(opts.position, Some((33, 44)));
+        assert_eq!(opts.size, (1024, 768));
+        assert!(opts.maximized);
+    }
+
+    #[test]
+    fn save_window_geometry_without_store_or_window_is_noop() {
+        // No store + no such window: must not panic, must not insert a key.
+        let state = empty_state();
+        state.save_window_geometry(WindowId(999));
+        assert!(state.persistence_keys.borrow().is_empty());
     }
 }

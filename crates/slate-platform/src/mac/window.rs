@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use dispatch::Queue;
 
-use objc2::MainThreadOnly;
 use objc2::rc::Retained;
+use objc2::{DefinedClass, MainThreadOnly};
 use objc2::runtime::ProtocolObject;
 use objc2_app_kit::{NSBackingStoreType, NSView, NSWindow, NSWindowStyleMask};
 use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize, NSString};
@@ -22,7 +22,10 @@ use raw_window_handle::{
 use super::display_link::DisplayLink;
 use super::view::{MetalView, WindowDelegate};
 use super::{next_window_id, post_redraw_event, register_window, unregister_window};
-use crate::{PlatformMenu, Window, WindowId, WindowImeDelegate, WindowOptions, WindowRenderDelegate};
+use crate::{
+    PlatformMenu, Window, WindowId, WindowImeDelegate, WindowOptions, WindowPlacement,
+    WindowRenderDelegate,
+};
 
 // ---------------------------------------------------------------------------
 // MacWindow — public window handle
@@ -120,8 +123,22 @@ impl MacWindow {
         // Enable mouse-moved events for the window (required for mouseMoved: to fire).
         ns_window.setAcceptsMouseMovedEvents(true);
 
-        ns_window.center();
+        // Honour a restored top-left position (geometry persistence) when
+        // supplied; otherwise centre as before. `position` is a Cocoa screen
+        // point (bottom-left origin) describing the window's top-left corner —
+        // it round-trips exactly with the `position()` getter below.
+        match opts.position {
+            Some((x, y)) => {
+                ns_window.setFrameTopLeftPoint(NSPoint::new(x as f64, y as f64));
+            }
+            None => ns_window.center(),
+        }
         ns_window.makeKeyAndOrderFront(None);
+
+        // Restore a maximized ("zoomed") window after it is on screen.
+        if opts.maximized && !ns_window.isZoomed() {
+            ns_window.zoom(None);
+        }
 
         // Create and start the display link for vsync-synchronized rendering.
         // This ensures smooth rendering during live resize.
@@ -248,6 +265,31 @@ impl Window for MacWindow {
     fn show_context_menu(&self, menu: &PlatformMenu, at: (f32, f32)) {
         let mtm = MainThreadMarker::new().expect("show_context_menu must run on the main thread");
         super::menu::pop_up_context_menu(self, menu, at, mtm);
+    }
+
+    fn position(&self) -> Option<(i32, i32)> {
+        // Cocoa screen coords (bottom-left origin). Report the window's
+        // top-left corner so it round-trips with `setFrameTopLeftPoint` used
+        // for restore: top edge Y = origin.y + height.
+        let frame = self.ns_window.frame();
+        Some((
+            frame.origin.x.round() as i32,
+            (frame.origin.y + frame.size.height).round() as i32,
+        ))
+    }
+
+    fn placement(&self) -> WindowPlacement {
+        if self.ns_window.isMiniaturized() {
+            WindowPlacement::Minimized
+        } else if self.ns_window.isZoomed() {
+            WindowPlacement::Maximized
+        } else {
+            WindowPlacement::Normal
+        }
+    }
+
+    fn is_live_resizing(&self) -> bool {
+        self.view.ivars().live_resize.get()
     }
 }
 

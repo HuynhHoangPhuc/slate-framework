@@ -3409,6 +3409,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "window-persistence"
+version = "1.0.1"
+dependencies = [
+ "env_logger",
+ "log",
+ "slate-framework",
+]
+
+[[package]]
 name = "windows"
 version = "0.62.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

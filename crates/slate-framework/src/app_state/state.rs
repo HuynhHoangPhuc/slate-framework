@@ -48,6 +48,9 @@ pub(crate) type ErasedViewFactory = Box<dyn FnMut(&AppContext) -> Box<dyn Erased
 pub(crate) struct PendingWindowCreate {
     pub window: Arc<DefaultWindow>,
     pub view_factory: ErasedViewFactory,
+    /// Geometry-persistence key carried from the creating `WindowOptions`, so
+    /// the drained window saves under the same key the adopter chose.
+    pub persistence_key: Option<String>,
 }
 
 /// Slimmed shared application state.
@@ -133,6 +136,16 @@ pub struct AppState {
     // to each window via the platform `set_menu` seam when installed. `None`
     // until an adopter calls `AppContext::set_menu`.
     pub(super) active_menu: RefCell<Option<crate::menu::Menu>>,
+
+    // Adopter-supplied geometry-persistence store (window position/size/maximized
+    // across launches). `None` until `App::persistence` installs one — every
+    // restore/save path then no-ops, so persistence is fully opt-in.
+    pub(crate) persistence: RefCell<Option<Rc<dyn crate::persistence::PersistenceStore>>>,
+
+    // Per-window geometry-persistence keys, captured at `install_window` from
+    // the creating `WindowOptions`. Save-on-settle/close looks the key up here;
+    // windows without a key are not persisted.
+    pub(crate) persistence_keys: RefCell<HashMap<WindowId, String>>,
 }
 
 impl Drop for AppState {

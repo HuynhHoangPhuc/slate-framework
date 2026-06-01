@@ -99,6 +99,7 @@ fn make_two_window_state() -> (Rc<AppState>, WindowId, WindowId) {
         resizable: false,
         visible: false,
         position: Some((-32000, -32000)),
+        ..Default::default()
     });
     let window_b = platform.create_window(WindowOptions {
         title: "slate-smoke-window-b".into(),
@@ -107,6 +108,7 @@ fn make_two_window_state() -> (Rc<AppState>, WindowId, WindowId) {
         resizable: false,
         visible: false,
         position: Some((-32001, -32001)),
+        ..Default::default()
     });
 
     let redraw_a = RedrawRequester::new(wake_run_loop);
@@ -342,6 +344,7 @@ fn check_redraw_bridge_wakes_once_per_signal_change() -> Result<(), String> {
         resizable: false,
         visible: false,
         position: Some((-32000, -32000)),
+        ..Default::default()
     });
     let window_b = platform.create_window(WindowOptions {
         title: "slate-redraw-bridge-test-b".into(),
@@ -350,6 +353,7 @@ fn check_redraw_bridge_wakes_once_per_signal_change() -> Result<(), String> {
         resizable: false,
         visible: false,
         position: Some((-32001, -32001)),
+        ..Default::default()
     });
 
     // Counting requesters: track how many times each was called.

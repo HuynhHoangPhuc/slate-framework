@@ -52,6 +52,7 @@ fn make_two_window_state() -> (Rc<AppState>, WindowId, WindowId) {
         resizable: false,
         visible: false,
         position: Some((-32000, -32000)),
+        ..Default::default()
     });
     let window_b = platform.create_window(WindowOptions {
         title: "slate-golden-trace-two-win-b".into(),
@@ -60,6 +61,7 @@ fn make_two_window_state() -> (Rc<AppState>, WindowId, WindowId) {
         resizable: false,
         visible: false,
         position: Some((-32001, -32001)),
+        ..Default::default()
     });
 
     let req_a = RedrawRequester::new(wake_run_loop);

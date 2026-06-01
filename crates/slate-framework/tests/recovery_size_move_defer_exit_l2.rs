@@ -47,6 +47,7 @@ fn l2_defer_exit_resumes_recovery() {
         resizable: false,
         visible: false,
         position: Some((-32000, -32000)),
+        ..Default::default()
     });
     let redraw_requester = RedrawRequester::new(wake_run_loop);
     let executor = Executor::new(redraw_requester.clone());

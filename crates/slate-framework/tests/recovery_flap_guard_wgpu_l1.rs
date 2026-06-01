@@ -43,6 +43,7 @@ fn l1_wgpu_callback_flap_gives_up() {
         resizable: false,
         visible: false,
         position: Some((-32000, -32000)),
+        ..Default::default()
     });
     let redraw_requester = RedrawRequester::new(wake_run_loop);
     let executor = Executor::new(redraw_requester.clone());

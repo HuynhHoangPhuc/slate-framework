@@ -49,6 +49,7 @@ fn make_state() -> (Rc<AppState>, WindowId) {
         resizable: false,
         visible: false,
         position: Some((-32000, -32000)),
+        ..Default::default()
     });
     let redraw_requester = RedrawRequester::new(wake_run_loop);
     let executor = Executor::new(redraw_requester.clone());
