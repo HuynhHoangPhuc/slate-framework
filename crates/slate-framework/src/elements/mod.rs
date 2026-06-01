@@ -7,6 +7,11 @@
 //! - `ScrollView` — clipped, vertically scrollable container
 //! - `TextField` — single-line editable text input with IME support
 
+/// **Throwaway** — the S0 DataGrid accessibility spike element. Deliberately
+/// reachable (so the spike example can drive it) but NOT re-exported at
+/// `elements::` or the crate root: it is not part of the public widget set and
+/// is deleted once the real `DataGrid` adopts its verified role/nav pattern.
+pub mod data_grid_a11y_spike;
 pub mod div;
 pub mod image;
 pub mod overlay;

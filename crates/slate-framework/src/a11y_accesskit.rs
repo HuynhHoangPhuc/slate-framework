@@ -22,9 +22,15 @@
 //! Platform AccessKit wiring (E20b) is post-v1; this module only locks the
 //! conversion shape so the future platform layer can adopt it unchanged.
 
-use accesskit::{Node, NodeId, Rect};
+use accesskit::{Node, NodeId, Rect, Role, Tree, TreeId, TreeUpdate};
 
 use crate::types::{AccessibilityNode, AccessibilityRelationships, Bounds, ElementId, LiveRegion};
+
+/// Synthetic NodeId for the window root that wraps the view's top-level a11y
+/// nodes. Real `ElementId`s come from `allocate_id`'s 64-bit hash, so collision
+/// with this `u64::MAX` sentinel is theoretically possible but ~1/2⁶⁴ —
+/// negligible, and accepted rather than reserving a value out of the hash space.
+pub const WINDOW_ROOT_NODE_ID: NodeId = NodeId(u64::MAX);
 
 /// Translate a Slate `ElementId` to an accesskit `NodeId`.
 ///
@@ -73,6 +79,21 @@ pub fn to_accesskit_node(node: &AccessibilityNode) -> Node {
         });
     }
 
+    // Grid/table cell-position semantics. Row/column counts go on the grid
+    // container; row/column indices go on each cell. All zero-based.
+    if let Some(rc) = info.row_count {
+        ak.set_row_count(rc);
+    }
+    if let Some(cc) = info.column_count {
+        ak.set_column_count(cc);
+    }
+    if let Some(ri) = info.row_index {
+        ak.set_row_index(ri);
+    }
+    if let Some(ci) = info.column_index {
+        ak.set_column_index(ci);
+    }
+
     apply_relationships(&mut ak, &info.relationships);
 
     if !node.actions.is_empty() {
@@ -111,6 +132,45 @@ fn push_node_recursive(node: &AccessibilityNode, out: &mut Vec<(NodeId, Node)>) 
     out.push((element_id_to_node_id(node.id), to_accesskit_node(node)));
     for child in &node.children {
         push_node_recursive(child, out);
+    }
+}
+
+/// Build a complete `TreeUpdate` from a window's top-level a11y nodes.
+///
+/// A platform `TreeUpdate` requires exactly one root, but the prepaint walk
+/// can leave several top-level nodes (the view need not open a single root
+/// a11y node). This synthesizes a `Role::Window` root owning them all, so the
+/// shape is always valid. Always emits a *full* tree (no incremental diffing),
+/// which keeps the macOS adapter and the lazy `request_initial_tree` in sync.
+///
+/// `focus` is the currently focused element, or the window root when nothing
+/// is focused (`TreeUpdate::focus` is non-optional).
+pub fn to_accesskit_tree_update(roots: &[AccessibilityNode], focus: Option<ElementId>) -> TreeUpdate {
+    let mut nodes: Vec<(NodeId, Node)> = Vec::new();
+
+    let mut window = Node::new(Role::Window);
+    let child_ids: Vec<NodeId> = roots.iter().map(|n| element_id_to_node_id(n.id)).collect();
+    window.set_children(child_ids);
+    nodes.push((WINDOW_ROOT_NODE_ID, window));
+
+    for root in roots {
+        nodes.extend(to_accesskit_tree(root));
+    }
+
+    // `TreeUpdate::focus` must reference a node present in `nodes` — AccessKit
+    // can assert on a dangling focus id. A focusable-but-a11y-suppressed element
+    // (or one focused on a frame where its node isn't emitted) would dangle, so
+    // fall back to the window root unless the focused id is actually in the tree.
+    let focus = focus
+        .map(element_id_to_node_id)
+        .filter(|id| nodes.iter().any(|(nid, _)| nid == id))
+        .unwrap_or(WINDOW_ROOT_NODE_ID);
+
+    TreeUpdate {
+        nodes,
+        tree: Some(Tree::new(WINDOW_ROOT_NODE_ID)),
+        tree_id: TreeId::ROOT,
+        focus,
     }
 }
 

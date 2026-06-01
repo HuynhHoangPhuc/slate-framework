@@ -71,6 +71,11 @@ pub struct WindowState {
     pub layout_tree: RefCell<LayoutTree>,
     pub hit_test_list: RefCell<HitTestList>,
     pub a11y_nodes: RefCell<Vec<AccessibilityNode>>,
+    /// macOS VoiceOver adapter, lazily built on the first frame after the
+    /// surface is realized (needs a live NSView). `None` on non-AppKit/test
+    /// windows. macOS-only — the P7 platform-accessibility seed.
+    #[cfg(target_os = "macos")]
+    pub(crate) a11y_adapter: RefCell<Option<crate::a11y_macos::MacA11yAdapter>>,
     pub scene: RefCell<Scene>,
 
     // -- Mouse dispatch state -------------------------------------------
@@ -175,6 +180,8 @@ impl WindowState {
             layout_tree: RefCell::new(LayoutTree::new()),
             hit_test_list: RefCell::new(HitTestList::new()),
             a11y_nodes: RefCell::new(Vec::new()),
+            #[cfg(target_os = "macos")]
+            a11y_adapter: RefCell::new(None),
             scene: RefCell::new(Scene::new()),
             handler_map: RefCell::new(HashMap::new()),
             mouse_handler_map: RefCell::new(HashMap::new()),

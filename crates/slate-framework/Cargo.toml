@@ -37,6 +37,14 @@ thiserror.workspace = true
 pollster.workspace = true
 image.workspace = true
 
+# macOS AccessKit platform adapter (S0 DataGrid a11y spike → P7 seed).
+# accesskit_macos 0.26.1 depends on accesskit ^0.24 (matches our =0.24.0 pin).
+# Its objc2 0.5 / app-kit 0.2 coexist with the workspace objc2 0.6 / 0.3
+# because only a raw NSView pointer crosses the FFI boundary — do not unify.
+[target.'cfg(target_os = "macos")'.dependencies]
+accesskit_macos = "=0.26.1"
+raw-window-handle.workspace = true
+
 [dev-dependencies]
 trybuild = "1"
 tracing-test = "0.2"

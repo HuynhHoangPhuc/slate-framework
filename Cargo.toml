@@ -8,6 +8,7 @@ members = [
     "crates/slate-bench",
     "examples/anchor-md-to-png",
     "examples/click-counter",
+    "examples/datagrid-a11y-spike",
     "examples/dense-image-gallery",
     "examples/hello-element",
     "examples/hello-rect",

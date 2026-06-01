@@ -273,6 +273,17 @@ pub enum AccessibilityRole {
     TextInput,
     Tooltip,
     Window,
+    // -- Grid / table family (data-grid a11y) --
+    /// Interactive 2D data grid container (ARIA `grid`).
+    Grid,
+    /// A row within a grid/table (ARIA `row`).
+    Row,
+    /// An individual cell within a grid (ARIA `gridcell`).
+    Cell,
+    /// A header cell labelling a column (ARIA `columnheader`).
+    ColumnHeader,
+    /// A header cell labelling a row (ARIA `rowheader`).
+    RowHeader,
     /// Element is not exposed to accessibility tree.
     None,
 }
@@ -303,6 +314,14 @@ impl From<AccessibilityRole> for accesskit::Role {
             AccessibilityRole::TextInput => accesskit::Role::TextInput,
             AccessibilityRole::Tooltip => accesskit::Role::Tooltip,
             AccessibilityRole::Window => accesskit::Role::Window,
+            // `Cell` maps to `GridCell` (the interactive variant) because the
+            // grid here is `Role::Grid`, not a static `Role::Table`. The S0
+            // VoiceOver spike validates this choice.
+            AccessibilityRole::Grid => accesskit::Role::Grid,
+            AccessibilityRole::Row => accesskit::Role::Row,
+            AccessibilityRole::Cell => accesskit::Role::GridCell,
+            AccessibilityRole::ColumnHeader => accesskit::Role::ColumnHeader,
+            AccessibilityRole::RowHeader => accesskit::Role::RowHeader,
             AccessibilityRole::None => accesskit::Role::Unknown,
         }
     }
@@ -399,6 +418,15 @@ pub struct AccessibilityInfo {
     /// = explicit order (HTML tabindex semantics). Internal contract;
     /// no direct accesskit field today.
     pub tab_index: Option<i32>,
+    /// Zero-based row position of a grid cell (ARIA `aria-rowindex` is
+    /// one-based; accesskit `row_index` is zero-based). `None` off-grid.
+    pub row_index: Option<usize>,
+    /// Zero-based column position of a grid cell. `None` off-grid.
+    pub column_index: Option<usize>,
+    /// Total row count, set on the grid container. `None` off-grid.
+    pub row_count: Option<usize>,
+    /// Total column count, set on the grid container. `None` off-grid.
+    pub column_count: Option<usize>,
 }
 
 /// Accessibility node for the a11y tree.

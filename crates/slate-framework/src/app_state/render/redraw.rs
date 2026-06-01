@@ -318,6 +318,26 @@ impl AppState {
         #[cfg(feature = "profiling")]
         crate::profiling::redraw_counters::record_paint(_paint_start.elapsed());
 
+        // Push the just-built a11y tree to VoiceOver (macOS). The completed
+        // tree lives in `win.a11y_nodes` after the prepaint walk; focus drives
+        // `TreeUpdate::focus`. No-op until the surface is realized.
+        #[cfg(target_os = "macos")]
+        {
+            let guard = self.windows.borrow();
+            if let Some(win) = guard.get(&window_id) {
+                let focus = win.focus_registry.borrow().focused();
+                let renderer_ready = win.renderer.borrow().is_some();
+                let roots = win.a11y_nodes.borrow();
+                crate::a11y_macos::push_tree_to_voiceover(
+                    &win.a11y_adapter,
+                    &win.window,
+                    renderer_ready,
+                    &roots,
+                    focus,
+                );
+            }
+        }
+
         // Re-borrow for render step.
         #[cfg(feature = "profiling")]
         let _present_start = std::time::Instant::now();

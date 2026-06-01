@@ -27,6 +27,10 @@
 
 // Core modules
 pub mod a11y_accesskit;
+/// macOS AccessKit platform adapter (VoiceOver). macOS-only; the S0 DataGrid
+/// a11y spike seed for P7 platform accessibility.
+#[cfg(target_os = "macos")]
+pub mod a11y_macos;
 pub mod app;
 #[cfg(any(test, feature = "test-hooks"))]
 #[doc(hidden)]
