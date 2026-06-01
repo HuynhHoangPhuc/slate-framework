@@ -16,16 +16,22 @@
 //! Run: `cargo run -p dashboard`
 
 mod data;
+mod menu;
 mod panels;
+mod store;
 
+use std::cell::RefCell;
 use std::collections::HashSet;
+use std::rc::Rc;
 use std::time::Instant;
 
 use slate_framework::reactive::Signal;
 use slate_framework::{
-    AlignItems, AnyElement, App, AppContext, Bounds, Div, FlexDirection, IntoAny, Splitter,
-    ThemeMode, View, WindowOptions, theme,
+    AlignItems, AnyElement, App, AppContext, Bounds, Div, FlexDirection, IntoAny, Key, NamedKey,
+    Splitter, ThemeMode, View, WindowOptions, theme,
 };
+
+use store::FileStore;
 
 /// Caller-owned shell state, created once in `App::run` so it survives the
 /// Strategy-A whole-view rebuild.
@@ -80,17 +86,41 @@ impl View for DashboardView {
 fn main() {
     env_logger::init();
 
+    // Adopter-side geometry store: the window reopens where it was left.
+    let path = std::env::temp_dir().join("slate-dashboard.geom");
+    log::info!("window geometry stored at: {}", path.display());
+    let store = Rc::new(FileStore { path });
+
+    // Shared slot so the App-level key handler can reach the live `AppContext`
+    // (allocated inside `App::run`). Same pattern as `native-menu`.
+    let cx_handle: Rc<RefCell<Option<AppContext>>> = Rc::new(RefCell::new(None));
+    let cx_for_key = cx_handle.clone();
+
     App::new(WindowOptions {
         title: "Slate · dashboard".into(),
         size: (1040, 720),
         min_size: Some((720, 520)),
         resizable: true,
+        persistence_key: Some("dashboard".into()),
         ..Default::default()
     })
-    .run(|cx: &AppContext| {
+    .persistence(store)
+    .on_key_down(move |key, ctx| {
+        // Shift+F10 (the OS-standard "context menu" key) pops a *native* context
+        // menu — app-level commands, distinct from the in-canvas overlay menu on
+        // right-click. F10 never collides with grid arrows or filter typing.
+        if matches!(key.key, Key::Named(NamedKey::F10))
+            && key.modifiers.shift
+            && !key.is_repeat
+            && let Some(cx) = cx_for_key.borrow().as_ref()
+        {
+            cx.show_context_menu(ctx.window_id(), menu::native_context_menu(), (120.0, 80.0));
+        }
+    })
+    .run(move |cx: &AppContext| {
         let rt = cx.runtime();
         let mode = cx.theme_mode().expect("theme_mode available inside App::run");
-        DashboardView {
+        let view = DashboardView {
             mode,
             split: Signal::new(rt.clone(), 0.26),
             tree_expanded: Signal::new(rt.clone(), HashSet::from([0, 10])),
@@ -112,6 +142,13 @@ fn main() {
             ctx_open: Signal::new(rt.clone(), false),
             ctx_anchor: Signal::new(rt.clone(), Bounds::ZERO),
             last_action: Signal::new(rt, "Ready".to_string()),
-        }
+        };
+
+        // Stash the live context for the App-level key handler, then install the
+        // native menu bar wired to the view's signals.
+        *cx_handle.borrow_mut() = Some(cx.clone());
+        menu::install(cx, &view);
+
+        view
     });
 }
