@@ -8,12 +8,15 @@ use objc2::runtime::ProtocolObject;
 use objc2::{ClassType, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
     NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSEvent,
-    NSEventModifierFlags, NSEventType,
+    NSEventModifierFlags, NSEventType, NSMenu,
 };
 use objc2_foundation::{MainThreadMarker, NSNotification, NSObject, NSObjectProtocol, NSPoint};
 
 use super::window::MacWindow;
-use super::{HANDLER, REDRAW_EVENT_SUBTYPE, WAKE_EVENT_SUBTYPE, dispatch_event, ffi_boundary};
+use super::{
+    HANDLER, MENU_EVENT_SUBTYPE, REDRAW_EVENT_SUBTYPE, WAKE_EVENT_SUBTYPE, dispatch_event,
+    ffi_boundary,
+};
 use crate::WindowId;
 use crate::{Event, Platform, WindowOptions};
 
@@ -55,6 +58,14 @@ define_class!(
                     });
                     return;
                 }
+                if subtype == objc2_app_kit::NSEventSubtype(MENU_EVENT_SUBTYPE) {
+                    let window = WindowId(event.data1() as u64);
+                    let id = event.data2() as u64;
+                    ffi_boundary(|| {
+                        dispatch_event(Event::MenuActivated { window, id });
+                    });
+                    return;
+                }
             }
 
             // Cmd+key routing: this app installs no main menu, so the two
@@ -67,6 +78,20 @@ define_class!(
             if matches!(ev_ty, NSEventType::KeyDown | NSEventType::KeyUp) {
                 let flags = event.modifierFlags();
                 if flags.contains(NSEventModifierFlags::Command) {
+                    // Give an installed main menu first crack at the key event.
+                    // We override sendEvent: and route Cmd+combos straight to the
+                    // first responder below, which bypasses AppKit's normal menu
+                    // key-equivalent matching — so native menu accelerators would
+                    // never fire without this. `performKeyEquivalent:` only claims
+                    // keys the menu actually defines, so first-responder shortcuts
+                    // the menu doesn't list (TextField Cmd+C/V/X) still fall
+                    // through. No menu installed → `mainMenu` is nil → skipped.
+                    if ev_ty == NSEventType::KeyDown
+                        && let Some(menu) = self.mainMenu()
+                        && NSMenu::performKeyEquivalent(&menu, event)
+                    {
+                        return;
+                    }
                     let vk = event.keyCode();
                     // kVK_ANSI_Q = 0x0C, kVK_Space = 0x31.
                     let is_quit = vk == 0x0C;

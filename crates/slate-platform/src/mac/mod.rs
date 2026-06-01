@@ -15,6 +15,7 @@
 
 mod display_link;
 mod keymap;
+mod menu;
 mod platform;
 mod text_offset;
 mod view;
@@ -46,6 +47,10 @@ pub(crate) const REDRAW_EVENT_SUBTYPE: i16 = 42;
 
 /// Subtype marker for wake events from background threads.
 pub(crate) const WAKE_EVENT_SUBTYPE: i16 = 43;
+
+/// Subtype marker for a deferred native-menu activation. `data1` encodes the
+/// owning `WindowId`, `data2` the framework `MenuId`.
+pub(crate) const MENU_EVENT_SUBTYPE: i16 = 44;
 
 thread_local! {
     pub(crate) static HANDLER: EventHandler = const { std::cell::RefCell::new(None) };
@@ -173,6 +178,34 @@ pub(crate) fn post_redraw_event(window_id: WindowId) {
         REDRAW_EVENT_SUBTYPE,
         window_id.0 as isize,
         0,
+    );
+    if let Some(event) = event {
+        let mtm = MainThreadMarker::new().unwrap();
+        NSApplication::sharedApplication(mtm).postEvent_atStart(&event, false);
+    }
+}
+
+/// Post a native-menu activation to be dispatched on the next run-loop
+/// iteration, carrying `window` in `data1` and `id` in `data2`.
+///
+/// Deferral is mandatory, not an optimization: a native context menu pops up in
+/// a **nested modal tracking loop** that fires the item's `slateMenuAction:`
+/// synchronously, while the outer Slate event handler that opened it still
+/// holds the `HANDLER` borrow. Dispatching inline would hit the re-entrancy
+/// guard in [`dispatch_event`] and be dropped. Posting lets the activation land
+/// after the outer handler unwinds. Menu-bar selections (fired from AppKit's
+/// own pump, `HANDLER` free) go through the same path harmlessly.
+pub(crate) fn post_menu_event(window: WindowId, id: u64) {
+    let event = NSEvent::otherEventWithType_location_modifierFlags_timestamp_windowNumber_context_subtype_data1_data2(
+        NSEventType::ApplicationDefined,
+        NSPoint::new(0.0, 0.0),
+        NSEventModifierFlags::empty(),
+        0.0,
+        0,
+        None,
+        MENU_EVENT_SUBTYPE,
+        window.0 as isize,
+        id as isize,
     );
     if let Some(event) = event {
         let mtm = MainThreadMarker::new().unwrap();

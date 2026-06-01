@@ -22,7 +22,7 @@ use raw_window_handle::{
 use super::display_link::DisplayLink;
 use super::view::{MetalView, WindowDelegate};
 use super::{next_window_id, post_redraw_event, register_window, unregister_window};
-use crate::{Window, WindowId, WindowImeDelegate, WindowOptions, WindowRenderDelegate};
+use crate::{PlatformMenu, Window, WindowId, WindowImeDelegate, WindowOptions, WindowRenderDelegate};
 
 // ---------------------------------------------------------------------------
 // MacWindow — public window handle
@@ -150,6 +150,11 @@ impl MacWindow {
 
         arc
     }
+
+    /// The window's content view, for native context-menu pop-ups.
+    pub(crate) fn content_view(&self) -> &NSView {
+        &self.view
+    }
 }
 
 impl Drop for MacWindow {
@@ -233,6 +238,16 @@ impl Window for MacWindow {
             }
             post_redraw_event(window_id);
         });
+    }
+
+    fn set_menu(&self, menu: &PlatformMenu) {
+        let mtm = MainThreadMarker::new().expect("set_menu must run on the main thread");
+        super::menu::set_menu_bar(self.id, menu, mtm);
+    }
+
+    fn show_context_menu(&self, menu: &PlatformMenu, at: (f32, f32)) {
+        let mtm = MainThreadMarker::new().expect("show_context_menu must run on the main thread");
+        super::menu::pop_up_context_menu(self, menu, at, mtm);
     }
 }
 

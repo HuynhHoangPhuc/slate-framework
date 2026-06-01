@@ -181,6 +181,26 @@ impl AppContext {
         state.install_menu(menu);
     }
 
+    /// Pop up `menu` as a native context menu over `window`, anchored at `at`
+    /// (logical view points, top-left origin — e.g. a right-click position).
+    ///
+    /// Items route through the same action registry as the menu bar; register
+    /// each item's handler via [`on_menu_action`](Self::on_menu_action). Until a
+    /// native backend is wired the platform call is a no-op. No-op outside a
+    /// live [`App::run`] or for an unknown `window`.
+    pub fn show_context_menu(
+        &self,
+        window: slate_platform::WindowId,
+        menu: crate::menu::Menu,
+        at: (f32, f32),
+    ) {
+        let Some(weak) = &self.state else { return };
+        let Some(state) = weak.upgrade() else {
+            return;
+        };
+        state.show_context_menu(window, menu, at);
+    }
+
     /// Register the handler invoked when the menu item carrying `id` is
     /// activated. Replaces any prior handler for the same id.
     ///
@@ -608,6 +628,9 @@ impl App {
                     state_ref.dispatch_ime_commit(window, text)
                 }
                 Event::ImeDisabled { window, .. } => state_ref.dispatch_ime_disabled(window),
+                Event::MenuActivated { window, id, .. } => {
+                    state_ref.dispatch_menu(window, crate::menu::MenuId(id))
+                }
                 Event::Exiting => {
                     log::info!("exiting");
                     AppSignal::None

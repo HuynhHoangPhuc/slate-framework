@@ -1596,6 +1596,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "native-menu"
+version = "1.0.1"
+dependencies = [
+ "env_logger",
+ "log",
+ "slate-framework",
+]
+
+[[package]]
 name = "ndk-sys"
 version = "0.6.0+11769913"
 source = "registry+https://github.com/rust-lang/crates.io-index"

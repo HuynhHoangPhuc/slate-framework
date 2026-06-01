@@ -541,6 +541,20 @@ pub enum Event {
         text: String,
     },
     // -------------------------------------------------------------------------
+    // Menu events
+    // -------------------------------------------------------------------------
+    /// A native menu item (menu bar or context menu) was activated. `id` is the
+    /// item's routing id (the framework `MenuId`'s numeric value), set when the
+    /// menu was lowered to a [`PlatformMenu`]. The framework maps it back to the
+    /// registered action handler. `window` is the window that owned the menu at
+    /// activation time (the key window for the menu bar).
+    MenuActivated {
+        /// Window the menu was attached to when activated.
+        window: WindowId,
+        /// Routing id of the activated item.
+        id: u64,
+    },
+    // -------------------------------------------------------------------------
     // Keyboard IME events
     // -------------------------------------------------------------------------
     /// IME composition session started. Fires exactly once per session at

@@ -33,6 +33,20 @@ impl AppState {
         }
     }
 
+    /// Pop up `menu` as a native context menu over `window`, anchored at `at`
+    /// (logical view points, top-left origin). Lowers the model and calls the
+    /// platform seam; no-op until a native backend lands, and no-op for an
+    /// unknown `window`. Context-menu items route through the same action
+    /// registry as the menu bar, so register their handlers via
+    /// [`register_menu_action`](Self::register_menu_action).
+    pub(crate) fn show_context_menu(&self, window: WindowId, menu: Menu, at: (f32, f32)) {
+        let platform_menu = menu.to_platform();
+        let guard = self.windows.borrow();
+        if let Some(win) = guard.get(&window) {
+            win.window.show_context_menu(&platform_menu, at);
+        }
+    }
+
     /// Route a menu activation `id` to its registered handler.
     ///
     /// Follows the deferred-op discipline: clone the handler out under a short
