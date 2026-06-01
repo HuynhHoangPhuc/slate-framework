@@ -23,7 +23,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use super::{
-    REDRAW_TIMER_ID, WM_APP_WAKE, clear_wake_hwnd, decrement_live_window_count, dispatch_event,
+    REDRAW_TIMER_ID, WM_APP_MENU, WM_APP_WAKE, clear_wake_hwnd, decrement_live_window_count,
+    dispatch_event, menu,
 };
 use crate::{Event, WindowId, WindowImeDelegate, WindowRenderDelegate};
 
@@ -122,6 +123,9 @@ impl WinWindowInner {
                     // SAFETY: hwnd is still valid inside WM_DESTROY.
                     let _ = unsafe { KillTimer(Some(hwnd), REDRAW_TIMER_ID) };
                 }
+                // Drop this window's menu-bar command map so its ids don't
+                // outlive the window.
+                menu::forget_window(hwnd);
                 dispatch_event(Event::WindowDestroyed { window: self.id });
                 // Only end the message pump for the LAST surviving window.
                 // Earlier waves wired `PostQuitMessage(0)` unconditionally,
@@ -137,11 +141,21 @@ impl WinWindowInner {
                 dispatch_event(Event::Wake);
                 LRESULT(0)
             }
+            _ if msg == WM_APP_MENU => {
+                // Deferred context-menu activation re-injected by
+                // `menu::pop_up_context_menu`; `wparam` carries the MenuId.
+                dispatch_event(Event::MenuActivated {
+                    window: self.id,
+                    id: wparam.0 as u64,
+                });
+                LRESULT(0)
+            }
             _ => self
                 .dispatch_resize(hwnd, msg, wparam, lparam)
                 .or_else(|| self.dispatch_mouse(hwnd, msg, wparam, lparam))
                 .or_else(|| self.dispatch_key(hwnd, msg, wparam, lparam))
                 .or_else(|| self.dispatch_ime(hwnd, msg, wparam, lparam))
+                .or_else(|| menu::dispatch_command(self.id, hwnd, msg, wparam, lparam))
                 // SAFETY: default proc is always safe to call.
                 .unwrap_or_else(|| unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }),
         }

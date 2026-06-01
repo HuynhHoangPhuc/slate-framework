@@ -22,6 +22,7 @@
 
 mod ime;
 mod keymap;
+mod menu;
 mod message_loop;
 mod platform;
 mod window;
@@ -59,6 +60,13 @@ pub(crate) const REDRAW_TIMER_ID: usize = 0x5_1A_7F;
 
 /// Custom message for wake events from background threads.
 pub(crate) const WM_APP_WAKE: u32 = WM_APP + 1;
+
+/// Custom message carrying a deferred native-menu activation. Posted by the
+/// context-menu path (`menu::pop_up_context_menu`) so the selection is
+/// dispatched on a fresh pump turn, after the right-click handler that opened
+/// the menu has released the dispatch borrow. `wParam` holds the framework
+/// `MenuId` (full `u64`; `usize` is 64-bit on the x64 target).
+pub(crate) const WM_APP_MENU: u32 = WM_APP + 2;
 
 /// Atomic storage for the main window HWND (used for wake from background).
 static WAKE_HWND: AtomicIsize = AtomicIsize::new(0);

@@ -31,7 +31,10 @@ use super::platform::CLASS_NAME;
 use super::{
     REDRAW_TIMER_ID, increment_live_window_count, next_window_id, register_wake_hwnd, to_wide,
 };
-use crate::{Window, WindowId, WindowImeDelegate, WindowOptions, WindowPlacement, WindowRenderDelegate};
+use crate::{
+    PlatformMenu, Window, WindowId, WindowImeDelegate, WindowOptions, WindowPlacement,
+    WindowRenderDelegate,
+};
 
 // ---------------------------------------------------------------------------
 // WinWindow — public window handle (thin Arc wrapper)
@@ -256,6 +259,22 @@ impl Window for WinWindow {
 
     fn in_size_move(&self) -> bool {
         self.inner.in_size_move.get()
+    }
+
+    fn set_menu(&self, menu: &PlatformMenu) {
+        super::menu::set_menu_bar(self.inner.hwnd, menu);
+    }
+
+    fn show_context_menu(&self, menu: &PlatformMenu, at: (f32, f32)) {
+        // `at` is logical view points (top-left origin); TrackPopupMenu works in
+        // physical pixels. Scale to client pixels here; the menu backend handles
+        // the client→screen conversion.
+        let scale = self.scale_factor() as f32;
+        let client = (
+            (at.0 * scale).round() as i32,
+            (at.1 * scale).round() as i32,
+        );
+        super::menu::pop_up_context_menu(self.inner.hwnd, menu, client);
     }
 
     fn position(&self) -> Option<(i32, i32)> {
