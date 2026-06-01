@@ -70,6 +70,7 @@ pub mod test_support;
 pub mod text_system;
 pub mod types;
 pub mod view;
+pub mod viz;
 
 // Re-export underlying crates
 pub use slate_platform;
@@ -110,7 +111,8 @@ pub use element::{AnyElement, Element, IntoElement};
 /// Axis-aligned clip rectangle (logical px); appears in [`PaintCtx::push_clip`].
 pub use slate_renderer::ClipRect;
 pub use elements::{
-    Align, Border, Button, Checkbox, ContextMenu, Div, IconButton, Image, List, ListEntry,
+    Align, Border, Button, Checkbox, Column, ContextMenu, DataGrid, Div, IconButton, Image, List,
+    ListEntry,
     MAX_IMAGE_DIM, MenuEntry, MenuList, Overlay, Panel, Placement, ScrollView, Select, Side, Slider,
     SplitAxis, Splitter, StatusBar, Switch, Text, TextAlign, TextArea, TextAreaStyle, TextField,
     TextFieldStyle, TextWrap, Toolbar, Tooltip, Tree, TreeNode, VirtualList,
@@ -123,6 +125,7 @@ pub use layout::{LayoutTree, compute_layout, resolve_bounds, resolve_child_bound
 pub use smol::Timer;
 pub use style::{DisplayMode, Length, Overflow, Position, SizeConstraint, Style};
 pub use theme::{Radii, Spacing, Theme, ThemeMode, ThemeSet, TypeStyle, Typography, theme};
+pub use viz::{BarChart, Sparkline};
 pub use text_system::{PlatformFont, TextSystem};
 pub use types::{
     AccessibilityAction, AccessibilityInfo, AccessibilityNode, AccessibilityRelationships,

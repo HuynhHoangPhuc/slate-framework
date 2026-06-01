@@ -1,148 +1,67 @@
-//! dashboard — the P5b dev-tool/dashboard shell (process/resource monitor).
+//! dashboard — the P5 reference app: a process/resource monitor assembled
+//! entirely from the extracted widget set.
 //!
-//! Stands up the layout frame every later widget plugs into: a [`Toolbar`] on
-//! top, a [`Splitter`] dividing a sidebar from the main area, and a
-//! [`StatusBar`] on the bottom — all [`Panel`]s styled from ambient theme
-//! tokens. The split is draggable (and Arrow-key resizable when the divider is
-//! focused via Tab); the top-right button flips light/dark. Pane contents are
-//! placeholders here — later phases replace them with the process Tree,
-//! DataGrid, and viz widgets. Sample data is synthetic (no OS enumeration).
+//! Layout: a [`Toolbar`](slate_framework::Toolbar) on top, a
+//! [`Splitter`](slate_framework::Splitter) dividing a sidebar
+//! ([`Tree`](slate_framework::Tree) + [`VirtualList`](slate_framework::VirtualList))
+//! from the main area (a virtualized [`DataGrid`](slate_framework::DataGrid),
+//! primitive-drawn [`BarChart`](slate_framework::BarChart) +
+//! [`Sparkline`](slate_framework::Sparkline) viz, a settings strip of every
+//! form control + a [`Select`](slate_framework::Select), and a right-click
+//! [`ContextMenu`](slate_framework::ContextMenu)), over a
+//! [`StatusBar`](slate_framework::StatusBar). The top-right button flips
+//! light/dark. All data is synthetic (no OS enumeration). Panel builders live in
+//! [`panels`]; fixtures in [`data`].
 //!
 //! Run: `cargo run -p dashboard`
 
+mod data;
+mod panels;
+
 use std::collections::HashSet;
+use std::time::Instant;
 
 use slate_framework::reactive::Signal;
 use slate_framework::{
-    AlignItems, AnyElement, App, AppContext, Button, Div, FlexDirection, IntoAny, Panel, Splitter,
-    StatusBar, Text, ThemeMode, Toolbar, Tree, TreeNode, View, VirtualList, WindowOptions, theme,
+    AlignItems, AnyElement, App, AppContext, Bounds, Div, FlexDirection, IntoAny, Splitter,
+    ThemeMode, View, WindowOptions, theme,
 };
 
-/// Synthetic process rows for the sidebar (no real OS enumeration — a fixed
-/// fixture is enough to exercise the shell).
-const PROCESSES: &[&str] = &[
-    "kernel_task",
-    "WindowServer",
-    "launchd",
-    "slate-framework",
-    "Terminal",
-    "Safari",
-    "mds_stores",
-    "cfprefsd",
-];
-
-/// Caller-owned shell state, created once in `App::run`.
-struct DashboardView {
-    mode: Signal<ThemeMode>,
-    /// Sidebar/main split ratio (first-pane fraction), survives rebuilds.
-    split: Signal<f32>,
-    /// Expanded node ids of the process-hierarchy [`Tree`].
-    tree_expanded: Signal<HashSet<u64>>,
-    /// Selected node id of the process-hierarchy [`Tree`].
-    tree_selected: Signal<Option<u64>>,
-    /// Selected row of the flat process [`VirtualList`].
-    list_selected: Signal<Option<usize>>,
-    /// Scroll offset of the process [`VirtualList`].
-    list_offset: Signal<f32>,
-}
-
-/// Build the synthetic process hierarchy shown in the sidebar Tree. Ids are
-/// stable and unique — the Tree uses them as expansion/selection keys.
-fn process_tree() -> Vec<TreeNode> {
-    vec![
-        TreeNode::new(0, "System").children([
-            TreeNode::new(1, "kernel_task"),
-            TreeNode::new(2, "WindowServer"),
-            TreeNode::new(3, "launchd"),
-            TreeNode::new(4, "mds_stores"),
-        ]),
-        TreeNode::new(10, "Applications").children([
-            TreeNode::new(11, "slate-framework"),
-            TreeNode::new(12, "Terminal"),
-            TreeNode::new(13, "Safari"),
-        ]),
-    ]
-}
-
-fn toggle_mode(mode: &Signal<ThemeMode>) {
-    mode.update(|m| {
-        *m = match *m {
-            ThemeMode::Light => ThemeMode::Dark,
-            ThemeMode::Dark => ThemeMode::Light,
-        }
-    });
-}
-
-/// A muted-caption text line.
-fn line(text: &str) -> Text {
-    let t = theme();
-    Text::new(text)
-        .font_size(t.typography.body.size)
-        .color(t.fg.into())
+/// Caller-owned shell state, created once in `App::run` so it survives the
+/// Strategy-A whole-view rebuild.
+pub struct DashboardView {
+    pub mode: Signal<ThemeMode>,
+    /// Sidebar/main split ratio (first-pane fraction).
+    pub split: Signal<f32>,
+    pub tree_expanded: Signal<HashSet<u64>>,
+    pub tree_selected: Signal<Option<u64>>,
+    pub list_selected: Signal<Option<usize>>,
+    pub list_offset: Signal<f32>,
+    pub grid_active: Signal<(usize, usize)>,
+    pub grid_offset: Signal<f32>,
+    pub grid_selected: Signal<Option<usize>>,
+    pub sort_by: Signal<usize>,
+    pub sort_open: Signal<bool>,
+    pub sort_anchor: Signal<Bounds>,
+    pub sort_scroll: Signal<f32>,
+    pub show_system: Signal<bool>,
+    pub auto_refresh: Signal<bool>,
+    pub refresh_secs: Signal<f32>,
+    pub filter_text: Signal<String>,
+    pub tip_hover: Signal<Option<Instant>>,
+    pub ctx_open: Signal<bool>,
+    pub ctx_anchor: Signal<Bounds>,
+    pub last_action: Signal<String>,
 }
 
 impl View for DashboardView {
     fn render(&mut self, _cx: &mut slate_framework::RenderCx) -> AnyElement {
         let t = theme();
-
-        // --- Toolbar: actions + light/dark toggle ---
-        let mode = self.mode.clone();
-        let theme_label = match self.mode.get() {
-            ThemeMode::Light => "Dark mode",
-            ThemeMode::Dark => "Light mode",
-        };
-        let toolbar = Toolbar::new()
-            .child(Button::new("Refresh").on_click(|_| log::info!("Refresh clicked")))
-            .child(Button::new("Sort").on_click(|_| log::info!("Sort clicked")))
-            .separator()
-            .child(Button::new(theme_label).on_click(move |_| toggle_mode(&mode)));
-
-        // --- Sidebar: process-hierarchy Tree above a flat process VirtualList ---
-        let tree = Tree::new(
-            process_tree(),
-            self.tree_expanded.clone(),
-            self.tree_selected.clone(),
-        )
-        .label("Process hierarchy")
-        .on_activate(|id, _| log::info!("tree node {id} activated"));
-
-        let list = VirtualList::new(
-            PROCESSES.iter().copied(),
-            self.list_selected.clone(),
-            self.list_offset.clone(),
-        )
-        .label("All processes")
-        .height(180.0)
-        .on_activate(|i, _| log::info!("process row {i} activated"));
-
-        let sidebar = Panel::new("Processes").child(
-            Div::new()
-                .style(|s| s.column().gap(t.spacing.md))
-                .child(tree)
-                .child(list),
-        );
-
-        // --- Main area: placeholder for the P5e DataGrid + P5f viz ---
-        let main = Panel::new("Resource Detail").child(
-            Div::new()
-                .style(|s| s.column().gap(t.spacing.sm))
-                .child(line("Select a process to inspect its resource usage."))
-                .child(line("CPU, memory, and I/O panels land in a later phase.")),
-        );
-
         let splitter = Splitter::new(self.split.clone())
-            .first(sidebar)
-            .second(main)
-            .min_sizes(160.0, 320.0)
+            .first(self.sidebar())
+            .second(self.main_pane())
+            .min_sizes(160.0, 360.0)
             .label("Sidebar / main divider");
-
-        // --- StatusBar: totals (synthetic) ---
-        let status = StatusBar::new()
-            .text(format!("{} processes", PROCESSES.len()))
-            .separator()
-            .text("CPU 12%")
-            .separator()
-            .text("Mem 4.2 GB");
 
         Div::new()
             .background(t.bg)
@@ -151,9 +70,9 @@ impl View for DashboardView {
                     .align_items(AlignItems::Stretch)
                     .flex_grow(1.0)
             })
-            .child(toolbar)
+            .child(self.toolbar())
             .child(splitter)
-            .child(status)
+            .child(self.status())
             .into_any()
     }
 }
@@ -163,24 +82,36 @@ fn main() {
 
     App::new(WindowOptions {
         title: "Slate · dashboard".into(),
-        size: (920, 640),
-        min_size: Some((640, 480)),
+        size: (1040, 720),
+        min_size: Some((720, 520)),
         resizable: true,
         ..Default::default()
     })
     .run(|cx: &AppContext| {
         let rt = cx.runtime();
-        let mode = cx
-            .theme_mode()
-            .expect("theme_mode available inside App::run");
+        let mode = cx.theme_mode().expect("theme_mode available inside App::run");
         DashboardView {
             mode,
-            split: Signal::new(rt.clone(), 0.28),
-            // Both hierarchy groups expanded so the demo opens populated.
+            split: Signal::new(rt.clone(), 0.26),
             tree_expanded: Signal::new(rt.clone(), HashSet::from([0, 10])),
             tree_selected: Signal::new(rt.clone(), None),
             list_selected: Signal::new(rt.clone(), None),
-            list_offset: Signal::new(rt, 0.0),
+            list_offset: Signal::new(rt.clone(), 0.0),
+            grid_active: Signal::new(rt.clone(), (0, 0)),
+            grid_offset: Signal::new(rt.clone(), 0.0),
+            grid_selected: Signal::new(rt.clone(), None),
+            sort_by: Signal::new(rt.clone(), 0),
+            sort_open: Signal::new(rt.clone(), false),
+            sort_anchor: Signal::new(rt.clone(), Bounds::ZERO),
+            sort_scroll: Signal::new(rt.clone(), 0.0),
+            show_system: Signal::new(rt.clone(), true),
+            auto_refresh: Signal::new(rt.clone(), false),
+            refresh_secs: Signal::new(rt.clone(), 3.0),
+            filter_text: Signal::new(rt.clone(), String::new()),
+            tip_hover: Signal::new(rt.clone(), None),
+            ctx_open: Signal::new(rt.clone(), false),
+            ctx_anchor: Signal::new(rt.clone(), Bounds::ZERO),
+            last_action: Signal::new(rt, "Ready".to_string()),
         }
     });
 }

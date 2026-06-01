@@ -12,6 +12,10 @@
 /// `elements::` or the crate root: it is not part of the public widget set and
 /// is deleted once the real `DataGrid` adopts its verified role/nav pattern.
 pub mod data_grid_a11y_spike;
+/// The real P5e DataGrid widget (2-D, virtualized, screen-reader-usable). Adopts
+/// the S0 spike's verified role/nav pattern; the spike above is deleted once
+/// VoiceOver re-validation passes on this widget.
+pub mod data_grid;
 pub mod div;
 pub mod image;
 pub mod overlay;
@@ -49,6 +53,7 @@ pub mod tooltip;
 pub use button::{Button, IconButton};
 pub use checkbox::Checkbox;
 pub use context_menu::ContextMenu;
+pub use data_grid::{Column, DataGrid};
 pub use div::{Border, Div};
 pub use list::{List, ListEntry, VirtualList};
 pub use menu::{MenuEntry, MenuList};
