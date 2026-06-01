@@ -10,6 +10,7 @@ members = [
     "examples/click-counter",
     "examples/datagrid-a11y-spike",
     "examples/dense-image-gallery",
+    "examples/form-controls",
     "examples/hello-element",
     "examples/hello-rect",
     "examples/ime-textfield",

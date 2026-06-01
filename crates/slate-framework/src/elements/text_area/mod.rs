@@ -91,6 +91,24 @@ pub struct TextArea {
     last_id: Option<ElementId>,
 }
 
+impl TextAreaStyle {
+    /// Build a style from the ambient theme tokens (see [`TextArea::themed`]).
+    /// Safe to call outside a render pass — [`theme`](crate::theme::theme) falls
+    /// back to the light palette.
+    pub fn themed() -> Self {
+        let t = crate::theme::theme();
+        Self {
+            font_size: t.typography.body.size,
+            color: t.fg.into(),
+            background: Some(t.surface.into()),
+            caret_color: t.accent.into(),
+            selection_color: t.accent.with_alpha(0.3).into(),
+            preedit_selection_color: t.accent.with_alpha(0.3).into(),
+            ..Self::default()
+        }
+    }
+}
+
 impl TextArea {
     /// Create a new TextArea bound to `value`.
     pub fn new(value: Signal<String>) -> Self {
@@ -105,6 +123,15 @@ impl TextArea {
     /// Override the visual style.
     pub fn style(mut self, s: TextAreaStyle) -> Self {
         self.style = s;
+        self
+    }
+
+    /// Adopt the ambient [`theme`](crate::theme::theme) tokens as the area's
+    /// colours so it matches the form-control set (background = `surface`,
+    /// text = `fg`, caret + IME highlight = `accent`). Additive: a later
+    /// explicit [`style`](Self::style) call still wins.
+    pub fn themed(mut self) -> Self {
+        self.style = TextAreaStyle::themed();
         self
     }
 }

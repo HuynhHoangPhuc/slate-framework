@@ -110,8 +110,9 @@ pub use element::{AnyElement, Element, IntoElement};
 /// Axis-aligned clip rectangle (logical px); appears in [`PaintCtx::push_clip`].
 pub use slate_renderer::ClipRect;
 pub use elements::{
-    Align, Div, Image, MAX_IMAGE_DIM, Overlay, Placement, ScrollView, Side, Text, TextAlign,
-    TextArea, TextAreaStyle, TextField, TextFieldStyle, TextWrap,
+    Align, Button, Checkbox, Div, IconButton, Image, MAX_IMAGE_DIM, Overlay, Placement, ScrollView,
+    Side, Slider, Switch, Text, TextAlign, TextArea, TextAreaStyle, TextField, TextFieldStyle,
+    TextWrap,
 };
 pub use executor::{BackgroundExecutor, Executor, ForegroundExecutor, RedrawRequester};
 pub use focus::{FocusRegistry, FocusableEntry};

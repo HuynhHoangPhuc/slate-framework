@@ -21,10 +21,22 @@ pub mod text_area;
 pub mod text_edit;
 pub mod text_field;
 
+// Form-control widget set (P5a foundation). Pure interaction-state + theme
+// consumers; no overlay/scroll dependency.
+pub mod button;
+pub mod checkbox;
+mod control_paint;
+pub mod slider;
+pub mod switch;
+
+pub use button::{Button, IconButton};
+pub use checkbox::Checkbox;
 pub use div::Div;
 pub use image::{Image, MAX_IMAGE_DIM};
 pub use overlay::{Align, Overlay, Placement, Side};
 pub use scroll_view::ScrollView;
+pub use slider::Slider;
+pub use switch::Switch;
 pub use text::{Text, TextAlign, TextWrap};
 pub use text_area::{TextArea, TextAreaStyle};
 pub use text_field::{TextField, TextFieldStyle};

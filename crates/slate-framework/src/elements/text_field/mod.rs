@@ -109,6 +109,33 @@ impl TextField {
         self.style = s;
         self
     }
+
+    /// Adopt the ambient [`theme`](crate::theme::theme) tokens as the field's
+    /// colours so it matches the form-control set: background = `surface`,
+    /// text = `fg`, caret + preedit highlight = `accent`. Additive — a later
+    /// explicit [`style`](Self::style) call still wins, and the existing
+    /// hard-coded default is unchanged for callers that don't opt in.
+    pub fn themed(mut self) -> Self {
+        self.style = TextFieldStyle::themed();
+        self
+    }
+}
+
+impl TextFieldStyle {
+    /// Build a style from the ambient theme tokens (see [`TextField::themed`]).
+    /// Safe to call outside a render pass — [`theme`](crate::theme::theme) falls
+    /// back to the light palette.
+    pub fn themed() -> Self {
+        let t = crate::theme::theme();
+        Self {
+            font_size: t.typography.body.size,
+            color: t.fg.into(),
+            background: Some(t.surface.into()),
+            caret_color: t.accent.into(),
+            preedit_selection_color: t.accent.with_alpha(0.3).into(),
+            ..Self::default()
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -55,6 +55,15 @@ pub struct Text {
     font: Option<PlatformFont>,
     /// User-provided stability key for dynamic lists (consumed during prepaint).
     user_key: Option<String>,
+    /// When true the text emits no accessibility node — it is decorative /
+    /// presentational. Used when a parent control (e.g. a [`Button`] or
+    /// [`Checkbox`]) already exposes the same string as its own accessible name,
+    /// so nesting a redundant `Label` node would make a screen reader announce it
+    /// twice. See [`Text::presentational`].
+    ///
+    /// [`Button`]: crate::elements::Button
+    /// [`Checkbox`]: crate::elements::Checkbox
+    a11y_hidden: bool,
     /// Stable ElementId allocated during prepaint (available after prepaint).
     last_id: Option<ElementId>,
 }
@@ -129,8 +138,18 @@ impl Text {
             style: TextStyle::default(),
             font: None,
             user_key: None,
+            a11y_hidden: false,
             last_id: None,
         }
+    }
+
+    /// Mark this text as presentational: it renders pixels but contributes no
+    /// accessibility node. Use for a label whose string is already exposed by an
+    /// enclosing control's own accessible name, to avoid a duplicate `Label`
+    /// node (and the double announcement it causes).
+    pub fn presentational(mut self) -> Self {
+        self.a11y_hidden = true;
+        self
     }
 
     /// Create a reactive Text element.
@@ -486,6 +505,9 @@ impl Element for Text {
     }
 
     fn accessibility(&self) -> Option<AccessibilityInfo> {
+        if self.a11y_hidden {
+            return None;
+        }
         Some(AccessibilityInfo {
             role: AccessibilityRole::Label,
             label: Some(self.content.clone()),
