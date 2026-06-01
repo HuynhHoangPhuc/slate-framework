@@ -21,8 +21,20 @@ impl ScrollView {
             scroll_speed: Self::DEFAULT_SCROLL_SPEED,
             virtual_list: None,
             virtual_first: 0,
+            a11y_list: None,
             last_id: None,
         }
+    }
+
+    /// Annotate this scroll container as a `List` of `count` logical rows for
+    /// assistive tech, overriding the default `ScrollView` a11y role.
+    ///
+    /// `count` is the **true total** row count — pass the full item count even
+    /// in [`virtualized`](Self::virtualized) mode, where only a window of rows
+    /// is materialized, so a screen reader announces the real list size.
+    pub fn a11y_list(mut self, label: Option<String>, count: usize) -> Self {
+        self.a11y_list = Some((label, count));
+        self
     }
 
     /// Bind the caller-owned vertical scroll offset signal.

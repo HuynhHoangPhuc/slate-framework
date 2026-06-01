@@ -10,10 +10,12 @@
 //!
 //! Run: `cargo run -p dashboard`
 
+use std::collections::HashSet;
+
 use slate_framework::reactive::Signal;
 use slate_framework::{
     AlignItems, AnyElement, App, AppContext, Button, Div, FlexDirection, IntoAny, Panel, Splitter,
-    StatusBar, Text, ThemeMode, Toolbar, View, WindowOptions, theme,
+    StatusBar, Text, ThemeMode, Toolbar, Tree, TreeNode, View, VirtualList, WindowOptions, theme,
 };
 
 /// Synthetic process rows for the sidebar (no real OS enumeration — a fixed
@@ -34,6 +36,32 @@ struct DashboardView {
     mode: Signal<ThemeMode>,
     /// Sidebar/main split ratio (first-pane fraction), survives rebuilds.
     split: Signal<f32>,
+    /// Expanded node ids of the process-hierarchy [`Tree`].
+    tree_expanded: Signal<HashSet<u64>>,
+    /// Selected node id of the process-hierarchy [`Tree`].
+    tree_selected: Signal<Option<u64>>,
+    /// Selected row of the flat process [`VirtualList`].
+    list_selected: Signal<Option<usize>>,
+    /// Scroll offset of the process [`VirtualList`].
+    list_offset: Signal<f32>,
+}
+
+/// Build the synthetic process hierarchy shown in the sidebar Tree. Ids are
+/// stable and unique — the Tree uses them as expansion/selection keys.
+fn process_tree() -> Vec<TreeNode> {
+    vec![
+        TreeNode::new(0, "System").children([
+            TreeNode::new(1, "kernel_task"),
+            TreeNode::new(2, "WindowServer"),
+            TreeNode::new(3, "launchd"),
+            TreeNode::new(4, "mds_stores"),
+        ]),
+        TreeNode::new(10, "Applications").children([
+            TreeNode::new(11, "slate-framework"),
+            TreeNode::new(12, "Terminal"),
+            TreeNode::new(13, "Safari"),
+        ]),
+    ]
 }
 
 fn toggle_mode(mode: &Signal<ThemeMode>) {
@@ -69,12 +97,30 @@ impl View for DashboardView {
             .separator()
             .child(Button::new(theme_label).on_click(move |_| toggle_mode(&mode)));
 
-        // --- Sidebar: synthetic process list (placeholder for the P5d Tree) ---
-        let mut process_list = Div::new().style(|s| s.column().gap(t.spacing.sm));
-        for name in PROCESSES {
-            process_list = process_list.child(line(name));
-        }
-        let sidebar = Panel::new("Processes").child(process_list);
+        // --- Sidebar: process-hierarchy Tree above a flat process VirtualList ---
+        let tree = Tree::new(
+            process_tree(),
+            self.tree_expanded.clone(),
+            self.tree_selected.clone(),
+        )
+        .label("Process hierarchy")
+        .on_activate(|id, _| log::info!("tree node {id} activated"));
+
+        let list = VirtualList::new(
+            PROCESSES.iter().copied(),
+            self.list_selected.clone(),
+            self.list_offset.clone(),
+        )
+        .label("All processes")
+        .height(180.0)
+        .on_activate(|i, _| log::info!("process row {i} activated"));
+
+        let sidebar = Panel::new("Processes").child(
+            Div::new()
+                .style(|s| s.column().gap(t.spacing.md))
+                .child(tree)
+                .child(list),
+        );
 
         // --- Main area: placeholder for the P5e DataGrid + P5f viz ---
         let main = Panel::new("Resource Detail").child(
@@ -129,7 +175,12 @@ fn main() {
             .expect("theme_mode available inside App::run");
         DashboardView {
             mode,
-            split: Signal::new(rt, 0.28),
+            split: Signal::new(rt.clone(), 0.28),
+            // Both hierarchy groups expanded so the demo opens populated.
+            tree_expanded: Signal::new(rt.clone(), HashSet::from([0, 10])),
+            tree_selected: Signal::new(rt.clone(), None),
+            list_selected: Signal::new(rt.clone(), None),
+            list_offset: Signal::new(rt, 0.0),
         }
     });
 }

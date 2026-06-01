@@ -26,8 +26,11 @@ pub mod text_field;
 pub mod button;
 pub mod checkbox;
 mod control_paint;
+pub mod list;
+mod roving;
 pub mod slider;
 pub mod switch;
+pub mod tree;
 
 // Layout-container widget set (P5b dashboard shell). Thin Div compositions +
 // the resizable Splitter.
@@ -47,6 +50,7 @@ pub use button::{Button, IconButton};
 pub use checkbox::Checkbox;
 pub use context_menu::ContextMenu;
 pub use div::{Border, Div};
+pub use list::{List, ListEntry, VirtualList};
 pub use menu::{MenuEntry, MenuList};
 pub use select::Select;
 pub use tooltip::Tooltip;
@@ -54,6 +58,7 @@ pub use panel::Panel;
 pub use splitter::{SplitAxis, Splitter};
 pub use status_bar::StatusBar;
 pub use toolbar::Toolbar;
+pub use tree::{Tree, TreeNode};
 pub use image::{Image, MAX_IMAGE_DIM};
 pub use overlay::{Align, Overlay, Placement, Side};
 pub use scroll_view::ScrollView;

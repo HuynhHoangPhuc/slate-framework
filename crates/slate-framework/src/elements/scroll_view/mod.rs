@@ -63,6 +63,12 @@ pub struct ScrollView {
     /// non-virtual mode. Set in `request_layout`, reused by prepaint/paint to
     /// translate the built window into content space.
     pub(super) virtual_first: usize,
+    /// Optional accessibility override: when `Some((label, count))` the
+    /// container reports a `List` role carrying the **true total** row count
+    /// instead of the default `ScrollView` role. Set by
+    /// [`VirtualList`](crate::VirtualList) so a windowed list still announces
+    /// its real size; `None` keeps the plain scroll-region semantics.
+    pub(super) a11y_list: Option<(Option<String>, usize)>,
     /// Stable ElementId allocated during prepaint (available after prepaint).
     pub(super) last_id: Option<ElementId>,
 }

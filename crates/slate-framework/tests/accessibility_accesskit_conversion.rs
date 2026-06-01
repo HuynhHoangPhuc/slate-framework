@@ -149,6 +149,42 @@ fn tree_flattens_depth_first_with_child_ids() {
 }
 
 #[test]
+fn tree_roles_map_and_expose_expanded_state() {
+    // Tree container with one expanded TreeItem parent → Tree/TreeItem roles map
+    // to their accesskit equivalents and the expand state round-trips.
+    let mut item_info = AccessibilityInfo {
+        role: AccessibilityRole::TreeItem,
+        label: Some("src".into()),
+        is_expanded: Some(true),
+        ..Default::default()
+    };
+    item_info.row_index = Some(0);
+    let item = AccessibilityNode {
+        id: ElementId::from_raw(20),
+        bounds: Bounds::from_origin_size(0.0, 0.0, 10.0, 10.0),
+        info: item_info,
+        children: Vec::new(),
+        actions: vec![AccessibilityAction::Expand, AccessibilityAction::Collapse],
+    };
+    let tree = AccessibilityNode {
+        id: ElementId::from_raw(2),
+        bounds: Bounds::from_origin_size(0.0, 0.0, 100.0, 100.0),
+        info: AccessibilityInfo {
+            role: AccessibilityRole::Tree,
+            ..Default::default()
+        },
+        children: vec![item],
+        actions: Vec::new(),
+    };
+
+    let flat = to_accesskit_tree(&tree);
+    assert_eq!(flat[0].1.role(), Role::Tree);
+    assert_eq!(flat[1].1.role(), Role::TreeItem);
+    assert_eq!(flat[1].1.is_expanded(), Some(true));
+    assert!(flat[1].1.supports_action(AkAction::Expand));
+}
+
+#[test]
 fn accessibility_action_to_accesskit_action_full_mapping() {
     assert_eq!(AkAction::from(AccessibilityAction::Click), AkAction::Click);
     assert_eq!(AkAction::from(AccessibilityAction::Focus), AkAction::Focus);

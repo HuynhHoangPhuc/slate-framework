@@ -284,6 +284,12 @@ pub enum AccessibilityRole {
     ColumnHeader,
     /// A header cell labelling a row (ARIA `rowheader`).
     RowHeader,
+    // -- Tree family (hierarchical list) --
+    /// Container for a hierarchical set of expand/collapse nodes (ARIA `tree`).
+    Tree,
+    /// One node within a [`Tree`](Self::Tree) (ARIA `treeitem`); carries
+    /// `is_expanded` when it has children.
+    TreeItem,
     /// Element is not exposed to accessibility tree.
     None,
 }
@@ -322,6 +328,8 @@ impl From<AccessibilityRole> for accesskit::Role {
             AccessibilityRole::Cell => accesskit::Role::GridCell,
             AccessibilityRole::ColumnHeader => accesskit::Role::ColumnHeader,
             AccessibilityRole::RowHeader => accesskit::Role::RowHeader,
+            AccessibilityRole::Tree => accesskit::Role::Tree,
+            AccessibilityRole::TreeItem => accesskit::Role::TreeItem,
             AccessibilityRole::None => accesskit::Role::Unknown,
         }
     }

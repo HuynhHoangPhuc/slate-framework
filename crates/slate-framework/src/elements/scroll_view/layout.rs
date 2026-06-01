@@ -302,6 +302,17 @@ impl Element for ScrollView {
     }
 
     fn accessibility(&self) -> Option<AccessibilityInfo> {
+        // VirtualList overrides the role to `List` + the true total row count so
+        // a windowed list still announces its real size; otherwise plain
+        // scroll-region semantics.
+        if let Some((label, count)) = &self.a11y_list {
+            return Some(AccessibilityInfo {
+                role: AccessibilityRole::List,
+                label: label.clone(),
+                row_count: Some(*count),
+                ..Default::default()
+            });
+        }
         Some(AccessibilityInfo {
             role: AccessibilityRole::ScrollView,
             ..Default::default()
