@@ -219,6 +219,25 @@ impl HeadlessApp {
         self.text_shaping_cache.memory_used()
     }
 
+    /// Get the layout-pass `shape_line` cache hit count (for testing).
+    ///
+    /// Distinct from [`Self::text_shaping_cache_hits`], which counts the
+    /// element-keyed prepaint/paint cache; this counts the content-keyed cache
+    /// inside `TextSystem` that covers the layout pass.
+    pub fn shape_line_cache_hits(&self) -> u64 {
+        self.text_system.shape_line_cache_hits()
+    }
+
+    /// Get the layout-pass `shape_line` cache miss count (for testing).
+    pub fn shape_line_cache_misses(&self) -> u64 {
+        self.text_system.shape_line_cache_misses()
+    }
+
+    /// Get the number of entries in the layout-pass `shape_line` cache (for testing).
+    pub fn shape_line_cache_len(&self) -> usize {
+        self.text_system.shape_line_cache_len()
+    }
+
     /// Inject an `ImeState` for `id` directly into the headless IME registry.
     ///
     /// Bypasses the platform dispatch path; intended for visual regression

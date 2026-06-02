@@ -222,6 +222,65 @@ fn bench_1000_element_cached() {
     // Full frame includes layout so we allow more headroom
 }
 
+/// Flat div of `n` distinct text labels — one `shape_line` call each on a
+/// cold cache, all repeating identically on the next render.
+fn label_grid(n: usize) -> AnyElement {
+    let mut div = Div::new()
+        .background(Color::BLACK)
+        .style(|s| s.flex_grow(1.0));
+
+    for i in 0..n {
+        div = div.child(
+            Text::new(format!("Cell {}", i))
+                .font_size(12.0)
+                .color(Color::WHITE.into()),
+        );
+    }
+
+    div.into_any()
+}
+
+/// Proves the layout-pass `shape_line` cache reuses shaped lines across frames:
+/// re-rendering identical content must not re-invoke the platform shaper.
+///
+/// Gates on the deterministic cache-hit invariant (not frame timing, which is
+/// noisy under the headless harness) — the invariant is the real proof that the
+/// ~110 ms layout-pass shaping cost is paid once, not every frame.
+#[test]
+fn bench_shape_line_cache_reuse() {
+    let mut app = headless_app_or_skip!(800, 600);
+    const LABELS: usize = 240;
+
+    // Cold cache: first render shapes every distinct label once.
+    let _ = app.render(label_grid(LABELS));
+    let cold_hits = app.shape_line_cache_hits();
+    let cold_misses = app.shape_line_cache_misses();
+
+    // Second render of identical content.
+    let start = Instant::now();
+    let _ = app.render(label_grid(LABELS));
+    let warm_frame = start.elapsed();
+
+    let hits = app.shape_line_cache_hits() - cold_hits;
+    let misses = app.shape_line_cache_misses() - cold_misses;
+
+    println!("\n=== shape_line Cache Reuse (240 labels) ===");
+    println!("  Cold-render misses: {}", cold_misses);
+    println!("  Warm-render hits:   {}", hits);
+    println!("  Warm-render misses: {}", misses);
+    println!("  Warm frame:         {:?}", warm_frame);
+    println!("  Cache entries:      {}", app.shape_line_cache_len());
+
+    assert!(
+        hits > 0,
+        "second render of identical content must hit the shape_line cache"
+    );
+    assert_eq!(
+        misses, 0,
+        "no label content changed — second render must reshape nothing"
+    );
+}
+
 #[test]
 fn bench_set_driven_frame() {
     let mut app = headless_app_or_skip!(400, 300);

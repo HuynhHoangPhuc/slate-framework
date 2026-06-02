@@ -3,6 +3,7 @@
 //! `TextSystem` hides the platform-specific `TextBackend` behind `#[cfg]`
 //! so Element, Context, and tree types remain non-generic.
 
+use std::cell::RefCell;
 use std::marker::PhantomData;
 
 use slate_renderer::atlas::Atlas;
@@ -11,6 +12,8 @@ use slate_text::backend::Font;
 use slate_text::run_builder::TextRunBuilder;
 use slate_text::types::ShapedLine;
 use slate_text::{GlyphCache, TextError};
+
+use crate::text_shape_line_cache::ShapeLineCache;
 
 #[cfg(target_os = "macos")]
 use slate_text::CoreTextBackend;
@@ -46,6 +49,12 @@ pub struct TextSystem {
     #[cfg(target_os = "windows")]
     backend: DirectWriteBackend,
 
+    // Content-keyed memoization for the layout-pass `shape_line` hot path.
+    // Interior mutability keeps `shape_line(&self, …)` signature-stable while
+    // letting it record cache state. `RefCell` (not a lock) is correct because
+    // `TextSystem` is `!Send` and lives on a single thread per window.
+    shape_cache: RefCell<ShapeLineCache>,
+
     // Red-team Finding 5: Explicit !Send marker.
     // CoreText is thread-safe and windows-rs IDWriteFactory is Send,
     // so we cannot rely on inherited !Send. Pin the type to one thread
@@ -64,6 +73,7 @@ impl TextSystem {
             backend: CoreTextBackend::new()?,
             #[cfg(target_os = "windows")]
             backend: DirectWriteBackend::new()?,
+            shape_cache: RefCell::new(ShapeLineCache::new()),
             _not_send: PhantomData,
         })
     }
@@ -107,9 +117,35 @@ impl TextSystem {
     }
 
     /// Shape a line of text into positioned glyphs.
+    ///
+    /// Memoized by `(FontHandle, content_hash)`: shaping is deterministic given
+    /// the font instance and the string, so repeated layout passes over the
+    /// same on-screen text reuse the cached line instead of re-invoking the
+    /// platform shaper. The signature is unchanged — the cache is interior
+    /// mutability behind `&self`.
     pub fn shape_line(&self, font: &PlatformFont, text: &str) -> Result<ShapedLine, TextError> {
-        use slate_text::TextBackend;
-        self.backend.shape_line(&font.inner, text)
+        let handle = font.inner.handle();
+        self.shape_cache
+            .borrow_mut()
+            .get_or_shape(handle, text, || {
+                use slate_text::TextBackend;
+                self.backend.shape_line(&font.inner, text)
+            })
+    }
+
+    /// Number of `shape_line` cache hits since construction (testing / profiling).
+    pub fn shape_line_cache_hits(&self) -> u64 {
+        self.shape_cache.borrow().hits()
+    }
+
+    /// Number of `shape_line` cache misses since construction (testing / profiling).
+    pub fn shape_line_cache_misses(&self) -> u64 {
+        self.shape_cache.borrow().misses()
+    }
+
+    /// Number of entries currently held in the `shape_line` cache (testing).
+    pub fn shape_line_cache_len(&self) -> usize {
+        self.shape_cache.borrow().len()
     }
 
     /// Shape a single line through the bidi segment + reorder pipeline,
