@@ -243,6 +243,7 @@ pub enum NodeContext {
 /// Standard ARIA roles for v1 widget set. Maps to accesskit::Role.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 #[allow(missing_docs)] // ARIA role identifiers — names track the standard
+#[non_exhaustive]
 pub enum AccessibilityRole {
     #[default]
     Unknown,
@@ -321,8 +322,8 @@ impl From<AccessibilityRole> for accesskit::Role {
             AccessibilityRole::Tooltip => accesskit::Role::Tooltip,
             AccessibilityRole::Window => accesskit::Role::Window,
             // `Cell` maps to `GridCell` (the interactive variant) because the
-            // grid here is `Role::Grid`, not a static `Role::Table`. The S0
-            // VoiceOver spike validates this choice.
+            // grid here is `Role::Grid`, not a static `Role::Table` — VoiceOver
+            // grid cell-nav requires the interactive cell role.
             AccessibilityRole::Grid => accesskit::Role::Grid,
             AccessibilityRole::Row => accesskit::Role::Row,
             AccessibilityRole::Cell => accesskit::Role::GridCell,

@@ -1,0 +1,16 @@
+[book]
+title = "Slate UI Framework"
+description = "Adoption guide for Slate — a GPU-accelerated, native Rust UI framework."
+authors = ["Slate contributors"]
+language = "en"
+src = "src"
+
+[output.html]
+default-theme = "navy"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/HuynhHoangPhuc/slate-framework"
+edit-url-template = "https://github.com/HuynhHoangPhuc/slate-framework/edit/main/docs-site/{path}"
+
+[output.html.fold]
+enable = true
+level = 1

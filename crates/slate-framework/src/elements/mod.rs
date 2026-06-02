@@ -7,14 +7,10 @@
 //! - `ScrollView` — clipped, vertically scrollable container
 //! - `TextField` — single-line editable text input with IME support
 
-/// **Throwaway** — the S0 DataGrid accessibility spike element. Deliberately
-/// reachable (so the spike example can drive it) but NOT re-exported at
-/// `elements::` or the crate root: it is not part of the public widget set and
-/// is deleted once the real `DataGrid` adopts its verified role/nav pattern.
-pub mod data_grid_a11y_spike;
-/// The real P5e DataGrid widget (2-D, virtualized, screen-reader-usable). Adopts
-/// the S0 spike's verified role/nav pattern; the spike above is deleted once
-/// VoiceOver re-validation passes on this widget.
+/// The P5e DataGrid widget (2-D, virtualized, screen-reader-usable). Registers
+/// a11y nodes for all logical cells while shaping glyph content only for the
+/// visible window; verified by `tests/widget_a11y_roles.rs` +
+/// `tests/grid_a11y_tree_shape.rs`.
 pub mod data_grid;
 pub mod div;
 pub mod image;

@@ -9,7 +9,6 @@ members = [
     "examples/anchor-md-to-png",
     "examples/click-counter",
     "examples/dashboard",
-    "examples/datagrid-a11y-spike",
     "examples/dense-image-gallery",
     "examples/form-controls",
     "examples/hello-element",

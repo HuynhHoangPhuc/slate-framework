@@ -1,4 +1,4 @@
-//! Tree-shape contract for the DataGrid a11y spike: grid/row/cell roles,
+//! Tree-shape contract for DataGrid accessibility: grid/row/cell roles,
 //! zero-based cell indices, and the synthesized-window-root `TreeUpdate`.
 //!
 //! Hand-built `AccessibilityNode` trees (no rendering) keep this pinned to the

@@ -721,15 +721,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "datagrid-a11y-spike"
-version = "1.0.1"
-dependencies = [
- "env_logger",
- "log",
- "slate-framework",
-]
-
-[[package]]
 name = "dense-image-gallery"
 version = "1.0.1"
 dependencies = [
