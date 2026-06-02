@@ -76,6 +76,13 @@ pub struct WindowState {
     /// windows. macOS-only — the P7 platform-accessibility seed.
     #[cfg(target_os = "macos")]
     pub(crate) a11y_adapter: RefCell<Option<crate::a11y_macos::MacA11yAdapter>>,
+    /// Real window key state, driving the a11y adapter's `update_view_focus_state`
+    /// (without which AccessKit reports no focused element). Set on
+    /// `Event::WindowFocused`. Defaults to `true` so a single-window app — which
+    /// may not see a `WindowFocused` before its first paint — behaves like the
+    /// VoiceOver-validated spike; flipped `false` when another window becomes key.
+    #[cfg(target_os = "macos")]
+    pub(crate) is_key: std::cell::Cell<bool>,
     pub scene: RefCell<Scene>,
 
     // -- Mouse dispatch state -------------------------------------------
@@ -182,6 +189,8 @@ impl WindowState {
             a11y_nodes: RefCell::new(Vec::new()),
             #[cfg(target_os = "macos")]
             a11y_adapter: RefCell::new(None),
+            #[cfg(target_os = "macos")]
+            is_key: std::cell::Cell::new(true),
             scene: RefCell::new(Scene::new()),
             handler_map: RefCell::new(HashMap::new()),
             mouse_handler_map: RefCell::new(HashMap::new()),

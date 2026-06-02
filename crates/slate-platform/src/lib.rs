@@ -321,6 +321,25 @@ pub struct Modifiers {
     pub meta: bool,
 }
 
+/// Assistive-technology action kind requested by a screen reader.
+///
+/// Deliberately decoupled from any a11y toolkit so the platform layer carries
+/// no AccessKit dependency: the framework adapter maps `accesskit::Action` onto
+/// this small set before posting an [`Event::AccessibilityAction`]. Only the
+/// actions Slate can synthesise are represented (focus, activate); unmapped AT
+/// actions are dropped at the adapter, never reaching the platform seam.
+///
+/// `#[non_exhaustive]`: future AT actions (e.g. increment, scroll) can be added
+/// without breaking downstream `match`es.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum A11yAction {
+    /// Move keyboard focus to the targeted node.
+    Focus,
+    /// Activate (press / click) the targeted node.
+    Activate,
+}
+
 /// Physical key identifier (positional, layout-independent).
 ///
 /// Mirrors the W3C UI Events `KeyboardEvent.code` namespace — `KeyA` is
@@ -625,6 +644,24 @@ pub enum Event {
         id: u64,
     },
     // -------------------------------------------------------------------------
+    // Accessibility events
+    // -------------------------------------------------------------------------
+    /// A screen reader requested an action on an a11y node. `node` is the
+    /// node's routing id (the framework `ElementId`'s numeric value, set when
+    /// the a11y tree was lowered). The framework maps it back to the element
+    /// and synthesises the action. Posted by the platform a11y adapter (never
+    /// dispatched inline) so it lands after any in-flight handler unwinds —
+    /// AT actions can fire mid-stack while a borrow is held, exactly like
+    /// native menu activations.
+    AccessibilityAction {
+        /// Window owning the targeted node.
+        window: WindowId,
+        /// Routing id of the targeted node (`ElementId` numeric value).
+        node: u64,
+        /// Requested action.
+        action: A11yAction,
+    },
+    // -------------------------------------------------------------------------
     // Keyboard IME events
     // -------------------------------------------------------------------------
     /// IME composition session started. Fires exactly once per session at
@@ -693,7 +730,10 @@ pub mod clipboard;
 #[cfg(target_os = "macos")]
 mod mac;
 #[cfg(target_os = "macos")]
-pub use mac::{MacPlatform as DefaultPlatform, MacWindow as DefaultWindow, wake_run_loop};
+pub use mac::{
+    MacPlatform as DefaultPlatform, MacWindow as DefaultWindow, post_accessibility_action,
+    wake_run_loop,
+};
 #[cfg(all(target_os = "macos", feature = "test-hooks"))]
 #[doc(hidden)]
 pub use mac::{

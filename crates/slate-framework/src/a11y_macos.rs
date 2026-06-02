@@ -28,10 +28,10 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use accesskit::{ActionHandler, ActionRequest, ActivationHandler, TreeUpdate};
+use accesskit::{Action, ActionHandler, ActionRequest, ActivationHandler, TreeUpdate};
 use accesskit_macos::SubclassingAdapter;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-use slate_platform::DefaultWindow;
+use slate_platform::{A11yAction, DefaultWindow, WindowId, post_accessibility_action};
 
 use crate::a11y_accesskit::to_accesskit_tree_update;
 use crate::types::{AccessibilityNode, ElementId};
@@ -51,13 +51,40 @@ impl ActivationHandler for CachedTreeActivation {
     }
 }
 
-/// Spike-level action handler: AT-invoked actions (Click/Focus/…) are not yet
-/// routed back into Slate's event system. Tree navigation + announcement is
-/// what the S0 spike validates; action round-trip is P7 proper.
-struct UnroutedActions;
+/// Translate an AccessKit [`ActionRequest`] into the Slate action Slate can
+/// synthesise, or `None` for actions Slate does not route. Pure (no I/O), so it
+/// is unit-tested directly without a live assistive client.
+///
+/// `Action::Focus` → move keyboard focus to the node. `Action::Click` (the
+/// screen-reader "press"/default action) → activate the node. Every other
+/// AccessKit action is dropped here and never reaches the platform seam.
+pub(crate) fn route_action_request(request: &ActionRequest) -> Option<(u64, A11yAction)> {
+    let node = request.target_node.0;
+    match request.action {
+        Action::Focus => Some((node, A11yAction::Focus)),
+        Action::Click => Some((node, A11yAction::Activate)),
+        _ => None,
+    }
+}
 
-impl ActionHandler for UnroutedActions {
-    fn do_action(&mut self, _request: ActionRequest) {}
+/// Routes AT-invoked actions (Click/Focus) back into Slate's event system.
+///
+/// Holds the owning [`WindowId`] so the posted event credits the right window.
+/// **Posts** the action (never dispatches inline): VoiceOver can invoke an
+/// action while Slate is mid-stack (inside a render/handler borrow), so an
+/// inline focus/activation would hit the dispatch re-entrancy guard and be
+/// dropped. Posting lets it land on a clean run-loop iteration — the same
+/// discipline native menu activation uses (`post_menu_event`).
+struct RoutedActions {
+    window: WindowId,
+}
+
+impl ActionHandler for RoutedActions {
+    fn do_action(&mut self, request: ActionRequest) {
+        if let Some((node, action)) = route_action_request(&request) {
+            post_accessibility_action(self.window, node, action);
+        }
+    }
 }
 
 /// Per-window macOS accessibility adapter.
@@ -71,8 +98,16 @@ pub struct MacA11yAdapter {
 
 impl MacA11yAdapter {
     /// Build an adapter for `window`'s `NSView`, or `None` if the platform
-    /// handle is not AppKit (e.g. headless/test windows).
-    pub fn for_window(window: &DefaultWindow) -> Option<Self> {
+    /// handle is not AppKit (e.g. headless/test windows). `window_id` is the
+    /// routing target for AT actions posted back into Slate.
+    ///
+    /// Note: `accesskit_macos 0.26.1`'s `SubclassingAdapter` is a stateless
+    /// forwarder — it takes only an activation + action handler and exposes no
+    /// `DeactivationHandler` hook (the crate has no deactivation concept at
+    /// all). Client disconnect is handled implicitly: AccessKit re-invokes
+    /// `request_initial_tree` (served from the cached tree) on the next
+    /// activation, so no explicit active-latch reset is needed.
+    pub fn for_window(window: &DefaultWindow, window_id: WindowId) -> Option<Self> {
         let raw = window.window_handle().ok()?.as_raw();
         let ns_view = match raw {
             RawWindowHandle::AppKit(handle) => handle.ns_view.as_ptr(),
@@ -86,7 +121,7 @@ impl MacA11yAdapter {
             SubclassingAdapter::new(
                 ns_view,
                 CachedTreeActivation(last_tree.clone()),
-                UnroutedActions,
+                RoutedActions { window: window_id },
             )
         };
         log::info!("a11y(macos): SubclassingAdapter created on NSView {ns_view:p}");
@@ -97,12 +132,24 @@ impl MacA11yAdapter {
         })
     }
 
-    /// Push a full tree to VoiceOver: cache it for lazy activation, apply via
-    /// `update_if_active`, mark the view focused (so focus-based announcements
-    /// fire), and raise any queued accessibility events.
-    pub fn update(&mut self, update: TreeUpdate) {
-        *self.last_tree.borrow_mut() = Some(update.clone());
-        let active = match self.adapter.update_if_active(|| update) {
+    /// Push the current a11y tree to VoiceOver when an assistive client is
+    /// connected. `view_focused` reflects the real window key state (drives
+    /// `update_view_focus_state`, without which AccessKit reports no focused
+    /// element and nothing is announced). `build` produces the full tree.
+    ///
+    /// The build closure runs **only when a client is active**:
+    /// `update_if_active` no-ops cheaply when no screen reader is connected, so
+    /// idle runs (the universal case) never pay the full-tree rebuild+clone
+    /// cost — fixing the spike's per-frame waste without a separate dirty flag.
+    /// The cache is refreshed inside the closure so a reader connecting mid-
+    /// session is served the current tree via `request_initial_tree`.
+    pub fn update(&mut self, view_focused: bool, build: impl FnOnce() -> TreeUpdate) {
+        let last_tree = self.last_tree.clone();
+        let active = match self.adapter.update_if_active(|| {
+            let tree = build();
+            *last_tree.borrow_mut() = Some(tree.clone());
+            tree
+        }) {
             Some(events) => {
                 events.raise();
                 true
@@ -111,8 +158,9 @@ impl MacA11yAdapter {
         };
         if active {
             // AccessKit only reports a focused element when the view is marked
-            // focused; the window is key here, so the content view is focused.
-            if let Some(events) = self.adapter.update_view_focus_state(true) {
+            // focused; gate on real window key state instead of a hardcoded
+            // `true` so a background window does not claim focus.
+            if let Some(events) = self.adapter.update_view_focus_state(view_focused) {
                 events.raise();
             }
             if !self.logged_active.replace(true) {
@@ -123,14 +171,19 @@ impl MacA11yAdapter {
 }
 
 /// Lazily create the per-window adapter (on the first frame after the surface
-/// is realized, so the NSView exists), then push the current a11y tree.
+/// is realized, so the NSView exists), then push the current a11y tree when an
+/// assistive client is connected.
 ///
-/// No-op until the renderer is ready or on non-AppKit windows. Building a full
-/// tree every frame is intentional for the spike — simplest correct behavior.
+/// No-op until the renderer is ready or on non-AppKit windows. The tree is
+/// built lazily (inside `MacA11yAdapter::update`) only when a screen reader is
+/// active, so idle frames cost nothing. `view_focused` is the window's real key
+/// state, driving AccessKit's focus marker.
 pub(crate) fn push_tree_to_voiceover(
     adapter_slot: &RefCell<Option<MacA11yAdapter>>,
     window: &DefaultWindow,
+    window_id: WindowId,
     renderer_ready: bool,
+    view_focused: bool,
     roots: &[AccessibilityNode],
     focus: Option<ElementId>,
 ) {
@@ -139,11 +192,60 @@ pub(crate) fn push_tree_to_voiceover(
     }
     let mut slot = adapter_slot.borrow_mut();
     if slot.is_none() {
-        *slot = MacA11yAdapter::for_window(window);
+        *slot = MacA11yAdapter::for_window(window, window_id);
         if slot.is_none() {
             return; // not an AppKit window — nothing to drive
         }
     }
-    let update = to_accesskit_tree_update(roots, focus);
-    slot.as_mut().expect("adapter present").update(update);
+    slot.as_mut()
+        .expect("adapter present")
+        .update(view_focused, || to_accesskit_tree_update(roots, focus));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use accesskit::{NodeId, TreeId, Uuid};
+
+    fn request(action: Action, node: u64) -> ActionRequest {
+        ActionRequest {
+            action,
+            target_tree: TreeId(Uuid::nil()),
+            target_node: NodeId(node),
+            data: None,
+        }
+    }
+
+    #[test]
+    fn focus_action_maps_to_focus() {
+        assert_eq!(
+            route_action_request(&request(Action::Focus, 42)),
+            Some((42, A11yAction::Focus))
+        );
+    }
+
+    #[test]
+    fn click_action_maps_to_activate() {
+        // VoiceOver's default "press" arrives as Action::Click.
+        assert_eq!(
+            route_action_request(&request(Action::Click, 7)),
+            Some((7, A11yAction::Activate))
+        );
+    }
+
+    #[test]
+    fn unrouted_actions_are_dropped() {
+        for action in [Action::Blur, Action::Increment, Action::ScrollDown] {
+            assert_eq!(route_action_request(&request(action, 1)), None);
+        }
+    }
+
+    #[test]
+    fn target_node_id_is_preserved() {
+        let id = 0xDEAD_BEEF_u64;
+        assert_eq!(
+            route_action_request(&request(Action::Focus, id)),
+            Some((id, A11yAction::Focus))
+        );
+    }
 }

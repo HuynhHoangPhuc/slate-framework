@@ -14,8 +14,8 @@ use objc2_foundation::{MainThreadMarker, NSNotification, NSObject, NSObjectProto
 
 use super::window::MacWindow;
 use super::{
-    HANDLER, MENU_EVENT_SUBTYPE, REDRAW_EVENT_SUBTYPE, WAKE_EVENT_SUBTYPE, dispatch_event,
-    ffi_boundary,
+    A11Y_ACTIVATE_SUBTYPE, A11Y_FOCUS_SUBTYPE, HANDLER, MENU_EVENT_SUBTYPE, REDRAW_EVENT_SUBTYPE,
+    WAKE_EVENT_SUBTYPE, dispatch_event, ffi_boundary,
 };
 use crate::WindowId;
 use crate::{Event, Platform, WindowOptions};
@@ -63,6 +63,25 @@ define_class!(
                     let id = event.data2() as u64;
                     ffi_boundary(|| {
                         dispatch_event(Event::MenuActivated { window, id });
+                    });
+                    return;
+                }
+                if subtype == objc2_app_kit::NSEventSubtype(A11Y_FOCUS_SUBTYPE)
+                    || subtype == objc2_app_kit::NSEventSubtype(A11Y_ACTIVATE_SUBTYPE)
+                {
+                    let window = WindowId(event.data1() as u64);
+                    let node = event.data2() as u64;
+                    let action = if subtype == objc2_app_kit::NSEventSubtype(A11Y_FOCUS_SUBTYPE) {
+                        crate::A11yAction::Focus
+                    } else {
+                        crate::A11yAction::Activate
+                    };
+                    ffi_boundary(|| {
+                        dispatch_event(Event::AccessibilityAction {
+                            window,
+                            node,
+                            action,
+                        });
                     });
                     return;
                 }

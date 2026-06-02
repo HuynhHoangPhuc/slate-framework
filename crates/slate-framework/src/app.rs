@@ -670,7 +670,11 @@ impl App {
                     AppSignal::None
                 }
                 Event::WindowDestroyed { window, .. } => state_ref.handle_window_destroyed(window),
-                Event::WindowFocused { window, .. } => state_ref.handle_window_focused(window),
+                Event::WindowFocused { window, .. } => {
+                    #[cfg(target_os = "macos")]
+                    state_ref.update_a11y_key_window(window);
+                    state_ref.handle_window_focused(window)
+                }
                 Event::Wake => state_ref.handle_wake(),
                 Event::MouseDown {
                     window,
@@ -742,6 +746,11 @@ impl App {
                 Event::MenuActivated { window, id, .. } => {
                     state_ref.dispatch_menu(window, crate::menu::MenuId(id))
                 }
+                Event::AccessibilityAction {
+                    window,
+                    node,
+                    action,
+                } => state_ref.dispatch_a11y_action(window, node, action),
                 Event::Exiting => {
                     log::info!("exiting");
                     AppSignal::None

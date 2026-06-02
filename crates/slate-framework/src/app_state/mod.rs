@@ -14,6 +14,7 @@
 
 #![allow(dead_code)] // Some methods unused until callers in later layers wire them
 
+mod a11y;
 mod dispatch;
 mod focus;
 mod guards;

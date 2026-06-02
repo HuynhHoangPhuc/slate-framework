@@ -52,6 +52,14 @@ pub(crate) const WAKE_EVENT_SUBTYPE: i16 = 43;
 /// owning `WindowId`, `data2` the framework `MenuId`.
 pub(crate) const MENU_EVENT_SUBTYPE: i16 = 44;
 
+/// Subtype marker for a deferred screen-reader "focus node" action. `data1`
+/// encodes the owning `WindowId`, `data2` the target node's routing id.
+pub(crate) const A11Y_FOCUS_SUBTYPE: i16 = 45;
+
+/// Subtype marker for a deferred screen-reader "activate node" action. `data1`
+/// encodes the owning `WindowId`, `data2` the target node's routing id.
+pub(crate) const A11Y_ACTIVATE_SUBTYPE: i16 = 46;
+
 thread_local! {
     pub(crate) static HANDLER: EventHandler = const { std::cell::RefCell::new(None) };
     /// Window registry: lookup MacWindow by WindowId for render delegate dispatch.
@@ -206,6 +214,36 @@ pub(crate) fn post_menu_event(window: WindowId, id: u64) {
         MENU_EVENT_SUBTYPE,
         window.0 as isize,
         id as isize,
+    );
+    if let Some(event) = event {
+        let mtm = MainThreadMarker::new().unwrap();
+        NSApplication::sharedApplication(mtm).postEvent_atStart(&event, false);
+    }
+}
+
+/// Post a deferred screen-reader action to be dispatched on the next run-loop
+/// iteration, carrying `window` in `data1` and `node` in `data2`; the action
+/// kind is encoded in the event subtype.
+///
+/// Deferral mirrors [`post_menu_event`]: VoiceOver can invoke an a11y action
+/// while Slate is mid-stack (e.g. inside a render borrow), so dispatching the
+/// resulting focus/activation inline would hit the re-entrancy guard in
+/// [`dispatch_event`] and be dropped. Posting lets it land on a clean stack.
+pub fn post_accessibility_action(window: WindowId, node: u64, action: crate::A11yAction) {
+    let subtype = match action {
+        crate::A11yAction::Focus => A11Y_FOCUS_SUBTYPE,
+        crate::A11yAction::Activate => A11Y_ACTIVATE_SUBTYPE,
+    };
+    let event = NSEvent::otherEventWithType_location_modifierFlags_timestamp_windowNumber_context_subtype_data1_data2(
+        NSEventType::ApplicationDefined,
+        NSPoint::new(0.0, 0.0),
+        NSEventModifierFlags::empty(),
+        0.0,
+        0,
+        None,
+        subtype,
+        window.0 as isize,
+        node as isize,
     );
     if let Some(event) = event {
         let mtm = MainThreadMarker::new().unwrap();

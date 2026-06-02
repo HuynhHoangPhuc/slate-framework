@@ -327,11 +327,14 @@ impl AppState {
             if let Some(win) = guard.get(&window_id) {
                 let focus = win.focus_registry.borrow().focused();
                 let renderer_ready = win.renderer.borrow().is_some();
+                let view_focused = win.is_key.get();
                 let roots = win.a11y_nodes.borrow();
                 crate::a11y_macos::push_tree_to_voiceover(
                     &win.a11y_adapter,
                     &win.window,
+                    window_id,
                     renderer_ready,
+                    view_focused,
                     &roots,
                     focus,
                 );
