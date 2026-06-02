@@ -21,14 +21,19 @@ impl AppState {
         // All per-window borrows are taken individually below. We never hold
         // the outer `windows` RefCell borrow across any user callback.
 
-        // Guard: skip if not initialized.
+        // Guard: skip if the window's surface is not fully initialized — both
+        // the renderer AND the view must be present. `init_surfaces` installs
+        // the renderer before the view, and on Windows a surface-configure /
+        // geometry-restore `WM_SIZE` can drive a redraw in that gap (renderer
+        // present, view still `None`); painting then would hit the
+        // `view not initialized` expect below. `init_surfaces` requests a
+        // redraw once the view is installed, so skipping here loses no frame.
         {
             let guard = self.windows.borrow();
-            if guard
-                .get(&window_id)
-                .map(|w| w.renderer.borrow().is_none())
-                .unwrap_or(true)
-            {
+            let not_ready = guard.get(&window_id).is_none_or(|w| {
+                w.renderer.borrow().is_none() || w.view.borrow().is_none()
+            });
+            if not_ready {
                 return;
             }
         }
