@@ -16,7 +16,7 @@ path = "src/lib.rs"
 slate-framework = { path = "../slate-framework", version = "1.0.1", features = ["profiling"] }
 
 [dev-dependencies]
-criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
 
 [[bench]]
 name = "dense_image_gallery"
