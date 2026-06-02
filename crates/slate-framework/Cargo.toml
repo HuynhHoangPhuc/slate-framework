@@ -45,6 +45,16 @@ image.workspace = true
 accesskit_macos = "=0.26.1"
 raw-window-handle.workspace = true
 
+# Windows AccessKit platform adapter (P7 Narrator/UIA path, mirror of macOS).
+# accesskit_windows 0.33.0 depends on accesskit ^0.24 (matches our =0.24.0 pin),
+# the same accesskit-0.24 schema as accesskit_macos =0.26.1. Only a raw HWND
+# crosses the FFI boundary — its `windows`/`windows-core` generation stays
+# independent of slate-platform's win deps (do not unify, mirroring the macOS
+# raw-NSView-pointer discipline).
+[target.'cfg(target_os = "windows")'.dependencies]
+accesskit_windows = "=0.33.0"
+raw-window-handle.workspace = true
+
 [dev-dependencies]
 trybuild = "1"
 tracing-test = "0.2"
