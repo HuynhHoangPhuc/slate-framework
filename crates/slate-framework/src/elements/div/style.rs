@@ -61,6 +61,17 @@ impl Div {
         self
     }
 
+    /// Override the role of this Div's a11y node (default [`Group`]). Lets a
+    /// styled composite built from a Div — e.g. a Select trigger — announce
+    /// with a meaningful role such as [`Button`] instead of `Group`.
+    ///
+    /// [`Group`]: crate::types::AccessibilityRole::Group
+    /// [`Button`]: crate::types::AccessibilityRole::Button
+    pub fn a11y_role(mut self, role: crate::types::AccessibilityRole) -> Self {
+        self.a11y_role = Some(role);
+        self
+    }
+
     /// Style overrides applied while the pointer is over this element (or a
     /// descendant). Falls back to the base style for any field left unset.
     ///

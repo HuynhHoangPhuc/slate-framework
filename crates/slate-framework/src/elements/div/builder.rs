@@ -20,6 +20,7 @@ impl Div {
             last_id: None,
             track_bounds: None,
             a11y_label: None,
+            a11y_role: None,
             on_click: None,
             on_mouse_down: None,
             on_mouse_up: None,

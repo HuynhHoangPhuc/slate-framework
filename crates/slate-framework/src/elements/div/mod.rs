@@ -57,6 +57,10 @@ pub struct Div {
     /// group unlabelled (the default). Container widgets (Panel) set it so a
     /// screen reader announces the group by its title.
     pub(super) a11y_label: Option<String>,
+    /// Optional role override for this Div's a11y node. `None` => the default
+    /// `Group`. A styled composite (e.g. a Select trigger built from a Div) sets
+    /// this so the node announces with a meaningful role instead of `Group`.
+    pub(super) a11y_role: Option<crate::types::AccessibilityRole>,
     // -------------------------------------------------------------------------
     // Event handlers
     // -------------------------------------------------------------------------

@@ -283,7 +283,7 @@ impl Element for Div {
 
     fn accessibility(&self) -> Option<AccessibilityInfo> {
         Some(AccessibilityInfo {
-            role: AccessibilityRole::Group,
+            role: self.a11y_role.unwrap_or(AccessibilityRole::Group),
             label: self.a11y_label.clone(),
             is_disabled: self.disabled,
             ..Default::default()

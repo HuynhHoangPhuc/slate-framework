@@ -95,6 +95,10 @@ impl Select {
             .corner_radius(t.radius.sm)
             .border(t.border, 1.0)
             .focusable(true)
+            // Announce as an actionable control named by the current selection,
+            // not a bare Group. (Slate's a11y role set has no dedicated
+            // combobox; Button conveys "press to open the list".)
+            .a11y_role(crate::types::AccessibilityRole::Button)
             .a11y_label(self.current_label(idx))
             .track_bounds(self.anchor.clone())
             .on_click(move |_, _| open_click.set(true))

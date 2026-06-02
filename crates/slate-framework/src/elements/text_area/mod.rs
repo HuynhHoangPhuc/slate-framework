@@ -34,7 +34,10 @@ use crate::event::{ImeHandlers, KeyHandlers, MouseHandlers};
 use crate::focus::FocusableEntry;
 use crate::hit_test::{CursorStyle, HitRegion};
 use crate::text_system::PlatformFont;
-use crate::types::{Bounds, ElementId, LayoutId};
+use crate::types::{
+    AccessibilityAction, AccessibilityInfo, AccessibilityNode, AccessibilityRole, Bounds,
+    ElementId, LayoutId,
+};
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -87,6 +90,9 @@ pub struct TextArea {
     value: Signal<String>,
     style: TextAreaStyle,
     font: Option<PlatformFont>,
+    /// Screen-reader label (the input's accessible name). `None` => the input
+    /// announces by role only.
+    a11y_label: Option<String>,
     /// Stable ElementId allocated during prepaint (available after prepaint).
     last_id: Option<ElementId>,
 }
@@ -116,6 +122,7 @@ impl TextArea {
             value,
             style: TextAreaStyle::default(),
             font: None,
+            a11y_label: None,
             last_id: None,
         }
     }
@@ -123,6 +130,13 @@ impl TextArea {
     /// Override the visual style.
     pub fn style(mut self, s: TextAreaStyle) -> Self {
         self.style = s;
+        self
+    }
+
+    /// Set the screen-reader label (accessible name) announced for this input.
+    /// Without it the area announces as an unnamed text input.
+    pub fn a11y_label(mut self, label: impl Into<String>) -> Self {
+        self.a11y_label = Some(label.into());
         self
     }
 
@@ -297,6 +311,24 @@ impl Element for TextArea {
                 on_mouse_up: Some(mouse::build_mouse_up_handler()),
             },
         );
+
+        // Accessibility: announce as a text input with its current value +
+        // label. Value comes from the live edit buffer (ImeState) so an
+        // in-progress edit is announced, not just the last committed signal.
+        let a11y_value = state_rc.borrow().text.clone();
+        cx.register_a11y_node(AccessibilityNode {
+            id: element_id,
+            bounds,
+            info: AccessibilityInfo {
+                role: AccessibilityRole::TextInput,
+                label: self.a11y_label.clone(),
+                value: Some(a11y_value),
+                is_focused: focused,
+                ..Default::default()
+            },
+            children: Vec::new(),
+            actions: vec![AccessibilityAction::Focus],
+        });
 
         TextAreaPaintState {
             element_id,

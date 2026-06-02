@@ -42,7 +42,10 @@ use crate::event::{ImeHandlers, KeyHandlers, MouseHandlers};
 use crate::focus::FocusableEntry;
 use crate::hit_test::{CursorStyle, HitRegion};
 use crate::text_system::PlatformFont;
-use crate::types::{Bounds, ElementId, LayoutId};
+use crate::types::{
+    AccessibilityAction, AccessibilityInfo, AccessibilityNode, AccessibilityRole, Bounds,
+    ElementId, LayoutId,
+};
 
 use handlers::{
     build_ime_commit_handler, build_ime_preedit_handler, build_key_down_handler,
@@ -89,6 +92,9 @@ pub struct TextField {
     value: Signal<String>,
     style: TextFieldStyle,
     font: Option<PlatformFont>,
+    /// Screen-reader label (the input's accessible name). `None` => the input
+    /// announces by role only.
+    a11y_label: Option<String>,
     /// Stable ElementId allocated during prepaint (available after prepaint).
     last_id: Option<ElementId>,
 }
@@ -100,8 +106,16 @@ impl TextField {
             value,
             style: TextFieldStyle::default(),
             font: None,
+            a11y_label: None,
             last_id: None,
         }
+    }
+
+    /// Set the screen-reader label (accessible name) announced for this input.
+    /// Without it the field announces as an unnamed text input.
+    pub fn a11y_label(mut self, label: impl Into<String>) -> Self {
+        self.a11y_label = Some(label.into());
+        self
     }
 
     /// Override the visual style.
@@ -310,6 +324,24 @@ impl Element for TextField {
                 on_mouse_up: Some(build_mouse_up_handler()),
             },
         );
+
+        // Accessibility: announce as a text input with its current value +
+        // label. Read the value from the live edit buffer (ImeState) so an
+        // in-progress edit is announced, not just the last committed signal.
+        let a11y_value = state_rc.borrow().text.clone();
+        cx.register_a11y_node(AccessibilityNode {
+            id: element_id,
+            bounds,
+            info: AccessibilityInfo {
+                role: AccessibilityRole::TextInput,
+                label: self.a11y_label.clone(),
+                value: Some(a11y_value),
+                is_focused: focused,
+                ..Default::default()
+            },
+            children: Vec::new(),
+            actions: vec![AccessibilityAction::Focus],
+        });
 
         TextFieldPaintState {
             element_id,
