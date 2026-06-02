@@ -281,6 +281,53 @@ fn bench_shape_line_cache_reuse() {
     );
 }
 
+/// Proves the font cache turns per-frame font reloads into reuse: re-rendering
+/// content reloads no font once the working set is warm.
+///
+/// The reactive view is rebuilt every frame, so each `Text` reloads its font in
+/// `request_layout`. Building a platform font is expensive (TTF parse +
+/// DirectWrite COM construction), so without the cache an N-text-node screen
+/// pays N full loads per frame — the dominant interactive cost on dense screens.
+/// Gates on the deterministic cache invariant: after warmup, repeated renders
+/// add font-cache hits and zero misses (no real loads).
+#[test]
+fn bench_font_cache_reuse() {
+    let mut app = headless_app_or_skip!(800, 600);
+
+    // Warm: first renders load each distinct (font, size, scale) once.
+    let _ = app.render(label_grid(64));
+    let _ = app.render(label_grid(64));
+    let warm_misses = app.font_cache_misses();
+    let warm_hits = app.font_cache_hits();
+    let entries = app.font_cache_len();
+
+    // Steady-state: re-render identical content several times.
+    for _ in 0..10 {
+        let _ = app.render(label_grid(64));
+    }
+
+    let new_misses = app.font_cache_misses() - warm_misses;
+    let new_hits = app.font_cache_hits() - warm_hits;
+
+    println!("\n=== Font Cache Reuse (64 labels x 10 warm frames) ===");
+    println!("  Distinct fonts cached: {}", entries);
+    println!("  Warm-render font-cache hits:   {}", new_hits);
+    println!("  Warm-render font-cache misses: {}", new_misses);
+
+    assert_eq!(
+        new_misses, 0,
+        "warm renders must reload no font — every load must hit the cache"
+    );
+    assert!(
+        new_hits > 0,
+        "warm renders must serve fonts from the cache"
+    );
+    assert!(
+        entries <= 8,
+        "label grid uses one font/size/scale — cache should hold a tiny working set, got {entries}"
+    );
+}
+
 #[test]
 fn bench_set_driven_frame() {
     let mut app = headless_app_or_skip!(400, 300);

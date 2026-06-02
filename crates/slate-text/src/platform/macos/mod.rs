@@ -120,6 +120,11 @@ impl Default for CoreTextBackend {
 ///
 /// Holds the CTFont, optional CFData (for fonts loaded from bytes), metrics,
 /// and rendering parameters.
+///
+/// `Clone` is cheap: `CFRetained` clones bump the CoreFoundation retain count
+/// (no font re-parse), letting `TextSystem` memoize loaded fonts and hand out
+/// shared instances instead of reloading per text node per frame.
+#[derive(Clone)]
 pub struct CoreTextFont {
     ct_font: CFRetained<CTFont>,
     /// Keeps the byte-backed CFData alive for fonts loaded from static slices.

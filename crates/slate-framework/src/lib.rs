@@ -75,6 +75,7 @@ pub mod style;
 #[cfg(all(target_os = "windows", feature = "test-hooks"))]
 #[doc(hidden)]
 pub mod test_support;
+pub(crate) mod text_font_cache;
 pub(crate) mod text_shape_line_cache;
 pub mod text_system;
 pub mod theme;

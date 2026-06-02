@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — per-frame font reload (dashboard interaction lag)
+- `TextSystem::load_font` / `load_font_from_bytes` now memoize loaded fonts in a per-`TextSystem` `FontCache` keyed by `(source, size, scale)`. Each `Text` rebuilds every frame under the Strategy-A whole-view rebuild and so reloaded its font from scratch; on Windows that is a full TTF parse plus a stack of DirectWrite COM constructions (font file, face, set, collection, text format). A dense screen paid one full load per text node per frame — the dashboard's ~98 text nodes cost ~80 ms/frame (~10 fps), and the cost compounded as the DirectWrite factory accumulated font collections. The cache turns repeat loads into a refcount-bump clone, so only distinct fonts load (once).
+- Dashboard steady-state frame drops from ~100 ms to ~6 ms in debug (layout-build phase ~80 ms → ~0.3 ms); form-controls (few text nodes) was already fast and is unchanged. The earlier `shape_line` cache addressed shaping, which was never the bottleneck — font *loading* was.
+- Additive only: `load_font*` signatures unchanged; `DirectWriteFont` / `CoreTextFont` / `PlatformFont` gain `Clone` (a refcount bump, no re-parse). New `font_cache_*` accessors on `TextSystem` / `HeadlessApp` for tests. Covered by `text_font_cache` unit tests + the `bench_font_cache_reuse` headless test (warm renders: 0 real loads).
+
 ### Testing — macOS TextArea validation + cross-platform dispatch harness
 - Converted the four TextArea dispatch suites (`text_area_editing`, `text_area_layout`, `text_area_nav`, `text_area_mouse`) to `harness = false` `[[test]]` targets whose `fn main` runs on the process main thread, so the real platform + a 1×1 window + `AppState` construct on macOS (AppKit `MainThreadMarker`). Dropped the `cfg(target_os = "windows")` gate; kept `required-features = ["test-hooks"]`.
 - These suites now run cross-platform and exercise the real CoreText layout, NSPasteboard clipboard (multi-line round-trip, CRLF→LF), and IME commit paths on macOS — closing the prior Windows-only validation gap for shared TextArea logic.

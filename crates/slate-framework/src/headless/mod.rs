@@ -238,6 +238,22 @@ impl HeadlessApp {
         self.text_system.shape_line_cache_len()
     }
 
+    /// Get the font-cache hit count (for testing). Hits are font loads served
+    /// from the cache instead of rebuilding the platform font.
+    pub fn font_cache_hits(&self) -> u64 {
+        self.text_system.font_cache_hits()
+    }
+
+    /// Get the font-cache miss count (= real platform font loads) (for testing).
+    pub fn font_cache_misses(&self) -> u64 {
+        self.text_system.font_cache_misses()
+    }
+
+    /// Get the number of entries in the font cache (for testing).
+    pub fn font_cache_len(&self) -> usize {
+        self.text_system.font_cache_len()
+    }
+
     /// Inject an `ImeState` for `id` directly into the headless IME registry.
     ///
     /// Bypasses the platform dispatch path; intended for visual regression

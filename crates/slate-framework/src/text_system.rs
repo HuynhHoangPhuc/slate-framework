@@ -13,6 +13,7 @@ use slate_text::run_builder::TextRunBuilder;
 use slate_text::types::ShapedLine;
 use slate_text::{GlyphCache, TextError};
 
+use crate::text_font_cache::{FontCache, FontCacheKey};
 use crate::text_shape_line_cache::ShapeLineCache;
 
 #[cfg(target_os = "macos")]
@@ -55,6 +56,13 @@ pub struct TextSystem {
     // `TextSystem` is `!Send` and lives on a single thread per window.
     shape_cache: RefCell<ShapeLineCache>,
 
+    // Identity-keyed memoization for `load_font` / `load_font_from_bytes`.
+    // The reactive view is rebuilt every frame, so each `Text` reloads its font;
+    // building a platform font is expensive (TTF parse + DirectWrite COM
+    // construction), so a dense screen otherwise pays one full load per text
+    // node per frame. The cache returns a cheap clone (refcount bump) instead.
+    font_cache: FontCache<PlatformFont>,
+
     // Red-team Finding 5: Explicit !Send marker.
     // CoreText is thread-safe and windows-rs IDWriteFactory is Send,
     // so we cannot rely on inherited !Send. Pin the type to one thread
@@ -74,6 +82,7 @@ impl TextSystem {
             #[cfg(target_os = "windows")]
             backend: DirectWriteBackend::new()?,
             shape_cache: RefCell::new(ShapeLineCache::new()),
+            font_cache: FontCache::new(),
             _not_send: PhantomData,
         })
     }
@@ -91,11 +100,15 @@ impl TextSystem {
         size_lpx: f32,
         scale: f32,
     ) -> Result<PlatformFont, TextError> {
-        use slate_text::TextBackend;
-        let inner = self.backend.load_font(family, size_lpx, scale)?;
-        Ok(PlatformFont {
-            inner,
-            _not_send: PhantomData,
+        let key = FontCacheKey::from_family(family, size_lpx, scale);
+        let backend = &mut self.backend;
+        self.font_cache.get_or_load(key, || {
+            use slate_text::TextBackend;
+            let inner = backend.load_font(family, size_lpx, scale)?;
+            Ok(PlatformFont {
+                inner,
+                _not_send: PhantomData,
+            })
         })
     }
 
@@ -108,11 +121,15 @@ impl TextSystem {
         size_lpx: f32,
         scale: f32,
     ) -> Result<PlatformFont, TextError> {
-        use slate_text::TextBackend;
-        let inner = self.backend.load_font_from_bytes(bytes, size_lpx, scale)?;
-        Ok(PlatformFont {
-            inner,
-            _not_send: PhantomData,
+        let key = FontCacheKey::from_bytes(bytes, size_lpx, scale);
+        let backend = &mut self.backend;
+        self.font_cache.get_or_load(key, || {
+            use slate_text::TextBackend;
+            let inner = backend.load_font_from_bytes(bytes, size_lpx, scale)?;
+            Ok(PlatformFont {
+                inner,
+                _not_send: PhantomData,
+            })
         })
     }
 
@@ -146,6 +163,22 @@ impl TextSystem {
     /// Number of entries currently held in the `shape_line` cache (testing).
     pub fn shape_line_cache_len(&self) -> usize {
         self.shape_cache.borrow().len()
+    }
+
+    /// Number of font-cache hits since construction (testing / profiling).
+    pub fn font_cache_hits(&self) -> u64 {
+        self.font_cache.hits()
+    }
+
+    /// Number of font-cache misses (= real platform font loads) since
+    /// construction (testing / profiling).
+    pub fn font_cache_misses(&self) -> u64 {
+        self.font_cache.misses()
+    }
+
+    /// Number of entries currently held in the font cache (testing).
+    pub fn font_cache_len(&self) -> usize {
+        self.font_cache.len()
     }
 
     /// Shape a single line through the bidi segment + reorder pipeline,
@@ -235,6 +268,12 @@ impl TextSystem {
 /// Platform-erased font handle.
 ///
 /// Wraps the platform-specific font type behind `#[cfg]`.
+///
+/// `Clone` is a refcount bump on the underlying platform font (DirectWrite COM
+/// / CoreText `CFRetained`), never a re-parse — this is what lets
+/// [`TextSystem`] memoize loaded fonts and hand out shared instances instead of
+/// rebuilding one per text node per frame.
+#[derive(Clone)]
 pub struct PlatformFont {
     #[cfg(target_os = "macos")]
     pub(crate) inner: <CoreTextBackend as slate_text::TextBackend>::Font,

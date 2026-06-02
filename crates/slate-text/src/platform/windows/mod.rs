@@ -152,6 +152,7 @@ impl Drop for DirectWriteBackend {
 /// `text_format` is `None` for substitute fonts captured during shaping and
 /// stored in the backend registry — those fonts are only used for rasterize +
 /// bounds queries, which need `font_face` and sizing but never `text_format`.
+#[derive(Clone)]
 pub struct DirectWriteFont {
     pub(crate) font_face: IDWriteFontFace,
     pub(crate) em_size_dip: f32,
