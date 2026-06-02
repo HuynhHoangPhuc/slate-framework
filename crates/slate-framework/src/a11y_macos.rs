@@ -28,12 +28,13 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use accesskit::{Action, ActionHandler, ActionRequest, ActivationHandler, TreeUpdate};
+use accesskit::{ActionHandler, ActionRequest, ActivationHandler, TreeUpdate};
 use accesskit_macos::SubclassingAdapter;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-use slate_platform::{A11yAction, DefaultWindow, WindowId, post_accessibility_action};
+use slate_platform::{DefaultWindow, WindowId, post_accessibility_action};
 
 use crate::a11y_accesskit::to_accesskit_tree_update;
+use crate::a11y_action_routing::route_action_request;
 use crate::types::{AccessibilityNode, ElementId};
 
 /// Shared cache of the most recent full tree. The lazy
@@ -48,22 +49,6 @@ struct CachedTreeActivation(SharedTree);
 impl ActivationHandler for CachedTreeActivation {
     fn request_initial_tree(&mut self) -> Option<TreeUpdate> {
         self.0.borrow().clone()
-    }
-}
-
-/// Translate an AccessKit [`ActionRequest`] into the Slate action Slate can
-/// synthesise, or `None` for actions Slate does not route. Pure (no I/O), so it
-/// is unit-tested directly without a live assistive client.
-///
-/// `Action::Focus` → move keyboard focus to the node. `Action::Click` (the
-/// screen-reader "press"/default action) → activate the node. Every other
-/// AccessKit action is dropped here and never reaches the platform seam.
-pub(crate) fn route_action_request(request: &ActionRequest) -> Option<(u64, A11yAction)> {
-    let node = request.target_node.0;
-    match request.action {
-        Action::Focus => Some((node, A11yAction::Focus)),
-        Action::Click => Some((node, A11yAction::Activate)),
-        _ => None,
     }
 }
 
@@ -200,52 +185,4 @@ pub(crate) fn push_tree_to_voiceover(
     slot.as_mut()
         .expect("adapter present")
         .update(view_focused, || to_accesskit_tree_update(roots, focus));
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use accesskit::{NodeId, TreeId, Uuid};
-
-    fn request(action: Action, node: u64) -> ActionRequest {
-        ActionRequest {
-            action,
-            target_tree: TreeId(Uuid::nil()),
-            target_node: NodeId(node),
-            data: None,
-        }
-    }
-
-    #[test]
-    fn focus_action_maps_to_focus() {
-        assert_eq!(
-            route_action_request(&request(Action::Focus, 42)),
-            Some((42, A11yAction::Focus))
-        );
-    }
-
-    #[test]
-    fn click_action_maps_to_activate() {
-        // VoiceOver's default "press" arrives as Action::Click.
-        assert_eq!(
-            route_action_request(&request(Action::Click, 7)),
-            Some((7, A11yAction::Activate))
-        );
-    }
-
-    #[test]
-    fn unrouted_actions_are_dropped() {
-        for action in [Action::Blur, Action::Increment, Action::ScrollDown] {
-            assert_eq!(route_action_request(&request(action, 1)), None);
-        }
-    }
-
-    #[test]
-    fn target_node_id_is_preserved() {
-        let id = 0xDEAD_BEEF_u64;
-        assert_eq!(
-            route_action_request(&request(Action::Focus, id)),
-            Some((id, A11yAction::Focus))
-        );
-    }
 }

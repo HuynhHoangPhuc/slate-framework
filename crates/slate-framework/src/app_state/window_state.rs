@@ -83,6 +83,11 @@ pub struct WindowState {
     /// VoiceOver-validated spike; flipped `false` when another window becomes key.
     #[cfg(target_os = "macos")]
     pub(crate) is_key: std::cell::Cell<bool>,
+    /// Windows Narrator/UIA adapter, lazily built on the first frame after the
+    /// surface is realized and installed as the window's a11y delegate. `None`
+    /// on non-Win32/test windows. Windows-only — mirror of `a11y_adapter`.
+    #[cfg(target_os = "windows")]
+    pub(crate) a11y_adapter: RefCell<Option<std::rc::Rc<crate::a11y_windows::WinA11yAdapter>>>,
     pub scene: RefCell<Scene>,
 
     // -- Mouse dispatch state -------------------------------------------
@@ -191,6 +196,8 @@ impl WindowState {
             a11y_adapter: RefCell::new(None),
             #[cfg(target_os = "macos")]
             is_key: std::cell::Cell::new(true),
+            #[cfg(target_os = "windows")]
+            a11y_adapter: RefCell::new(None),
             scene: RefCell::new(Scene::new()),
             handler_map: RefCell::new(HashMap::new()),
             mouse_handler_map: RefCell::new(HashMap::new()),

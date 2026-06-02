@@ -19,14 +19,15 @@ use windows::Win32::Graphics::Dxgi::IDXGIFactory2;
 use windows::Win32::Graphics::Gdi::HMONITOR;
 use windows::Win32::UI::WindowsAndMessaging::{
     CREATESTRUCTW, DefWindowProcW, GWLP_USERDATA, GetWindowLongPtrW, KillTimer, PostQuitMessage,
-    SetWindowLongPtrW, WM_CLOSE, WM_DESTROY, WM_NCCREATE, WM_NCDESTROY,
+    SetWindowLongPtrW, WM_CLOSE, WM_DESTROY, WM_GETOBJECT, WM_KILLFOCUS, WM_NCCREATE, WM_NCDESTROY,
+    WM_SETFOCUS,
 };
 
 use super::{
-    REDRAW_TIMER_ID, WM_APP_MENU, WM_APP_WAKE, clear_wake_hwnd, decrement_live_window_count,
-    dispatch_event, menu,
+    REDRAW_TIMER_ID, WM_APP_A11Y, WM_APP_MENU, WM_APP_WAKE, a11y_action_from_code, clear_wake_hwnd,
+    decrement_live_window_count, dispatch_event, forget_window_hwnd, menu,
 };
-use crate::{Event, WindowId, WindowImeDelegate, WindowRenderDelegate};
+use crate::{Event, WindowA11yDelegate, WindowId, WindowImeDelegate, WindowRenderDelegate};
 
 // ---------------------------------------------------------------------------
 // WinWindowInner — actual HWND state (Arc'd, OS holds raw ptr via GWLP_USERDATA)
@@ -45,6 +46,10 @@ pub struct WinWindowInner {
     pub(crate) delegate: RefCell<Option<Weak<dyn WindowRenderDelegate>>>,
     /// IME query delegate for sync OS composition queries during `WM_IME_*` handling.
     pub(crate) ime_delegate: RefCell<Option<Weak<dyn WindowImeDelegate>>>,
+    /// Accessibility delegate for synchronous `WM_GETOBJECT` / OS-focus routing
+    /// into the framework's UIA adapter (Narrator). `None` until the framework
+    /// installs it on the first frame; macOS never installs one.
+    pub(crate) a11y_delegate: RefCell<Option<Weak<dyn WindowA11yDelegate>>>,
     /// `WM_DESTROY` reads this to synthesise a final `Event::ImeDisabled` so
     /// the one-Disabled-per-session contract holds across window teardown.
     pub(crate) composition_active: Cell<bool>,
@@ -97,6 +102,19 @@ impl WinWindowInner {
         }
     }
 
+    /// Upgrade and invoke the accessibility delegate, if installed. Clone-and-
+    /// drop (like [`with_delegate`](Self::with_delegate)) so no `RefCell` borrow
+    /// is held across the call — `handle_wm_getobject` can nest a `WM_GETOBJECT`
+    /// while initialising UIA, re-entering this `wnd_proc`.
+    fn with_a11y_delegate<R>(
+        &self,
+        f: impl FnOnce(&dyn WindowA11yDelegate) -> R,
+    ) -> Option<R> {
+        let weak = self.a11y_delegate.borrow().clone()?;
+        let strong = weak.upgrade()?;
+        Some(f(&*strong))
+    }
+
     /// Translate a Win32 message into a Slate [`Event`] and dispatch it.
     pub(crate) fn handle_message(
         &self,
@@ -126,6 +144,9 @@ impl WinWindowInner {
                 // Drop this window's menu-bar command map so its ids don't
                 // outlive the window.
                 menu::forget_window(hwnd);
+                // Drop the a11y registry entry so its id never resolves to a
+                // dead HWND for a posted accessibility action.
+                forget_window_hwnd(self.id);
                 dispatch_event(Event::WindowDestroyed { window: self.id });
                 // Only end the message pump for the LAST surviving window.
                 // Earlier waves wired `PostQuitMessage(0)` unconditionally,
@@ -149,6 +170,45 @@ impl WinWindowInner {
                     id: wparam.0 as u64,
                 });
                 LRESULT(0)
+            }
+            _ if msg == WM_APP_A11Y => {
+                // Deferred screen-reader action posted by
+                // `post_accessibility_action`; `wparam` encodes the action,
+                // `lparam` the node routing id. Window comes from `self.id`.
+                let Some(action) = a11y_action_from_code(wparam.0) else {
+                    return LRESULT(0);
+                };
+                dispatch_event(Event::AccessibilityAction {
+                    window: self.id,
+                    node: lparam.0 as u64,
+                    action,
+                });
+                LRESULT(0)
+            }
+            WM_GETOBJECT => {
+                // Hand the UIA provider back to Narrator via the framework's
+                // adapter. The delegate returns the provider's LRESULT (it may
+                // nest a WM_GETOBJECT while initialising UIA — `with_a11y_delegate`
+                // holds no borrow across the call). `None` → not claimed → fall
+                // through to DefWindowProc (handles non-client object ids).
+                if let Some(Some(lr)) =
+                    self.with_a11y_delegate(|d| d.handle_wm_getobject(self.id, wparam.0, lparam.0))
+                {
+                    return LRESULT(lr);
+                }
+                // SAFETY: default proc is always safe to call.
+                unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+            }
+            WM_SETFOCUS | WM_KILLFOCUS => {
+                // Tell the a11y adapter whether this window holds OS focus so it
+                // raises the matching UIA focus events; without it Narrator
+                // reports no focused element (the Windows analogue of macOS's
+                // `update_view_focus_state`). Then continue normal focus
+                // processing.
+                let focused = msg == WM_SETFOCUS;
+                self.with_a11y_delegate(|d| d.window_focus_changed(self.id, focused));
+                // SAFETY: default proc is always safe to call.
+                unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
             }
             _ => self
                 .dispatch_resize(hwnd, msg, wparam, lparam)

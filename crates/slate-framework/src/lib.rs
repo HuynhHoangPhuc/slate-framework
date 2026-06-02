@@ -27,10 +27,17 @@
 
 // Core modules
 pub mod a11y_accesskit;
+/// Shared screen-reader action routing (`accesskit::Action` → `A11yAction`),
+/// used by both platform adapters so they never diverge.
+pub mod a11y_action_routing;
 /// macOS AccessKit platform adapter (VoiceOver). macOS-only; the S0 DataGrid
 /// a11y spike seed for P7 platform accessibility.
 #[cfg(target_os = "macos")]
 pub mod a11y_macos;
+/// Windows AccessKit platform adapter (Narrator/UIA). Windows-only; mirrors the
+/// VoiceOver-validated macOS adapter via the non-subclassing `Adapter` path.
+#[cfg(target_os = "windows")]
+pub mod a11y_windows;
 pub mod app;
 #[cfg(any(test, feature = "test-hooks"))]
 #[doc(hidden)]

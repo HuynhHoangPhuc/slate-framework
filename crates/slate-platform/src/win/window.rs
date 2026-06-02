@@ -29,11 +29,12 @@ use windows::core::PCWSTR;
 use super::message_loop::WinWindowInner;
 use super::platform::CLASS_NAME;
 use super::{
-    REDRAW_TIMER_ID, increment_live_window_count, next_window_id, register_wake_hwnd, to_wide,
+    REDRAW_TIMER_ID, increment_live_window_count, next_window_id, register_wake_hwnd,
+    register_window_hwnd, to_wide,
 };
 use crate::{
-    PlatformMenu, Window, WindowId, WindowImeDelegate, WindowOptions, WindowPlacement,
-    WindowRenderDelegate,
+    PlatformMenu, Window, WindowA11yDelegate, WindowId, WindowImeDelegate, WindowOptions,
+    WindowPlacement, WindowRenderDelegate,
 };
 
 // ---------------------------------------------------------------------------
@@ -79,6 +80,7 @@ impl WinWindow {
             is_tracking_hover: Cell::new(false),
             delegate: RefCell::new(None),
             ime_delegate: RefCell::new(None),
+            a11y_delegate: RefCell::new(None),
             composition_active: Cell::new(false),
             in_size_move: Cell::new(false),
             pending_display_change: Cell::new(false),
@@ -149,6 +151,10 @@ impl WinWindow {
         // First window wins; subsequent calls are no-ops (CAS).
         register_wake_hwnd(hwnd);
 
+        // Register id → HWND so screen-reader actions posted from the UIA
+        // adapter (possibly off-thread) resolve to this window's queue.
+        register_window_hwnd(id, hwnd);
+
         // Restore a maximized window (geometry persistence). The visible window
         // was created normal above; maximize it now. CreateWindowExW already
         // positioned the restored normal bounds, which Windows tracks as the
@@ -218,6 +224,10 @@ impl Window for WinWindow {
 
     fn set_ime_delegate(&self, delegate: Weak<dyn WindowImeDelegate>) {
         *self.inner.ime_delegate.borrow_mut() = Some(delegate);
+    }
+
+    fn set_a11y_delegate(&self, delegate: Weak<dyn WindowA11yDelegate>) {
+        *self.inner.a11y_delegate.borrow_mut() = Some(delegate);
     }
 
     fn current_monitor_luid(&self) -> Option<u64> {

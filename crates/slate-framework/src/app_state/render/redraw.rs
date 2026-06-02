@@ -341,6 +341,27 @@ impl AppState {
             }
         }
 
+        // Push the just-built a11y tree to Narrator (Windows). Window OS-focus
+        // is driven separately via WM_SETFOCUS/WM_KILLFOCUS through the a11y
+        // delegate, so no `view_focused` is threaded here. No-op until realized.
+        #[cfg(target_os = "windows")]
+        {
+            let guard = self.windows.borrow();
+            if let Some(win) = guard.get(&window_id) {
+                let focus = win.focus_registry.borrow().focused();
+                let renderer_ready = win.renderer.borrow().is_some();
+                let roots = win.a11y_nodes.borrow();
+                crate::a11y_windows::push_tree_to_narrator(
+                    &win.a11y_adapter,
+                    &win.window,
+                    window_id,
+                    renderer_ready,
+                    &roots,
+                    focus,
+                );
+            }
+        }
+
         // Re-borrow for render step.
         #[cfg(feature = "profiling")]
         let _present_start = std::time::Instant::now();

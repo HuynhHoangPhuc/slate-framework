@@ -218,3 +218,45 @@ pub trait WindowImeDelegate {
     /// query.
     fn ime_marked_range(&self, window_id: WindowId) -> Option<std::ops::Range<usize>>;
 }
+
+/// Sync accessibility boundary trait — invoked from the Windows `wnd_proc`
+/// (`WM_GETOBJECT`, `WM_SETFOCUS`/`WM_KILLFOCUS`) so an assistive client
+/// (Narrator) can reach the framework-owned UIA adapter.
+///
+/// # Why a delegate (Windows-specific)
+///
+/// AccessKit's `accesskit_windows::Adapter` (the non-subclassing variant,
+/// required because Slate creates `WS_VISIBLE` windows that would panic the
+/// `SubclassingAdapter`) needs `WM_GETOBJECT` answered **synchronously** with
+/// the UIA provider's `LRESULT`. Slate owns its `wnd_proc`, so the platform
+/// layer routes that one message into this delegate, which the framework
+/// implements over its per-window adapter. macOS uses `SubclassingAdapter`
+/// directly and never installs this delegate.
+///
+/// # Win32-free signature
+///
+/// Methods take/return plain integers (`usize`/`isize`) rather than
+/// `WPARAM`/`LPARAM`/`LRESULT` so this cross-crate trait carries no `windows`
+/// dependency — the platform layer wraps/unwraps at the boundary, mirroring how
+/// [`WindowImeDelegate`] exposes [`PhysicalRect`] instead of native types.
+///
+/// # Ownership / threading
+///
+/// Held by the platform [`Window`](crate::Window) as
+/// `Weak<dyn WindowA11yDelegate>` (installed via
+/// [`Window::set_a11y_delegate`](crate::Window)); the framework holds the
+/// strong `Rc`. All methods run on the main thread from inside the OS message
+/// callback — the same discipline as [`WindowRenderDelegate`].
+pub trait WindowA11yDelegate {
+    /// Handle a `WM_GETOBJECT` message for `window_id`. `wparam`/`lparam` are
+    /// the raw message parameters; returns `Some(lresult)` when AccessKit
+    /// claims the object (the caller returns it verbatim), or `None` to let the
+    /// platform fall through to `DefWindowProc`.
+    fn handle_wm_getobject(&self, window_id: WindowId, wparam: usize, lparam: isize)
+    -> Option<isize>;
+
+    /// Notify the adapter that the window's OS focus changed (`WM_SETFOCUS` →
+    /// `true`, `WM_KILLFOCUS` → `false`) so it raises the matching UIA focus
+    /// events — without which Narrator reports no focused element.
+    fn window_focus_changed(&self, window_id: WindowId, focused: bool);
+}

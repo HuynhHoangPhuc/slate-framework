@@ -87,6 +87,15 @@ pub trait Window: HasWindowHandle + HasDisplayHandle + 'static {
         panic!("set_ime_delegate not implemented for this Window");
     }
 
+    /// Install an accessibility delegate so the platform can route
+    /// `WM_GETOBJECT` and OS focus changes into the framework's UIA adapter
+    /// (Windows/Narrator). Held as `Weak<dyn>` to mirror the other delegates.
+    ///
+    /// Default is a no-op: macOS drives AccessKit through a `SubclassingAdapter`
+    /// and never installs this delegate; headless/mock windows have no a11y
+    /// surface. Only the Windows `Window` impl overrides it.
+    fn set_a11y_delegate(&self, _delegate: std::rc::Weak<dyn WindowA11yDelegate>) {}
+
     /// LUID of the DXGI adapter that drives the monitor the window currently
     /// occupies (Windows only). Used by the renderer to pick the adapter that
     /// matches the window's monitor so cross-monitor drag does not silently
@@ -723,7 +732,9 @@ pub enum Event {
 }
 
 mod render_delegate;
-pub use render_delegate::{PhysicalRect, PhysicalSize, WindowImeDelegate, WindowRenderDelegate};
+pub use render_delegate::{
+    PhysicalRect, PhysicalSize, WindowA11yDelegate, WindowImeDelegate, WindowRenderDelegate,
+};
 
 pub mod clipboard;
 
@@ -743,7 +754,10 @@ pub use mac::{
 #[cfg(target_os = "windows")]
 mod win;
 #[cfg(target_os = "windows")]
-pub use win::{WinPlatform as DefaultPlatform, WinWindow as DefaultWindow, wake_run_loop};
+pub use win::{
+    WinPlatform as DefaultPlatform, WinWindow as DefaultWindow, post_accessibility_action,
+    wake_run_loop,
+};
 #[cfg(all(target_os = "windows", feature = "test-hooks"))]
 #[doc(hidden)]
 pub use win::{
