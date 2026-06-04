@@ -50,6 +50,21 @@ impl AppState {
             }
         }
 
+        // Coalesced live-resize: apply the latest size stashed during the drag
+        // exactly once here, before layout/paint/present, so this tick pays a
+        // single ResizeBuffers (not one per WM_SIZE) and the new buffers are
+        // painted in the same frame. `Renderer::resize` short-circuits when the
+        // size is unchanged, so a stale stash is harmless.
+        {
+            let guard = self.windows.borrow();
+            if let Some(win) = guard.get(&window_id)
+                && let Some(sz) = win.pending_resize.take()
+                && let Some(r) = win.renderer.borrow_mut().as_mut()
+            {
+                r.resize(sz.as_tuple(), win.window.logical_size());
+            }
+        }
+
         // Snapshot window-size parameters (cheap — no borrow conflict).
         let (lw, lh, scale_factor, win_id_stamp) = {
             let guard = self.windows.borrow();

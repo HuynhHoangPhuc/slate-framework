@@ -112,9 +112,20 @@ impl AppState {
     /// `Event::WindowResized` arm — resize the renderer and set last size.
     pub fn handle_window_resized(&self, window_id: WindowId, physical_size: (u32, u32)) {
         let guard = self.windows.borrow();
-        if let Some(win) = guard.get(&window_id)
-            && let Some(r) = win.renderer.borrow_mut().as_mut()
-        {
+        let Some(win) = guard.get(&window_id) else {
+            return;
+        };
+        // Live drag: defer the swapchain resize to the next timer-pumped
+        // redraw so configure and paint land in the same tick. Reconfiguring
+        // per WM_SIZE storms ResizeBuffers (repeated failures on wgpu+DComp
+        // escalate to a device-removed) and shows a stale framebuffer at the
+        // new bounds (blink). Non-drag resizes apply immediately.
+        if win.window.is_live_resizing() {
+            win.pending_resize
+                .set(Some(PhysicalSize::new(physical_size.0, physical_size.1)));
+            return;
+        }
+        if let Some(r) = win.renderer.borrow_mut().as_mut() {
             r.resize(physical_size, win.window.logical_size());
         }
     }

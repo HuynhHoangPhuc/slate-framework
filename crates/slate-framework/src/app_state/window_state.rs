@@ -172,6 +172,14 @@ pub struct WindowState {
     /// Idempotency for sync resize: skip when bounds match the last paint.
     /// AppKit can fire setFrameSize: with the same size twice in a tick.
     pub last_resize_size: Cell<Option<PhysicalSize>>,
+
+    /// Latest swapchain size requested during a live-resize drag, applied once
+    /// by the timer-pumped redraw. Coalesces the per-WM_SIZE ResizeBuffers
+    /// storm (fragile on wgpu+DComp — repeated failures escalate to a
+    /// device-removed) into one configure per painted frame, and keeps the
+    /// buffer resize adjacent to paint so the new bounds are never shown with
+    /// a stale framebuffer.
+    pub pending_resize: Cell<Option<PhysicalSize>>,
 }
 
 impl WindowState {
@@ -229,6 +237,7 @@ impl WindowState {
             rendering: Cell::new(false),
             sync_resize: Cell::new(false),
             last_resize_size: Cell::new(None),
+            pending_resize: Cell::new(None),
         }
     }
 }

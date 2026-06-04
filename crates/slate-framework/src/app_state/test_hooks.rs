@@ -79,6 +79,16 @@ impl AppState {
         self.renderer_is_device_lost_for(self.window_id_for_test())
     }
 
+    /// Physical size the window's renderer surface is configured at. `None` if
+    /// no renderer is initialized. Observable for the resize-coalescing test:
+    /// deferred ⇒ size unchanged until redraw; coalesced ⇒ applied once.
+    pub fn renderer_surface_size_for_test(&self, window: WindowId) -> Option<(u32, u32)> {
+        self.windows
+            .borrow()
+            .get(&window)
+            .and_then(|w| w.renderer.borrow().as_ref().map(|r| r.surface_size()))
+    }
+
     /// Snapshot of the current recovery state for a window.
     pub fn current_recovery_state(&self) -> RecoveryState {
         let window = self.window_id_for_test();

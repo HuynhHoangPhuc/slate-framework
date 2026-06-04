@@ -370,6 +370,13 @@ impl Renderer {
     pub fn surface_format(&self) -> TextureFormat {
         self.target.format()
     }
+
+    /// Physical size the composition target is currently configured at.
+    /// Test-only observable for the resize-coalescing invariant.
+    #[cfg(feature = "test-hooks")]
+    pub fn surface_size(&self) -> (u32, u32) {
+        self.target.size()
+    }
 }
 
 // ----- Error types -----
