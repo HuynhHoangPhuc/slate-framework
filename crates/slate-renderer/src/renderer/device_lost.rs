@@ -106,6 +106,15 @@ impl Renderer {
         self.device_lost.store(true, Ordering::Release);
     }
 
+    /// Override the adapter LUID this renderer reports. Test-only: lets a test
+    /// force an adapter-LUID mismatch against the window's monitor LUID without
+    /// a second physical GPU, exercising the cross-adapter migration escalation.
+    #[cfg(any(test, feature = "test-hooks"))]
+    #[doc(hidden)]
+    pub fn set_adapter_luid_for_test(&mut self, luid: Option<u64>) {
+        self.adapter_luid = luid;
+    }
+
     /// Consume the "wgpu callback fired" signal. Returns `true` exactly once
     /// per callback invocation; subsequent calls return `false` until the
     /// callback fires again.

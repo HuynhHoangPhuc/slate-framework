@@ -87,7 +87,14 @@ impl WindowRenderDelegate for AppState {
 
     fn on_display_change(&self, window_id: WindowId) {
         log::trace!(target: "slate::device_lost", "on_display_change ENTRY window={:?}", window_id);
-        let lost = {
+        // A monitor-topology change may put the window on a different adapter.
+        // Escalate the mismatch now so recovery migrates promptly, rather than
+        // waiting for the next throttled per-redraw probe (during which the
+        // renderer keeps cross-adapter composing toward a 0x887A0005 removal).
+        let migrated = self.probe_adapter_mismatch_and_escalate(window_id);
+        // Also catch a genuine device loss the topology change itself caused
+        // (not an adapter move) via the health probe.
+        let health_lost = {
             let guard = self.windows.borrow();
             guard
                 .get(&window_id)
@@ -99,10 +106,11 @@ impl WindowRenderDelegate for AppState {
                 })
                 .unwrap_or(false)
         };
-        log::trace!(target: "slate::device_lost", "on_display_change: probe lost={lost}");
-        if lost {
+        log::trace!(target: "slate::device_lost",
+            "on_display_change: migrated={migrated} health_lost={health_lost}");
+        if migrated || health_lost {
             log::info!(target: "slate::device_lost",
-                "on_display_change: device probe found loss → requesting redraw");
+                "on_display_change: adapter migration or device loss → requesting redraw");
             let guard = self.windows.borrow();
             if let Some(win) = guard.get(&window_id) {
                 win.window.request_redraw();

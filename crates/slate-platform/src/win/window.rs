@@ -92,6 +92,7 @@ impl WinWindow {
             pending_high_surrogate: Cell::new(None),
             redraw_timer_armed: Cell::new(false),
             releasing_capture: Cell::new(false),
+            monitor_luid_override: Cell::new(None),
         });
 
         let inner_ptr = Arc::as_ptr(&inner);
@@ -231,6 +232,11 @@ impl Window for WinWindow {
     }
 
     fn current_monitor_luid(&self) -> Option<u64> {
+        // Test override (always None in production) lets a test force a
+        // deterministic adapter-LUID mismatch without a second physical GPU.
+        if let Some(luid) = self.inner.monitor_luid_override.get() {
+            return Some(luid);
+        }
         let factory = self.inner.dxgi_factory.as_ref()?;
         // SAFETY: hwnd is valid for the lifetime of this WinWindow.
         let hmon = unsafe { MonitorFromWindow(self.inner.hwnd, MONITOR_DEFAULTTONEAREST) };
@@ -369,6 +375,14 @@ impl WinWindow {
     #[doc(hidden)]
     pub fn set_in_size_move_for_test(&self, v: bool) {
         self.inner.in_size_move.set(v);
+    }
+
+    /// Override what `current_monitor_luid` reports. Lets a test drive a
+    /// deterministic adapter-LUID mismatch (window vs renderer) without a
+    /// second physical GPU. `None` restores the real DXGI probe.
+    #[doc(hidden)]
+    pub fn set_monitor_luid_for_test(&self, luid: Option<u64>) {
+        self.inner.monitor_luid_override.set(luid);
     }
 
     /// True iff a redraw timer scheduled via `schedule_redraw_at` is currently

@@ -81,6 +81,60 @@ impl AppState {
         }
     }
 
+    /// Escalate a confirmed cross-adapter mismatch to the recovery machine.
+    ///
+    /// When the window's current monitor is served by a different GPU than the
+    /// renderer was built on (`current_monitor_luid != current_adapter_luid`),
+    /// the renderer must rebuild on the window's adapter. Marks the device lost
+    /// **unconditionally** and returns `true`.
+    ///
+    /// Why unconditional: a healthy device on the *wrong* adapter still returns
+    /// `S_OK` from `GetDeviceRemovedReason`, so the health-gated
+    /// `mark_device_potentially_lost()` vetoes the escalation — the renderer
+    /// then keeps cross-adapter DirectComposition-composing until DXGI
+    /// hard-removes the device (`0x887A0005`) and the process dies with no
+    /// recovery. The confirmed LUID mismatch is itself proof the renderer must
+    /// migrate. The loss classifies as `LuidMigration` (the wgpu callback did
+    /// not fire), which bypasses the flap guard — correct for a user-driven
+    /// monitor move.
+    ///
+    /// Because `LuidMigration` never self-terminates, adapter selection MUST
+    /// converge: the rebuilt renderer has to land on an adapter whose LUID
+    /// matches the window's monitor. If `pick_adapter_for_window` cannot honor
+    /// that monitor (its adapter is unenumerable / software-filtered) it falls
+    /// back to the high-performance GPU, the mismatch persists, and this probe
+    /// re-escalates every cooldown — a spaced rebuild loop, not a tight spin.
+    /// That degraded state is strictly better than the prior silent
+    /// device-removed crash, but a repeated-migration circuit-breaker (off
+    /// `last_successful_recovery_at`) is the follow-up if it ever surfaces.
+    pub(super) fn probe_adapter_mismatch_and_escalate(&self, window_id: WindowId) -> bool {
+        let guard = self.windows.borrow();
+        let Some(win) = guard.get(&window_id) else {
+            return false;
+        };
+        let window_luid = win.window.current_monitor_luid();
+        let adapter_luid = win
+            .renderer
+            .borrow()
+            .as_ref()
+            .and_then(|r| r.current_adapter_luid());
+        if let (Some(w), Some(a)) = (window_luid, adapter_luid)
+            && w != a
+        {
+            log::info!(
+                target: "slate::device_lost",
+                "adapter LUID mismatch window={:?}: window={:#018x} renderer={:#018x} \
+                 — forcing device-lost so recovery rebuilds on the window's adapter",
+                window_id, w, a
+            );
+            if let Some(r) = win.renderer.borrow().as_ref() {
+                r.mark_device_lost();
+            }
+            return true;
+        }
+        false
+    }
+
     /// Execute one step of the recovery retry loop for the given window.
     ///
     /// Called when `RecoveryState::Retrying`. Handles backoff, renderer

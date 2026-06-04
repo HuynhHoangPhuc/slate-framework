@@ -89,6 +89,18 @@ impl AppState {
             .and_then(|w| w.renderer.borrow().as_ref().map(|r| r.surface_size()))
     }
 
+    /// Override the LUID the window's renderer reports as its adapter. Paired
+    /// with `DefaultWindow::set_monitor_luid_for_test` to drive a deterministic
+    /// cross-adapter mismatch for the migration-escalation test.
+    pub fn set_renderer_adapter_luid_for_test(&self, window: WindowId, luid: Option<u64>) {
+        let guard = self.windows.borrow();
+        if let Some(win) = guard.get(&window)
+            && let Some(r) = win.renderer.borrow_mut().as_mut()
+        {
+            r.set_adapter_luid_for_test(luid);
+        }
+    }
+
     /// Snapshot of the current recovery state for a window.
     pub fn current_recovery_state(&self) -> RecoveryState {
         let window = self.window_id_for_test();

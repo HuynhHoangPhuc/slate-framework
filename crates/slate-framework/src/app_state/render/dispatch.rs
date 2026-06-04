@@ -107,39 +107,34 @@ impl AppState {
         // Throttled to ADAPTER_PROBE_MIN_INTERVAL_MS to absorb burst during drag.
         // No-op on non-Windows (current_monitor_luid returns None).
         {
-            let guard = self.windows.borrow();
-            if let Some(win) = guard.get(&window_id) {
-                let healthy = matches!(*win.recovery_state.borrow(), RecoveryState::NotLost)
-                    && !win.skip_draws.get();
-                let now = Instant::now();
-                let recently_probed = win
-                    .last_adapter_check_at
-                    .get()
-                    .map(|t| {
-                        now.duration_since(t) < Duration::from_millis(ADAPTER_PROBE_MIN_INTERVAL_MS)
-                    })
-                    .unwrap_or(false);
-                if healthy && !recently_probed {
-                    win.last_adapter_check_at.set(Some(now));
-                    let window_luid = win.window.current_monitor_luid();
-                    let adapter_luid = win
-                        .renderer
-                        .borrow()
-                        .as_ref()
-                        .and_then(|r| r.current_adapter_luid());
-                    if let (Some(w), Some(a)) = (window_luid, adapter_luid)
-                        && w != a
-                    {
-                        log::info!(
-                            target: "slate::device_lost",
-                            "adapter LUID mismatch window={:?}: window={:#018x} renderer={:#018x} — marking device-lost",
-                            window_id, w, a
-                        );
-                        if let Some(r) = win.renderer.borrow().as_ref() {
-                            r.mark_device_potentially_lost();
-                        }
+            // Decide whether to probe this tick (healthy + throttled), then
+            // delegate the mismatch check + escalation to the shared helper.
+            let should_probe = {
+                let guard = self.windows.borrow();
+                if let Some(win) = guard.get(&window_id) {
+                    let healthy = matches!(*win.recovery_state.borrow(), RecoveryState::NotLost)
+                        && !win.skip_draws.get();
+                    let now = Instant::now();
+                    let recently_probed = win
+                        .last_adapter_check_at
+                        .get()
+                        .map(|t| {
+                            now.duration_since(t)
+                                < Duration::from_millis(ADAPTER_PROBE_MIN_INTERVAL_MS)
+                        })
+                        .unwrap_or(false);
+                    if healthy && !recently_probed {
+                        win.last_adapter_check_at.set(Some(now));
+                        true
+                    } else {
+                        false
                     }
+                } else {
+                    false
                 }
+            };
+            if should_probe {
+                self.probe_adapter_mismatch_and_escalate(window_id);
             }
         }
 

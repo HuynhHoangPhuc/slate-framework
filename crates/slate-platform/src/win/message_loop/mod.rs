@@ -80,6 +80,10 @@ pub struct WinWindowInner {
     /// `WM_CAPTURECHANGED` is treated as voluntary, not theft. Without this
     /// gate every mouse-up would fire `CaptureLost`.
     pub(crate) releasing_capture: Cell<bool>,
+    /// Test-only override for `current_monitor_luid`. Always `None` in
+    /// production (read unconditionally, so no behavior change); a test sets
+    /// it to drive a deterministic adapter-LUID mismatch without a second GPU.
+    pub(crate) monitor_luid_override: Cell<Option<u64>>,
 }
 
 impl WinWindowInner {
