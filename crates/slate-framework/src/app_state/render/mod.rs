@@ -28,6 +28,8 @@ mod recovery;
 mod redraw;
 mod surface;
 
+pub(crate) use redraw::RedrawOutcome;
+
 impl AppState {
     /// Clear an active capture if its target produced no hit region this frame
     /// (the element was unmounted). Called from the prepaint pass after the

@@ -283,6 +283,29 @@ impl Renderer {
             "fire_observers: generation={}, active_observers={}", new_gen, live_observers.len());
     }
 
+    /// Return `Err(RenderError::DeviceLost)` if the device-lost flag is already
+    /// set, otherwise `Ok(())`. A cheap atomic load used to bail out of the
+    /// per-frame render path the moment a device-lost signal (wgpu callback,
+    /// present HRESULT, or proactive probe) is observed — before issuing any
+    /// further queue uploads or acquiring a frame on a removed device.
+    pub(super) fn device_lost_error_if_set(
+        &self,
+        context: &'static str,
+    ) -> Result<(), super::RenderError> {
+        if self.is_device_lost() {
+            log::warn!(target: "slate::device_lost", "aborting GPU work — device lost ({context})");
+            Err(super::RenderError::DeviceLost(context.to_owned()))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Nudge the platform pump so `dispatch_redraw` re-enters and drives the
+    /// recovery state machine. Idempotent (InvalidateRect-backed on Windows).
+    pub(super) fn request_recovery_redraw(&self) {
+        self._window.request_redraw();
+    }
+
     /// Check if an HRESULT indicates device-lost state. If so, sets the flag,
     /// emits telemetry, and returns true. Called by internal error handlers.
     pub(super) fn check_hr_for_device_lost(&self, hr: i32) -> bool {

@@ -5,6 +5,7 @@
 //! state machine clears for a normal paint.
 
 use slate_platform::{Window, WindowId};
+use slate_renderer::RenderError;
 
 use crate::context::{LayoutCtx, PaintCtx, PrepaintCtx};
 use crate::layout::{compute_layout, resolve_bounds};
@@ -13,11 +14,29 @@ use crate::types::Size;
 
 use super::super::state::AppState;
 
+/// Outcome of a single `run_redraw` pass, so `dispatch_redraw` can react to a
+/// mid-frame device loss (schedule recovery) instead of the pipeline silently
+/// plowing through GPU work on a removed device or only logging a warning.
+pub(crate) enum RedrawOutcome {
+    /// The pipeline ran to completion with no device loss observed.
+    Completed,
+    /// An early guard skipped this frame (surface not ready, skip_draws,
+    /// window race, layout/bounds failure). No device loss.
+    Skipped,
+    /// Device loss was observed mid-frame (after pending resize, after paint
+    /// uploads, or returned by the render path). The caller must stop and
+    /// schedule recovery rather than continue layout/paint/present.
+    DeviceLost,
+}
+
 impl AppState {
     /// Run the redraw pipeline (layout → prepaint → paint → render) for
     /// a single window. The re-entrancy guard and device-lost recovery wrapper
     /// live in `dispatch_redraw`, not here.
-    pub(crate) fn run_redraw(&self, window_id: WindowId) {
+    ///
+    /// Returns a [`RedrawOutcome`] so `dispatch_redraw` can schedule recovery
+    /// when device loss surfaces mid-frame.
+    pub(crate) fn run_redraw(&self, window_id: WindowId) -> RedrawOutcome {
         // All per-window borrows are taken individually below. We never hold
         // the outer `windows` RefCell borrow across any user callback.
 
@@ -34,7 +53,7 @@ impl AppState {
                 w.renderer.borrow().is_none() || w.view.borrow().is_none()
             });
             if not_ready {
-                return;
+                return RedrawOutcome::Skipped;
             }
         }
 
@@ -46,7 +65,7 @@ impl AppState {
             {
                 log::debug!(target: "slate::device_lost", "skip_draws active — present suppressed");
                 win.skip_draws.set(false);
-                return;
+                return RedrawOutcome::Skipped;
             }
         }
 
@@ -65,6 +84,23 @@ impl AppState {
             }
         }
 
+        // If applying the coalesced resize marked the device lost (configure
+        // hit a removed device), STOP before layout/paint/present — running the
+        // rest of the frame would issue uploads on a dead device. dispatch_redraw
+        // schedules recovery on the DeviceLost outcome.
+        {
+            let guard = self.windows.borrow();
+            if let Some(win) = guard.get(&window_id)
+                && win
+                    .renderer
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|r| r.is_device_lost())
+            {
+                return RedrawOutcome::DeviceLost;
+            }
+        }
+
         // Snapshot window-size parameters (cheap — no borrow conflict).
         let (lw, lh, scale_factor, win_id_stamp) = {
             let guard = self.windows.borrow();
@@ -74,7 +110,7 @@ impl AppState {
                     let sf = win.window.scale_factor();
                     (lw, lh, sf, win.window.id())
                 }
-                None => return,
+                None => return RedrawOutcome::Skipped,
             }
         };
 
@@ -96,7 +132,7 @@ impl AppState {
             let guard = self.windows.borrow();
             let win = match guard.get(&window_id) {
                 Some(w) => w,
-                None => return,
+                None => return RedrawOutcome::Skipped,
             };
             let observer_id = win.view_observer_id;
             let mut v = win.view.borrow_mut();
@@ -114,7 +150,7 @@ impl AppState {
             let guard = self.windows.borrow();
             let win = match guard.get(&window_id) {
                 Some(w) => w,
-                None => return,
+                None => return RedrawOutcome::Skipped,
             };
             let mut tree = win.layout_tree.borrow_mut();
             tree.clear();
@@ -135,7 +171,7 @@ impl AppState {
 
         let Some(root_id) = root_id else {
             log::warn!("layout computation failed");
-            return;
+            return RedrawOutcome::Skipped;
         };
 
         // 3. Resolve root bounds.
@@ -143,7 +179,7 @@ impl AppState {
             let guard = self.windows.borrow();
             let win = match guard.get(&window_id) {
                 Some(w) => w,
-                None => return,
+                None => return RedrawOutcome::Skipped,
             };
             let tree = win.layout_tree.borrow();
             resolve_bounds(tree.inner(), root_id)
@@ -151,7 +187,7 @@ impl AppState {
 
         let Some(root_bounds) = root_bounds else {
             log::warn!("bounds resolution failed");
-            return;
+            return RedrawOutcome::Skipped;
         };
 
         // 4. Prepaint pass — needs many simultaneous borrows from WindowState.
@@ -159,7 +195,7 @@ impl AppState {
             let guard = self.windows.borrow();
             let win = match guard.get(&window_id) {
                 Some(w) => w,
-                None => return,
+                None => return RedrawOutcome::Skipped,
             };
 
             let tree = win.layout_tree.borrow();
@@ -252,14 +288,14 @@ impl AppState {
             let guard = self.windows.borrow();
             match guard.get(&window_id) {
                 Some(w) => (w.ime_registry.clone(), w.window.clone()),
-                None => return,
+                None => return RedrawOutcome::Skipped,
             }
         };
         {
             let guard = self.windows.borrow();
             let win = match guard.get(&window_id) {
                 Some(w) => w,
-                None => return,
+                None => return RedrawOutcome::Skipped,
             };
 
             let tree = win.layout_tree.borrow();
@@ -338,6 +374,23 @@ impl AppState {
         #[cfg(feature = "profiling")]
         crate::profiling::redraw_counters::record_paint(_paint_start.elapsed());
 
+        // The paint pass issued atlas/glyph `queue.write_buffer` uploads, any of
+        // which can trip the wgpu device-lost callback (set from a wgpu worker
+        // thread). Check before the a11y push and render/present so we abort and
+        // schedule recovery instead of acquiring a frame on a removed device.
+        {
+            let guard = self.windows.borrow();
+            if let Some(win) = guard.get(&window_id)
+                && win
+                    .renderer
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|r| r.is_device_lost())
+            {
+                return RedrawOutcome::DeviceLost;
+            }
+        }
+
         // Push the just-built a11y tree to VoiceOver (macOS). The completed
         // tree lives in `win.a11y_nodes` after the prepaint walk; focus drives
         // `TreeUpdate::focus`. No-op until the surface is realized.
@@ -385,28 +438,50 @@ impl AppState {
         // Re-borrow for render step.
         #[cfg(feature = "profiling")]
         let _present_start = std::time::Instant::now();
-        let guard3 = self.windows.borrow();
-        if let Some(win3) = guard3.get(&window_id) {
-            let mut s = win3.scene.borrow_mut();
-            let mut r = win3.renderer.borrow_mut();
-            let r = r.as_mut().expect("renderer not initialized");
+        let device_lost_mid_render = {
+            let guard3 = self.windows.borrow();
+            if let Some(win3) = guard3.get(&window_id) {
+                let mut s = win3.scene.borrow_mut();
+                let mut r = win3.renderer.borrow_mut();
+                let r = r.as_mut().expect("renderer not initialized");
 
-            #[cfg(target_os = "macos")]
-            let render_result = if win3.sync_resize.get() {
-                r.render_scene_sync(&mut s)
+                #[cfg(target_os = "macos")]
+                let render_result = if win3.sync_resize.get() {
+                    r.render_scene_sync(&mut s)
+                } else {
+                    r.render_scene(&mut s)
+                };
+                #[cfg(not(target_os = "macos"))]
+                let render_result = r.render_scene(&mut s);
+
+                match render_result {
+                    Ok(()) => false,
+                    // Device loss is no longer a mere warning: signal the caller
+                    // so it schedules recovery. Other render errors (Timeout,
+                    // Occluded, AcquireFailed) stay non-fatal — the frame is
+                    // simply dropped and normal bookkeeping continues below.
+                    Err(RenderError::DeviceLost(reason)) => {
+                        log::warn!(target: "slate::device_lost",
+                            "render reported device lost — scheduling recovery: {reason}");
+                        true
+                    }
+                    Err(e) => {
+                        log::warn!("render skipped: {e:?}");
+                        false
+                    }
+                }
             } else {
-                r.render_scene(&mut s)
-            };
-            #[cfg(not(target_os = "macos"))]
-            let render_result = r.render_scene(&mut s);
-
-            if let Err(e) = render_result {
-                log::warn!("render skipped: {e:?}");
+                false
             }
-        }
-        drop(guard3);
+        };
         #[cfg(feature = "profiling")]
         crate::profiling::redraw_counters::record_present(_present_start.elapsed());
+
+        if device_lost_mid_render {
+            // Skip executor poll + GC: the device is gone, recovery will rebuild
+            // the renderer. dispatch_redraw drives the recovery state machine.
+            return RedrawOutcome::DeviceLost;
+        }
 
         // Poll async executor.
         self.executor.foreground.poll();
@@ -424,5 +499,7 @@ impl AppState {
             tsc.advance_frame();
             tsc.gc();
         }
+
+        RedrawOutcome::Completed
     }
 }

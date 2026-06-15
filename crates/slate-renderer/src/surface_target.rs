@@ -69,6 +69,13 @@ pub enum ConfigureError {
     ResizeBuffersFailed(i32),
     #[error("back buffer acquisition failed: {0}")]
     BackBufferFailed(i32),
+    /// The D3D12 device was already removed/lost when configure ran (detected
+    /// by the Windows pre-poll preflight). Carries the device-removed HRESULT
+    /// (or the `E_FAIL` sentinel when the HAL handle was unreachable). The
+    /// renderer treats this as device loss and schedules recovery rather than
+    /// calling wgpu's fatal `Device::poll` on a dead device.
+    #[error("device removed during configure: {0}")]
+    DeviceLost(i32),
 }
 
 /// Error from `present` — typically a failed `IDXGISwapChain::Present` on Windows.

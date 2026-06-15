@@ -158,6 +158,20 @@ impl AppState {
             .unwrap_or(false)
     }
 
+    /// Run the inner redraw pipeline directly and report whether it aborted
+    /// with a mid-frame device-lost outcome. Test-only: lets a test mark the
+    /// device lost and confirm `run_redraw` STOPS (does not plow through
+    /// paint/present on a removed device) rather than relying on the
+    /// `dispatch_redraw` entry guard. Returns `true` iff the pipeline returned
+    /// `RedrawOutcome::DeviceLost`.
+    #[cfg(feature = "test-hooks")]
+    pub fn run_redraw_is_device_lost_for_test(&self, window: WindowId) -> bool {
+        matches!(
+            self.run_redraw(window),
+            super::render::RedrawOutcome::DeviceLost
+        )
+    }
+
     /// Fire the device-lost callback logic for testing.
     #[cfg(feature = "test-hooks")]
     pub fn fire_renderer_device_lost_callback(

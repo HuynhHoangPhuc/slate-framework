@@ -297,13 +297,29 @@ impl Renderer {
 
         // Handle configure errors - check for device-lost
         if let Err(e) = self.target.configure(&self.device, w, h) {
-            match &e {
+            let lost = match &e {
                 ConfigureError::ResizeBuffersFailed(hr) | ConfigureError::BackBufferFailed(hr) => {
-                    self.check_hr_for_device_lost(*hr);
+                    self.check_hr_for_device_lost(*hr)
                 }
-            }
+                // The preflight already proved the device is removed; mark it so
+                // the recovery state machine engages on the next dispatch.
+                ConfigureError::DeviceLost(_) => {
+                    self.mark_device_lost();
+                    true
+                }
+            };
             log::warn!(target: "slate::resize", "configure failed: {:?}", e);
-            // Continue with old size - viewport uniform will match target.size()
+            if lost {
+                // Device is lost — STOP. Issuing the viewport `queue.write_buffer`
+                // below would create a wgpu staging buffer on a removed device,
+                // which is exactly the `Placed buffer creation failed 0x887A0005`
+                // crash this guard prevents. Nudge the pump so dispatch_redraw
+                // drives recovery next tick (request_redraw is idempotent).
+                self._window.request_redraw();
+                return;
+            }
+            // Non-lost configure failure: continue with old size — viewport
+            // uniform will match target.size().
         }
 
         // Viewport uniform is in logical pixels (lpx). Surface configure stays

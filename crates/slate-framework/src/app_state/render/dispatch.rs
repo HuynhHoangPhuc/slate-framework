@@ -10,6 +10,7 @@ use slate_platform::{Window, WindowId};
 
 use super::super::guards::reset_borrow_order;
 use super::super::state::AppState;
+use super::redraw::RedrawOutcome;
 use super::super::types::{
     ADAPTER_PROBE_MIN_INTERVAL_MS, AppSignal, DeviceLossReason, RECOVERY_COOLDOWN_MS,
     RECOVERY_FLAP_GUARD_SECS, RecoveryState,
@@ -337,11 +338,21 @@ impl AppState {
         };
 
         let _ = result; // All fall-through arms return None; run the actual redraw.
-        self.run_redraw(window_id);
+        let outcome = self.run_redraw(window_id);
 
         let guard = self.windows.borrow();
         if let Some(win) = guard.get(&window_id) {
             win.rendering.set(false);
+            // Device loss surfaced mid-frame (the entry checks above saw a
+            // healthy device, but a resize/paint/present inside run_redraw lost
+            // it). Schedule another redraw: on the next dispatch the entry
+            // `is_device_lost()` check drives the recovery state machine. We do
+            // NOT recover inline — that would re-enter the same borrows.
+            if matches!(outcome, RedrawOutcome::DeviceLost) {
+                log::info!(target: "slate::device_lost",
+                    "mid-frame device loss for window={:?} — scheduling recovery", window_id);
+                win.window.request_redraw();
+            }
         }
         AppSignal::None
     }

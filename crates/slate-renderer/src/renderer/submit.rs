@@ -53,19 +53,32 @@ impl Renderer {
         scene: &mut Scene,
         sync_present: bool,
     ) -> Result<(), RenderError> {
+        // Bail before any GPU work if the device was already lost (e.g. a prior
+        // resize/probe set the flag). Prevents this frame from issuing uploads
+        // on a removed device.
+        self.device_lost_error_if_set("render_scene entry")?;
+
         scene.finish();
         self.image_atlas.begin_frame();
         self.glyph_atlas.begin_frame();
 
-        // Phase A: PREPARE — all mutable upload work, no pass alive.
+        // Phase A: PREPARE — all mutable upload work, no pass alive. Each
+        // `prepare` issues `queue.write_buffer`/atlas uploads that can trip the
+        // wgpu device-lost callback (set from a wgpu worker thread). Re-check
+        // after every upload-heavy boundary so we stop before acquire/submit/
+        // present rather than plowing through on a dead device.
         self.shadow_pipeline
             .prepare(&self.device, &self.queue, &scene.shadows);
+        self.device_lost_error_if_set("after shadow prepare")?;
         self.rect_pipeline
             .prepare(&self.device, &self.queue, &scene.rects);
+        self.device_lost_error_if_set("after rect prepare")?;
         self.image_pipeline
             .prepare(&self.device, &self.queue, &scene.images);
+        self.device_lost_error_if_set("after image prepare")?;
         self.glyph_pipeline
             .prepare(&self.device, &self.queue, &scene.glyphs);
+        self.device_lost_error_if_set("after glyph prepare")?;
 
         // Phase B: RECORD — try acquire, with one retry if Outdated.
         let frame = {
@@ -84,8 +97,14 @@ impl Renderer {
                                 ConfigureError::ResizeBuffersFailed(hr)
                                 | ConfigureError::BackBufferFailed(hr) => {
                                     if self.check_hr_for_device_lost(*hr) {
+                                        self.request_recovery_redraw();
                                         return Err(RenderError::DeviceLost(format!("{:?}", e)));
                                     }
+                                }
+                                ConfigureError::DeviceLost(_) => {
+                                    self.mark_device_lost();
+                                    self.request_recovery_redraw();
+                                    return Err(RenderError::DeviceLost(format!("{:?}", e)));
                                 }
                             }
                         }
@@ -100,6 +119,7 @@ impl Renderer {
                     }
                     Err(FrameAcquireError::DeviceLost(reason)) => {
                         self.device_lost.store(true, Ordering::Release);
+                        self.request_recovery_redraw();
                         return Err(RenderError::DeviceLost(reason));
                     }
                     Err(other) => return Err(RenderError::AcquireFailed(other.to_string())),
@@ -226,6 +246,7 @@ impl Renderer {
         };
         if let Err(e) = present_result {
             if self.check_hr_for_device_lost(e.hr()) {
+                self.request_recovery_redraw();
                 return Err(RenderError::DeviceLost(format!("present failed: {:?}", e)));
             }
             log::warn!(target: "slate::render", "present failed: {:?}", e);
@@ -255,8 +276,14 @@ impl Renderer {
                                 ConfigureError::ResizeBuffersFailed(hr)
                                 | ConfigureError::BackBufferFailed(hr) => {
                                     if self.check_hr_for_device_lost(*hr) {
+                                        self.request_recovery_redraw();
                                         return Err(RenderError::DeviceLost(format!("{:?}", e)));
                                     }
+                                }
+                                ConfigureError::DeviceLost(_) => {
+                                    self.mark_device_lost();
+                                    self.request_recovery_redraw();
+                                    return Err(RenderError::DeviceLost(format!("{:?}", e)));
                                 }
                             }
                         }
@@ -271,6 +298,7 @@ impl Renderer {
                     }
                     Err(FrameAcquireError::DeviceLost(reason)) => {
                         self.device_lost.store(true, Ordering::Release);
+                        self.request_recovery_redraw();
                         return Err(RenderError::DeviceLost(reason));
                     }
                     Err(other) => return Err(RenderError::AcquireFailed(other.to_string())),
@@ -291,6 +319,7 @@ impl Renderer {
         // Handle present errors - check for device-lost
         if let Err(e) = self.target.present(frame) {
             if self.check_hr_for_device_lost(e.hr()) {
+                self.request_recovery_redraw();
                 return Err(RenderError::DeviceLost(format!("present failed: {:?}", e)));
             }
             log::warn!(target: "slate::render", "present failed: {:?}", e);

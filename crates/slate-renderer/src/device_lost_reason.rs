@@ -115,6 +115,36 @@ fn removed_reason_name(hr: Option<i32>) -> &'static str {
     }
 }
 
+/// Windows preflight: is the D3D12 device removed (or its HAL handle
+/// unreachable)?
+///
+/// Returns `Some(hr)` when the device should be treated as lost — either
+/// `GetDeviceRemovedReason()` reported a non-zero HRESULT, or the wgpu HAL
+/// device handle could not be acquired (indeterminate). Returns `None` only
+/// when the device is confirmed healthy (`S_OK`).
+///
+/// Used by `WinCompose::configure` immediately before each `Device::poll(Wait)`
+/// so resize cleanup returns a device-lost configure error instead of calling
+/// wgpu's fatal poll path on an already-removed device. The indeterminate case
+/// biases to "lost" deliberately: on Windows a benign `None` costs one spurious
+/// recovery, while a missed loss costs a process abort.
+///
+/// Non-Windows builds always return `None` (no DXGI device-removed semantics).
+#[cfg(target_os = "windows")]
+pub(crate) fn is_removed_or_indeterminate_on_windows(device: &wgpu::Device) -> Option<i32> {
+    let (removed_reason_hr, _luid) = get_removed_reason_and_luid(device);
+    match removed_reason_hr {
+        Some(0) => None,       // S_OK: device healthy
+        Some(hr) => Some(hr),  // non-zero HRESULT: device removed
+        None => Some(0x80004005_u32 as i32), // HAL handle unreachable → treat as lost (E_FAIL sentinel)
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub(crate) fn is_removed_or_indeterminate_on_windows(_device: &wgpu::Device) -> Option<i32> {
+    None
+}
+
 #[cfg(target_os = "windows")]
 fn get_removed_reason_and_luid(device: &wgpu::Device) -> (Option<i32>, Option<u64>) {
     use wgpu::hal::api::Dx12;

@@ -298,6 +298,12 @@ impl CompositionTarget for WinCompose {
             return Ok(());
         }
 
+        // Preflight: if the device is already removed, do NOT call wgpu's
+        // `Device::poll(Wait)` — in wgpu 29 a non-timeout poll failure routes to
+        // `handle_error_fatal`, which panics, and a panic crossing the Win32
+        // `wnd_proc` aborts the process. Returning a device-lost configure error
+        // instead lets the renderer stop GPU work and schedule recovery.
+        preflight_device_alive(device)?;
         // Wait for pending wgpu work
         let _ = device.poll(wgpu::PollType::Wait {
             submission_index: None,
@@ -308,6 +314,7 @@ impl CompositionTarget for WinCompose {
         // Release wgpu texture wrappers and D3D12 resources
         self.release_back_buffers(device);
         // Poll again to ensure wgpu processes texture destruction
+        preflight_device_alive(device)?;
         let _ = device.poll(wgpu::PollType::Wait {
             submission_index: None,
             timeout: None,
@@ -329,6 +336,9 @@ impl CompositionTarget for WinCompose {
             // Retry pattern from win-dcomp-spike: poll + wait + retry.
             log::trace!(target: "slate::resize", "ResizeBuffers first attempt failed: {:?} - retrying", e);
 
+            // The first failure may itself be a device removal; preflight again
+            // so the retry poll does not hit wgpu's fatal path.
+            preflight_device_alive(device)?;
             let _ = device.poll(wgpu::PollType::Wait {
                 submission_index: None,
                 timeout: None,
@@ -497,6 +507,23 @@ impl Drop for WinCompose {
         unsafe {
             windows::Win32::Foundation::CloseHandle(self.fence_event).ok();
         }
+    }
+}
+
+/// Return `Err(ConfigureError::DeviceLost)` when the device is already removed
+/// (or its HAL handle is unreachable), so callers can bail before invoking
+/// wgpu's fatal `Device::poll(Wait)`. `Ok(())` when the device is healthy.
+fn preflight_device_alive(device: &Device) -> Result<(), ConfigureError> {
+    match crate::device_lost_reason::is_removed_or_indeterminate_on_windows(device) {
+        Some(hr) => {
+            log::warn!(
+                target: "slate::device_lost",
+                "configure preflight: device removed (hr=0x{:08X}) — returning DeviceLost instead of polling",
+                hr as u32
+            );
+            Err(ConfigureError::DeviceLost(hr))
+        }
+        None => Ok(()),
     }
 }
 
