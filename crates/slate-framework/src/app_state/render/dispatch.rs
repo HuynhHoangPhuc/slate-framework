@@ -10,7 +10,7 @@ use slate_platform::{Window, WindowId};
 
 use super::super::guards::reset_borrow_order;
 use super::super::state::AppState;
-use super::redraw::RedrawOutcome;
+use super::RedrawOutcome;
 use super::super::types::{
     ADAPTER_PROBE_MIN_INTERVAL_MS, AppSignal, DeviceLossReason, RECOVERY_COOLDOWN_MS,
     RECOVERY_FLAP_GUARD_SECS, RecoveryState,
