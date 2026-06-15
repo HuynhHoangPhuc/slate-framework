@@ -18,7 +18,7 @@ slate-renderer = { path = "../slate-renderer", version = "1.0.1" }
 slate-text = { path = "../slate-text", version = "1.0.1" }
 
 # Phase 3 dependencies (pinned to latest stable 2026-05-07)
-taffy = "=0.10.1"
+taffy = "=0.11.0"
 smallvec = "=1.15.1"
 accesskit = "=0.24.0"
 unicode-segmentation.workspace = true
