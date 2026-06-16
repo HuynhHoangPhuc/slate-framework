@@ -143,6 +143,24 @@ impl WindowRenderDelegate for AppState {
             }
         }
 
+        // Apply the final drag size exactly once now that the modal loop ended.
+        // During the drag every real `ResizeBuffers` was deferred (the buffers
+        // stretched via `DXGI_SCALING_STRETCH`) to avoid the per-frame churn
+        // that suspends the device; this is the single crisp reconfigure. The
+        // platform issues `on_redraw` immediately after this hook, so the new
+        // buffers paint without an extra request here. `Renderer::resize`
+        // self-guards on a lost device, so a loss mid-drag falls through to the
+        // recovery path above instead of reconfiguring (plan 260615-1516).
+        {
+            let guard = self.windows.borrow();
+            if let Some(win) = guard.get(&window_id)
+                && let Some(sz) = win.pending_resize.take()
+                && let Some(r) = win.renderer.borrow_mut().as_mut()
+            {
+                r.resize(sz.as_tuple(), win.window.logical_size());
+            }
+        }
+
         // Settle point for geometry persistence: a size/move drag has ended, so
         // capture the final geometry now (the per-tick `WindowResized` saves are
         // suppressed mid-drag by the live-resize gate). No-op without a store.

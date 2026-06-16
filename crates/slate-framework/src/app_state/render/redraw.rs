@@ -69,18 +69,33 @@ impl AppState {
             }
         }
 
-        // Coalesced live-resize: apply the latest size stashed during the drag
-        // exactly once here, before layout/paint/present, so this tick pays a
-        // single ResizeBuffers (not one per WM_SIZE) and the new buffers are
-        // painted in the same frame. `Renderer::resize` short-circuits when the
-        // size is unchanged, so a stale stash is harmless.
+        // Live-resize handling for the size stashed during the drag.
+        //
+        // While the modal size/move loop is active, defer the real swapchain
+        // `ResizeBuffers` to `on_size_move_end`: re-stash the latest size and
+        // only refresh the viewport uniform so layout reflows to the live
+        // logical size, letting the existing buffers stretch
+        // (`DXGI_SCALING_STRETCH`) until one crisp reconfigure on release. This
+        // removes the per-drag-frame `ResizeBuffers` churn that suspends the
+        // device (`0x887A0005`) mid-drag (plan 260615-1516, branch 2b).
+        //
+        // Outside the drag, apply the coalesced size once here, before
+        // layout/paint/present, so this tick pays a single ResizeBuffers (not
+        // one per WM_SIZE) and the new buffers are painted in the same frame.
+        // `Renderer::resize` short-circuits when the size is unchanged, so a
+        // stale stash is harmless.
         {
             let guard = self.windows.borrow();
             if let Some(win) = guard.get(&window_id)
                 && let Some(sz) = win.pending_resize.take()
                 && let Some(r) = win.renderer.borrow_mut().as_mut()
             {
-                r.resize(sz.as_tuple(), win.window.logical_size());
+                if win.window.is_live_resizing() {
+                    win.pending_resize.set(Some(sz));
+                    r.update_viewport_logical(win.window.logical_size());
+                } else {
+                    r.resize(sz.as_tuple(), win.window.logical_size());
+                }
             }
         }
 

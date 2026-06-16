@@ -324,8 +324,33 @@ impl Renderer {
 
         // Viewport uniform is in logical pixels (lpx). Surface configure stays
         // physical; the shader's `pos / size` NDC math is scale-invariant.
+        log::trace!(target: "slate::resize", "After configure: target.size()={:?} viewport-lpx=({}, {})", self.target.size(), logical.0, logical.1);
+        self.write_viewport_uniform(logical);
+    }
+
+    /// Refresh ONLY the viewport uniform to `logical` (logical px) without
+    /// touching the swapchain.
+    ///
+    /// Used during a live resize-drag: layout reflows to the live logical size
+    /// while the physical back buffers stay put — `DXGI_SCALING_STRETCH` scales
+    /// them until exactly one crisp [`resize`](Self::resize) (`ResizeBuffers`)
+    /// lands on size-move end. Skipping the per-drag-frame `ResizeBuffers`
+    /// removes the churn that suspends the device (`0x887A0005`) mid-drag.
+    /// No-op once the device is lost (a `write_buffer` on a removed device
+    /// would allocate a staging buffer on dead hardware).
+    pub fn update_viewport_logical(&mut self, logical: (u32, u32)) {
+        if self.device_lost.load(Ordering::Acquire) {
+            log::trace!(target: "slate::resize", "update_viewport_logical skipped: device lost");
+            return;
+        }
+        self.write_viewport_uniform(logical);
+    }
+
+    /// Write the viewport uniform in logical pixels (lpx). Cheap
+    /// `queue.write_buffer`; shared by [`resize`](Self::resize) and
+    /// [`update_viewport_logical`](Self::update_viewport_logical).
+    fn write_viewport_uniform(&self, logical: (u32, u32)) {
         let (logical_w, logical_h) = logical;
-        log::trace!(target: "slate::resize", "After configure: target.size()={:?} viewport-lpx=({}, {})", self.target.size(), logical_w, logical_h);
         self.queue.write_buffer(
             &self.viewport_buf,
             0,
