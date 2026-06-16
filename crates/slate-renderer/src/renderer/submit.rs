@@ -175,7 +175,17 @@ impl Renderer {
             // guard relies on; both shipped orderings emit per-layer kinds back
             // to back). A `None` clip resets to the full attachment; a clip
             // that lands fully off-screen skips the layer's draws entirely.
-            let (target_w, target_h) = self._window.physical_size();
+            // Scissor bounds MUST come from the actual render target (the
+            // acquired back buffer = `self.target.size()`), not the live window
+            // size. During a live resize-drag the swapchain `ResizeBuffers` is
+            // deferred to size-move end (plan 260615-1516), so the back buffer
+            // legitimately lags the window: the window may already report
+            // 885x524 while the buffer is still 884x521. Clamping to the window
+            // size would set a scissor larger than the render target and trip
+            // wgpu's validation (`Scissor Rect ... is not contained in the
+            // render target`) → panic. In steady state the two sizes are equal,
+            // so this is a no-op there.
+            let (target_w, target_h) = self.target.size();
             let scale = self._window.scale_factor() as f32;
             let depths: Vec<i32> = scene.layers.iter().map(|l| l.depth).collect();
             let mut last_idx = usize::MAX;
