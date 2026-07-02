@@ -18,7 +18,8 @@ use windows::Win32::Graphics::Direct3D12::{
     D3D12_RESOURCE_BARRIER_FLAG_NONE, D3D12_RESOURCE_BARRIER_TYPE_TRANSITION,
     D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET,
     D3D12_RESOURCE_STATES, D3D12_RESOURCE_TRANSITION_BARRIER, ID3D12CommandAllocator,
-    ID3D12CommandQueue, ID3D12Device, ID3D12Fence, ID3D12GraphicsCommandList, ID3D12Resource,
+    ID3D12CommandList, ID3D12CommandQueue, ID3D12Device, ID3D12Fence, ID3D12GraphicsCommandList,
+    ID3D12Resource,
 };
 use windows::Win32::Graphics::DirectComposition::{
     DCompositionCreateDevice, IDCompositionDevice, IDCompositionTarget, IDCompositionVisual,
@@ -379,13 +380,6 @@ impl CompositionTarget for WinCompose {
 
         let idx = unsafe { self.swap_chain.GetCurrentBackBufferIndex() as usize };
 
-        // Early check that buffer exists
-        if self.back_buffer_resources[idx].is_none() {
-            return Err(FrameAcquireError::Failed(
-                "back buffer not acquired".to_owned(),
-            ));
-        }
-
         let before_state = if self.is_first_use[idx] {
             D3D12_RESOURCE_STATE_COMMON
         } else {
@@ -396,8 +390,14 @@ impl CompositionTarget for WinCompose {
         // Wait for this specific buffer to be GPU-idle before reusing
         self.wait_for_fence_value(self.fence_values[idx]);
 
-        // Now borrow back_buffer after the mutable borrow of self is done
-        let back_buffer = self.back_buffer_resources[idx].as_ref().unwrap();
+        // Buffer may be `None` if a prior `configure` tore the back buffers down
+        // (e.g. a device suspend mid-drag). Skip the frame instead of panicking;
+        // the caller maps `Failed` to a dropped frame and reconfigures next tick.
+        let Some(back_buffer) = self.back_buffer_resources[idx].as_ref() else {
+            return Err(FrameAcquireError::Failed(
+                "back buffer not acquired".to_owned(),
+            ));
+        };
 
         unsafe {
             self.barrier_cmd_alloc.Reset().ok();
@@ -412,7 +412,20 @@ impl CompositionTarget for WinCompose {
             self.barrier_cmd_list
                 .ResourceBarrier(std::slice::from_ref(&barrier));
             self.barrier_cmd_list.Close().ok();
-            let command_lists = [Some(self.barrier_cmd_list.cast().unwrap())];
+            let cmd_list = match self.barrier_cmd_list.cast::<ID3D12CommandList>() {
+                Ok(list) => list,
+                Err(e) => {
+                    // Release the barrier's resource ref before bailing so the
+                    // early return matches the success path's cleanup.
+                    std::mem::ManuallyDrop::drop(&mut barrier.Anonymous.Transition);
+                    log::warn!(target: "slate::device_lost",
+                        "acquire_frame: barrier command-list cast failed ({e:?}) — skipping frame");
+                    return Err(FrameAcquireError::Failed(
+                        "barrier command-list cast failed".to_owned(),
+                    ));
+                }
+            };
+            let command_lists = [Some(cmd_list)];
             self.raw_queue.ExecuteCommandLists(&command_lists);
             std::mem::ManuallyDrop::drop(&mut barrier.Anonymous.Transition);
         }
@@ -467,7 +480,19 @@ impl CompositionTarget for WinCompose {
             self.barrier_cmd_list
                 .ResourceBarrier(std::slice::from_ref(&barrier));
             self.barrier_cmd_list.Close().ok();
-            let command_lists = [Some(self.barrier_cmd_list.cast().unwrap())];
+            let cmd_list = match self.barrier_cmd_list.cast::<ID3D12CommandList>() {
+                Ok(list) => list,
+                Err(e) => {
+                    // Release the barrier's resource ref before bailing.
+                    std::mem::ManuallyDrop::drop(&mut barrier.Anonymous.Transition);
+                    // Non-device-lost sentinel (E_FAIL): the caller logs and
+                    // drops the frame rather than escalating to recovery.
+                    log::warn!(target: "slate::device_lost",
+                        "present: barrier command-list cast failed ({e:?}) — dropping frame");
+                    return Err(PresentError::PresentFailed(0x8000_4005_u32 as i32));
+                }
+            };
+            let command_lists = [Some(cmd_list)];
             self.raw_queue.ExecuteCommandLists(&command_lists);
             let result = self.swap_chain.Present(1, DXGI_PRESENT(0));
             std::mem::ManuallyDrop::drop(&mut barrier.Anonymous.Transition);
