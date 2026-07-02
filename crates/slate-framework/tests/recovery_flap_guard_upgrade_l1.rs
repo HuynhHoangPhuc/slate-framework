@@ -1,6 +1,19 @@
-//! L1 integration test (own file): `LuidMigration` then `WgpuCallback`
-//! upgrades the stored reason; a follow-up `WgpuCallback` within 5s then
-//! triggers `GiveUp { reason: WgpuCallback }`.
+//! L1 integration test (own file): a `LuidMigration` loss whose reason is
+//! upgraded to `WgpuCallback` mid-cycle, followed by another `WgpuCallback`
+//! within 5s, must RECOVER — not quit.
+//!
+//! This still exercises the deferred upgrade rule (`maybe_upgrade_reason`
+//! replaces `LuidMigration` with `WgpuCallback` and stamps
+//! `last_wgpu_callback_loss_at`). What changed under wait-until-healthy is the
+//! terminal outcome: the follow-up WgpuCallback inside the flap window used to
+//! escalate to `GiveUp { WgpuCallback }`; it now keeps probing and recovers.
+//! The flap window is telemetry only — the sole quit path is the wall-clock
+//! give-up budget after continuous failure, which a recovering flap never hits.
+//!
+//! Recovery completion is detected via the `Recovered { at }` state's
+//! timestamp advancing past each fire instant — the renderer's per-instance
+//! generation counter resets to 1 on every rebuild, so it cannot track
+//! multi-cycle progress.
 
 #![cfg(all(target_os = "windows", feature = "test-hooks"))]
 
@@ -9,7 +22,6 @@ use std::rc::Rc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use slate_framework::DeviceLossReason;
 use slate_framework::app::AppContext;
 use slate_framework::app_state::window_state::WindowState;
 use slate_framework::app_state::{AppState, RecoveryState};
@@ -33,7 +45,7 @@ impl View for NoopView {
 }
 
 #[test]
-fn l1_upgrade_then_flap_gives_up() {
+fn l1_upgrade_then_flap_recovers_not_quits() {
     let _ = env_logger::builder().is_test(true).try_init();
 
     let platform = DefaultPlatform::new();
@@ -72,9 +84,12 @@ fn l1_upgrade_then_flap_gives_up() {
 
     let start = Instant::now();
     let initialized = Cell::new(false);
-    let phase = Cell::new(0u32); // 0=before first, 1=fired LUID, 2=fired callback, 3=fired second callback
-    let initial_gen = Cell::new(0u64);
-    let gen_after_first_recovery = Cell::new(0u64);
+    // 0=before first, 1=fired LUID, 2=fired upgrade callback, 3=fired 2nd callback
+    let phase = Cell::new(0u32);
+    let episode1_fire_at = Cell::new(Instant::now());
+    let episode2_fire_at = Cell::new(Instant::now());
+    let last_recovered_at = Cell::new(None::<Instant>);
+    let gave_up = Cell::new(false);
     let mut view_factory = |_cx: &AppContext| Box::new(NoopView) as Box<dyn ErasedView>;
 
     platform.run(|event| {
@@ -91,7 +106,6 @@ fn l1_upgrade_then_flap_gives_up() {
                     platform.quit();
                     return;
                 }
-                initial_gen.set(state.renderer_generation().unwrap_or(0));
                 initialized.set(true);
                 true
             }
@@ -104,9 +118,29 @@ fn l1_upgrade_then_flap_gives_up() {
 
         state.dispatch_redraw(window_id);
 
+        // A flap re-fire must NEVER quit under wait-until-healthy.
+        if matches!(state.current_recovery_state(), RecoveryState::GiveUp { .. }) {
+            gave_up.set(true);
+            platform.quit();
+            return;
+        }
+
+        // Capture each `Recovered { at }` transition as it arrives.
+        if let RecoveryState::Recovered { at } = state.current_recovery_state() {
+            last_recovered_at.set(Some(at));
+        }
+
+        let recovered_after = |fire: Instant| {
+            last_recovered_at
+                .get()
+                .map(|at| at > fire)
+                .unwrap_or(false)
+        };
+
         match phase.get() {
             0 if initialized.get() => {
                 state.force_renderer_device_lost_luid_migration_for_test();
+                episode1_fire_at.set(Instant::now());
                 phase.set(1);
             }
             1 => {
@@ -119,39 +153,40 @@ fn l1_upgrade_then_flap_gives_up() {
                 );
                 phase.set(2);
             }
-            2 if matches!(state.current_recovery_state(), RecoveryState::NotLost)
-                && state.renderer_generation().unwrap_or(0) > initial_gen.get() =>
-            {
-                gen_after_first_recovery.set(state.renderer_generation().unwrap_or(0));
+            2 if recovered_after(episode1_fire_at.get()) => {
+                // Episode 1 recovered. Fire the second WgpuCallback inside the
+                // 5s flap window — the case that used to GiveUp.
                 state.fire_renderer_device_lost_callback(
                     wgpu::DeviceLostReason::Unknown,
                     "synthetic second callback".into(),
                 );
+                episode2_fire_at.set(Instant::now());
                 phase.set(3);
             }
+            3 if recovered_after(episode2_fire_at.get()) => {
+                // Second (flapping) loss recovered too — done.
+                platform.quit();
+                return;
+            }
             _ => {}
-        }
-
-        if matches!(state.current_recovery_state(), RecoveryState::GiveUp { .. }) {
-            platform.quit();
-            return;
         }
 
         thread::sleep(TICK_INTERVAL);
         wake_run_loop();
     });
 
-    let final_state = state.current_recovery_state();
     assert_eq!(phase.get(), 3, "did not reach phase=3 (all 3 losses fired)");
-    match final_state {
-        RecoveryState::GiveUp { reason } => assert_eq!(
-            reason,
-            DeviceLossReason::WgpuCallback,
-            "upgrade-then-flap GiveUp reason must be WgpuCallback"
-        ),
-        other => panic!(
-            "L1 upgrade+flap must GiveUp{{WgpuCallback}}, got {:?}",
-            other
-        ),
-    }
+    assert!(
+        !gave_up.get(),
+        "L1: upgrade-then-flap must NOT quit under wait-until-healthy"
+    );
+    assert!(
+        last_recovered_at
+            .get()
+            .map(|at| at > episode2_fire_at.get())
+            .unwrap_or(false),
+        "L1: second (flapping) loss never reached Recovered (last_recovered_at={:?}, episode2_fire_at={:?})",
+        last_recovered_at.get(),
+        episode2_fire_at.get()
+    );
 }

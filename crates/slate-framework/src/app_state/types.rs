@@ -17,14 +17,37 @@ pub(crate) const RECOVERY_COOLDOWN_MS: u64 = 350;
 #[cfg(feature = "test-hooks")]
 pub(crate) const RECOVERY_COOLDOWN_MS: u64 = 20;
 
-pub(crate) const RECOVERY_MAX_ATTEMPTS: u32 = 5;
-
+// Wait-until-healthy give-up budget. A recovery episode quits ONLY after this
+// much *continuous* failure — any successful rebuild resets the anchor, so a
+// recurring transient (the Optimus modal-drag suspend) that recovers between
+// bursts never trips it. Replaces the old 5-attempt count, which exhausted in
+// under a second and quit mid-suspend. Quitting is a last resort, not a
+// first-second reflex.
 #[cfg(not(feature = "test-hooks"))]
-pub(crate) const RECOVERY_BACKOFF_BASE_MS: u64 = 100;
+pub(crate) const RECOVERY_GIVEUP_WALL_MS: u64 = 60_000;
+#[cfg(feature = "test-hooks")]
+pub(crate) const RECOVERY_GIVEUP_WALL_MS: u64 = 2_000;
+
+// Spaced rebuild-as-probe backoff. A failed rebuild schedules the next attempt
+// at `base + attempt*step`, capped at `max`, so probing a still-suspended
+// adapter never tight-loops yet also never stalls longer than the cap once the
+// adapter is back. The old base (100ms, uncapped step) tight-looped rebuilds
+// against a dead adapter; these values pace 250ms → 1s.
+#[cfg(not(feature = "test-hooks"))]
+pub(crate) const RECOVERY_BACKOFF_BASE_MS: u64 = 250;
 #[cfg(feature = "test-hooks")]
 pub(crate) const RECOVERY_BACKOFF_BASE_MS: u64 = 10;
 
+#[cfg(not(feature = "test-hooks"))]
+pub(crate) const RECOVERY_BACKOFF_STEP_MS: u64 = 250;
+#[cfg(feature = "test-hooks")]
 pub(crate) const RECOVERY_BACKOFF_STEP_MS: u64 = 10;
+
+#[cfg(not(feature = "test-hooks"))]
+pub(crate) const RECOVERY_BACKOFF_MAX_MS: u64 = 1_000;
+#[cfg(feature = "test-hooks")]
+pub(crate) const RECOVERY_BACKOFF_MAX_MS: u64 = 40;
+
 pub(crate) const RECOVERY_FLAP_GUARD_SECS: u64 = 5;
 
 // Minimum spacing between adapter-LUID probes in `dispatch_redraw`.
@@ -55,8 +78,11 @@ pub enum DeviceLossReason {
 
 /// Recovery state machine for device-lost handling.
 ///
-/// Replaces the old 3-shot immediate retry with a zed-validated pattern:
-/// 350ms cooldown, 5-attempt backoff, and skip_draws gating.
+/// Wait-until-healthy policy: a 350ms cooldown, then spaced rebuild-as-probe
+/// attempts (backoff-capped) that keep going until the adapter comes back —
+/// rendering off in the meantime (DComp holds the last frame). Never quits on
+/// an attempt count or a flap re-fire; the only exit is `GiveUp` after a
+/// continuous-failure wall-clock budget (last resort).
 ///
 /// Each non-terminal active variant carries the `DeviceLossReason` so the
 /// flap-guard predicate can apply reason-aware semantics.
@@ -82,15 +108,22 @@ pub enum RecoveryState {
         since: Instant,
         reason: DeviceLossReason,
     },
-    /// Actively retrying device recreation.
+    /// Actively retrying device recreation. `first_failure_at` anchors the
+    /// wait-until-healthy give-up budget: it is stamped when the retry episode
+    /// begins and carried across attempts, so continuous failure is measured
+    /// from the first probe, not per-attempt. A successful rebuild leaves
+    /// `Retrying` for `Recovered`, discarding the anchor; the next loss starts
+    /// a fresh episode.
     Retrying {
         attempt: u32,
         last_attempt_at: Instant,
+        first_failure_at: Instant,
         reason: DeviceLossReason,
     },
     /// Recovery succeeded; will transition to NotLost on next redraw.
     Recovered { at: Instant },
-    /// Recovery exhausted all attempts; app should quit.
+    /// Continuous failure outran the wait-until-healthy wall-clock budget;
+    /// last-resort quit. Not reachable from an attempt count or a flap re-fire.
     GiveUp { reason: DeviceLossReason },
 }
 

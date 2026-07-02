@@ -1,5 +1,19 @@
-//! L1 integration test (own file): two `WgpuCallback` losses within 5
-//! seconds must escalate to `GiveUp { reason: WgpuCallback }`.
+//! L1 integration test (own file): two `WgpuCallback` losses within 5 seconds
+//! must both RECOVER, never quit.
+//!
+//! Wait-until-healthy policy change: a WgpuCallback re-firing inside the flap
+//! window used to escalate to `GiveUp { WgpuCallback }` (the app exited). That
+//! was the round-4 bug — the Optimus modal-drag suspend is a recurring
+//! transient, and quitting on the second loss killed the app mid-drag. The
+//! policy now keeps probing until the adapter is healthy again; the only quit
+//! path is the wall-clock give-up budget after *continuous* failure, which a
+//! recovering flap never reaches. Since CI's adapter is always healthy, each
+//! synthetic loss recovers immediately, so two flapping losses both recover.
+//!
+//! Recovery completion is detected via the `Recovered { at }` state's
+//! timestamp advancing past the last-fire instant — the renderer's per-instance
+//! generation counter resets to 1 on every rebuild, so it cannot track
+//! multi-cycle progress.
 
 #![cfg(all(target_os = "windows", feature = "test-hooks"))]
 
@@ -8,7 +22,6 @@ use std::rc::Rc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use slate_framework::DeviceLossReason;
 use slate_framework::app::AppContext;
 use slate_framework::app_state::window_state::WindowState;
 use slate_framework::app_state::{AppState, RecoveryState};
@@ -32,7 +45,7 @@ impl View for NoopView {
 }
 
 #[test]
-fn l1_wgpu_callback_flap_gives_up() {
+fn l1_wgpu_callback_flap_recovers_not_quits() {
     let _ = env_logger::builder().is_test(true).try_init();
 
     let platform = DefaultPlatform::new();
@@ -72,8 +85,9 @@ fn l1_wgpu_callback_flap_gives_up() {
     let start = Instant::now();
     let initialized = Cell::new(false);
     let losses_fired = Cell::new(0u32);
-    let initial_gen = Cell::new(0u64);
-    let last_known_gen = Cell::new(0u64);
+    let last_fire_at = Cell::new(Instant::now());
+    let last_recovered_at = Cell::new(None::<Instant>);
+    let gave_up = Cell::new(false);
     let mut view_factory = |_cx: &AppContext| Box::new(NoopView) as Box<dyn ErasedView>;
 
     platform.run(|event| {
@@ -90,8 +104,6 @@ fn l1_wgpu_callback_flap_gives_up() {
                     platform.quit();
                     return;
                 }
-                initial_gen.set(state.renderer_generation().unwrap_or(0));
-                last_known_gen.set(initial_gen.get());
                 initialized.set(true);
                 true
             }
@@ -104,23 +116,45 @@ fn l1_wgpu_callback_flap_gives_up() {
 
         state.dispatch_redraw(window_id);
 
+        // A flap re-fire must NEVER quit under wait-until-healthy.
+        if matches!(state.current_recovery_state(), RecoveryState::GiveUp { .. }) {
+            gave_up.set(true);
+            platform.quit();
+            return;
+        }
+
+        // Capture each `Recovered { at }` transition as it arrives.
+        if let RecoveryState::Recovered { at } = state.current_recovery_state() {
+            last_recovered_at.set(Some(at));
+        }
+
+        // Fire the next loss once the previous one has recovered (its `at`
+        // instant is strictly after the last fire). The second fire lands
+        // within the 5s flap window — the case that used to quit.
         if initialized.get() && losses_fired.get() < 2 {
-            let recovered = matches!(state.current_recovery_state(), RecoveryState::NotLost)
-                && state.renderer_generation().unwrap_or(0) > last_known_gen.get();
             let first = losses_fired.get() == 0;
-            if first || recovered {
+            let recovered_after_last_fire = last_recovered_at
+                .get()
+                .map(|at| at > last_fire_at.get())
+                .unwrap_or(false);
+            if first || recovered_after_last_fire {
                 state.fire_renderer_device_lost_callback(
                     wgpu::DeviceLostReason::Unknown,
                     format!("synthetic WgpuCallback #{}", losses_fired.get() + 1),
                 );
+                last_fire_at.set(Instant::now());
                 losses_fired.set(losses_fired.get() + 1);
-                if recovered {
-                    last_known_gen.set(state.renderer_generation().unwrap_or(0));
-                }
             }
         }
 
-        if matches!(state.current_recovery_state(), RecoveryState::GiveUp { .. }) {
+        // Done once both losses fired AND the final recovery post-dates the
+        // final fire.
+        if losses_fired.get() == 2
+            && last_recovered_at
+                .get()
+                .map(|at| at > last_fire_at.get())
+                .unwrap_or(false)
+        {
             platform.quit();
             return;
         }
@@ -129,18 +163,22 @@ fn l1_wgpu_callback_flap_gives_up() {
         wake_run_loop();
     });
 
-    let final_state = state.current_recovery_state();
     assert_eq!(
         losses_fired.get(),
         2,
         "did not fire both WgpuCallback losses"
     );
-    match final_state {
-        RecoveryState::GiveUp { reason } => assert_eq!(
-            reason,
-            DeviceLossReason::WgpuCallback,
-            "GiveUp reason must be WgpuCallback"
-        ),
-        other => panic!("L1: 2× WgpuCallback must GiveUp, got {:?}", other),
-    }
+    assert!(
+        !gave_up.get(),
+        "L1: 2× WgpuCallback within the flap window must NOT quit under wait-until-healthy"
+    );
+    assert!(
+        last_recovered_at
+            .get()
+            .map(|at| at > last_fire_at.get())
+            .unwrap_or(false),
+        "L1: second (flapping) WgpuCallback loss never reached Recovered (last_recovered_at={:?}, last_fire_at={:?})",
+        last_recovered_at.get(),
+        last_fire_at.get()
+    );
 }

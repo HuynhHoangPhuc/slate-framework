@@ -6,16 +6,14 @@
 //!   loop, recreate the renderer, and fire observers.
 
 use std::rc::Rc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use slate_platform::{Window, WindowId};
 use slate_renderer::{Renderer, RendererObserver};
 
 use super::super::state::AppState;
-use super::super::types::{
-    AppSignal, DeviceLossReason, RECOVERY_BACKOFF_BASE_MS, RECOVERY_BACKOFF_STEP_MS,
-    RECOVERY_MAX_ATTEMPTS, RecoveryState,
-};
+use super::super::types::{AppSignal, DeviceLossReason, RecoveryState};
+use super::recovery_policy::recovery_should_give_up;
 
 impl AppState {
     /// Classify the origin of a device-loss event by consuming the renderer's
@@ -140,29 +138,29 @@ impl AppState {
     /// Called when `RecoveryState::Retrying`. Handles backoff, renderer
     /// recreation, observer firing, and state transitions.
     pub(super) fn execute_recovery_step(&self, window_id: WindowId) -> AppSignal {
-        let (attempt, reason) = {
+        let (attempt, first_failure_at, reason) = {
             let guard = self.windows.borrow();
             match guard
                 .get(&window_id)
                 .map(|w| w.recovery_state.borrow().clone())
             {
                 Some(RecoveryState::Retrying {
-                    attempt, reason, ..
-                }) => (attempt, reason),
+                    attempt,
+                    first_failure_at,
+                    reason,
+                    ..
+                }) => (attempt, first_failure_at, reason),
                 _ => return AppSignal::None,
             }
         };
 
-        // Backoff sleep (except first attempt).
-        if attempt > 0 {
-            let backoff = RECOVERY_BACKOFF_BASE_MS + (attempt as u64) * RECOVERY_BACKOFF_STEP_MS;
-            log::debug!(target: "slate::device_lost", "recovery backoff sleep: {}ms", backoff);
-            std::thread::sleep(Duration::from_millis(backoff));
-        }
-
+        // Spacing between attempts is enforced by the caller (`dispatch_redraw`'s
+        // `Retrying` arm gates on `recovery_ready_for_next_attempt`), so this
+        // never blocks the thread on a backoff sleep — the event loop keeps
+        // pumping while the adapter is suspended.
         log::info!(target: "slate::device_lost",
-            "attempting GPU device recovery (attempt {}/{})",
-            attempt + 1, RECOVERY_MAX_ATTEMPTS);
+            "attempting GPU device recovery (probe attempt {}, {:?} into this loss)",
+            attempt + 1, first_failure_at.elapsed());
 
         // Get platform window handle.
         let platform_window = {
@@ -188,7 +186,12 @@ impl AppState {
                 if new_renderer.is_device_lost() {
                     log::warn!(target: "slate::device_lost",
                         "new renderer is already device-lost, treating as failure");
-                    return self.handle_recovery_failure(window_id, attempt, reason);
+                    return self.handle_recovery_failure(
+                        window_id,
+                        attempt,
+                        first_failure_at,
+                        reason,
+                    );
                 }
 
                 log::info!(target: "slate::device_lost", "GPU device recovered successfully");
@@ -267,33 +270,45 @@ impl AppState {
             }
             Err(e) => {
                 log::error!(target: "slate::device_lost", "GPU device recovery failed: {e}");
-                self.handle_recovery_failure(window_id, attempt, reason)
+                self.handle_recovery_failure(window_id, attempt, first_failure_at, reason)
             }
         }
     }
 
     /// Handle a failed recovery attempt for the given window.
+    ///
+    /// Wait-until-healthy policy: keep probing on a spaced schedule until the
+    /// adapter comes back. The ONLY quit path is the wall-clock give-up budget
+    /// (`recovery_should_give_up`), measured from `first_failure_at` — a
+    /// last-resort exit after continuous, unbroken failure, not an
+    /// attempt-count reflex.
     pub(super) fn handle_recovery_failure(
         &self,
         window_id: WindowId,
         attempt: u32,
+        first_failure_at: Instant,
         reason: DeviceLossReason,
     ) -> AppSignal {
-        let next = attempt + 1;
-        if next >= RECOVERY_MAX_ATTEMPTS {
+        let elapsed = first_failure_at.elapsed();
+        if recovery_should_give_up(elapsed) {
             log::error!(target: "slate::device_lost",
-                "recovery exhausted after {} attempts (reason={:?})", next, reason);
+                "device unrecoverable after {:?} of continuous failure ({} probe attempts, reason={:?}) — last-resort quit",
+                elapsed, attempt + 1, reason);
             let guard = self.windows.borrow();
             if let Some(win) = guard.get(&window_id) {
                 *win.recovery_state.borrow_mut() = RecoveryState::GiveUp { reason };
             }
             AppSignal::RequestQuit
         } else {
+            log::debug!(target: "slate::device_lost",
+                "recovery probe {} failed after {:?}; still waiting for a healthy adapter (reason={:?})",
+                attempt + 1, elapsed, reason);
             let guard = self.windows.borrow();
             if let Some(win) = guard.get(&window_id) {
                 *win.recovery_state.borrow_mut() = RecoveryState::Retrying {
-                    attempt: next,
+                    attempt: attempt + 1,
                     last_attempt_at: Instant::now(),
+                    first_failure_at,
                     reason,
                 };
                 win.window.request_redraw();

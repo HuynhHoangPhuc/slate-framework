@@ -25,6 +25,7 @@ use super::window_state::WindowState;
 
 mod dispatch;
 mod recovery;
+mod recovery_policy;
 mod redraw;
 mod surface;
 

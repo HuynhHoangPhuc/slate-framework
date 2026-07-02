@@ -15,12 +15,14 @@ use super::super::types::{
     ADAPTER_PROBE_MIN_INTERVAL_MS, AppSignal, DeviceLossReason, RECOVERY_COOLDOWN_MS,
     RECOVERY_FLAP_GUARD_SECS, RecoveryState,
 };
+use super::recovery_policy::recovery_ready_for_next_attempt;
 
 impl AppState {
     /// Full redraw dispatch with device-lost recovery wrapper + re-entrancy guard.
     ///
-    /// Returns `AppSignal::RequestQuit` if recovery exceeds `RECOVERY_MAX_ATTEMPTS`.
-    /// Returns `AppSignal::None` if the window is unknown (race with destroy).
+    /// Returns `AppSignal::RequestQuit` only as the wait-until-healthy last
+    /// resort (continuous failure past the wall-clock budget). Returns
+    /// `AppSignal::None` if the window is unknown (race with destroy).
     pub fn dispatch_redraw(&self, window_id: WindowId) -> AppSignal {
         // Snapshot fields needed for early logging before the per-window borrow.
         let (pre_rendering, pre_device_lost) = {
@@ -194,7 +196,13 @@ impl AppState {
                     return AppSignal::None;
                 }
 
-                // Reason-aware flap guard: only WgpuCallback losses count.
+                // Reason-aware flap telemetry. Under wait-until-healthy a
+                // WgpuCallback re-firing inside the flap window no longer quits
+                // — a recurring transient (the Optimus modal-drag suspend) is
+                // exactly what we now wait out. Persistent failure is bounded by
+                // the wall-clock give-up budget in the retry loop, not here. We
+                // still stamp the clock (the upgrade rule reads it) and note the
+                // re-fire for diagnostics.
                 if reason == DeviceLossReason::WgpuCallback {
                     let prev = {
                         let guard = self.windows.borrow();
@@ -205,19 +213,9 @@ impl AppState {
                     if let Some(prev) = prev {
                         let elapsed = now.duration_since(prev);
                         if elapsed <= Duration::from_secs(RECOVERY_FLAP_GUARD_SECS) {
-                            log::error!(target: "slate::device_lost",
-                                "device-lost re-fired {}ms after prior WgpuCallback (guard={}s) — giving up",
+                            log::warn!(target: "slate::device_lost",
+                                "WgpuCallback re-fired {}ms after prior (flap window={}s) — wait-until-healthy keeps probing, not quitting",
                                 elapsed.as_millis(), RECOVERY_FLAP_GUARD_SECS);
-                            let guard = self.windows.borrow();
-                            if let Some(win) = guard.get(&window_id) {
-                                *win.recovery_state.borrow_mut() = RecoveryState::GiveUp { reason };
-                                win.last_wgpu_callback_loss_at.set(Some(now));
-                            }
-                            let guard2 = self.windows.borrow();
-                            if let Some(win) = guard2.get(&window_id) {
-                                win.rendering.set(false);
-                            }
-                            return AppSignal::RequestQuit;
                         }
                     }
                     let guard = self.windows.borrow();
@@ -283,11 +281,15 @@ impl AppState {
                 log::info!(target: "slate::device_lost",
                     "cooldown elapsed, starting retry (reason={:?})", reason);
                 {
+                    let now = Instant::now();
                     let guard = self.windows.borrow();
                     if let Some(win) = guard.get(&window_id) {
+                        // Anchor the wait-until-healthy give-up budget at the
+                        // first probe of this loss episode.
                         *win.recovery_state.borrow_mut() = RecoveryState::Retrying {
                             attempt: 0,
-                            last_attempt_at: Instant::now(),
+                            last_attempt_at: now,
+                            first_failure_at: now,
                             reason,
                         };
                     }
@@ -299,8 +301,24 @@ impl AppState {
                 }
                 return sig;
             }
-            RecoveryState::Retrying { reason, .. } => {
+            RecoveryState::Retrying {
+                attempt,
+                last_attempt_at,
+                reason,
+                ..
+            } => {
                 let _ = self.maybe_upgrade_reason(window_id, reason);
+                // Spaced rebuild-as-probe: if the last attempt was too recent,
+                // poll (rendering stays off — DComp holds the last frame)
+                // instead of hammering rebuilds at a still-suspended adapter.
+                if !recovery_ready_for_next_attempt(last_attempt_at.elapsed(), attempt) {
+                    let guard = self.windows.borrow();
+                    if let Some(win) = guard.get(&window_id) {
+                        win.window.request_redraw();
+                        win.rendering.set(false);
+                    }
+                    return AppSignal::None;
+                }
                 let sig = self.execute_recovery_step(window_id);
                 let guard = self.windows.borrow();
                 if let Some(win) = guard.get(&window_id) {
