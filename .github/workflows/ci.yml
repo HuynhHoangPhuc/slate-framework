@@ -24,7 +24,7 @@ jobs:
       matrix:
         os: [macos-26, windows-2025-vs2026]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: clippy, rustfmt
@@ -39,7 +39,7 @@ jobs:
       matrix:
         os: [macos-26, windows-2025-vs2026]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: clippy
@@ -50,7 +50,7 @@ jobs:
     name: rustfmt
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: rustfmt
@@ -60,7 +60,7 @@ jobs:
     name: cross-compile (macOS host → Windows target)
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
         with:
           targets: x86_64-pc-windows-msvc
@@ -71,14 +71,14 @@ jobs:
     name: cargo-deny (licenses + advisories + bans)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: EmbarkStudios/cargo-deny-action@v2
 
   audit:
     name: cargo-audit (RustSec advisories)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: rustsec/audit-check@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -93,7 +93,7 @@ jobs:
         # Pin OS versions to match test job for consistency
         os: [macos-26, windows-2025-vs2026]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --all-targets --release
@@ -108,7 +108,7 @@ jobs:
         # Pin OS versions to avoid golden drift from rolling releases
         os: [macos-26, windows-2025-vs2026]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
       # Skip-baseline lint: fail if the count of `#[ignore]`-marked tests
